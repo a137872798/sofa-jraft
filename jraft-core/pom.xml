@@ -5,7 +5,7 @@
     <parent>
         <artifactId>jraft-parent</artifactId>
         <groupId>com.alipay.sofa</groupId>
-        <version>1.2.5</version>
+        <version>1.2.6</version>
     </parent>
     <artifactId>jraft-core</artifactId>
     <packaging>jar</packaging>
@@ -24,6 +24,10 @@
             <scope>test</scope>
         </dependency>
         <dependency>
+            <groupId>org.ow2.asm</groupId>
+            <artifactId>asm</artifactId>
+        </dependency>
+        <dependency>
             <groupId>com.google.code.findbugs</groupId>
             <artifactId>jsr305</artifactId>
         </dependency>
@@ -31,6 +35,11 @@
         <dependency>
             <groupId>org.rocksdb</groupId>
             <artifactId>rocksdbjni</artifactId>
+        </dependency>
+        <!-- jctools -->
+        <dependency>
+            <groupId>org.jctools</groupId>
+            <artifactId>jctools-core</artifactId>
         </dependency>
         <!-- mock -->
         <dependency>

@@ -17,6 +17,7 @@
 package com.alipay.sofa.jraft.rhea.serialization.impl.protostuff;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
 
 import io.protostuff.Input;
 import io.protostuff.LinkedBuffer;
@@ -51,7 +52,7 @@ public class ProtoStuffSerializer extends Serializer {
         // applies to java beans/data objects.
         //
         final String always_use_sun_reflection_factory = SystemPropertyUtil.get(
-            "rhea.serializer.protostuff.always_use_sun_reflection_factory", "true");
+            "rhea.serializer.protostuff.always_use_sun_reflection_factory", "false");
         SystemPropertyUtil.setProperty("protostuff.runtime.always_use_sun_reflection_factory",
             always_use_sun_reflection_factory);
 
@@ -110,6 +111,22 @@ public class ProtoStuffSerializer extends Serializer {
             ThrowUtil.throwException(e);
         } finally {
             inputBuf.release();
+        }
+
+        return msg;
+    }
+
+    @Override
+    public <T> T readObject(final ByteBuffer buf, final Class<T> clazz) {
+        final Schema<T> schema = RuntimeSchema.getSchema(clazz);
+        final T msg = schema.newMessage();
+
+        final Input input = Inputs.getInput(buf);
+        try {
+            schema.mergeFrom(input, msg);
+            Inputs.checkLastTagWas(input, 0);
+        } catch (final IOException e) {
+            ThrowUtil.throwException(e);
         }
 
         return msg;

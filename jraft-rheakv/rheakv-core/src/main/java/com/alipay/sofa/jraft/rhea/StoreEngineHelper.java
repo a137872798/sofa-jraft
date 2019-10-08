@@ -23,11 +23,12 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionHandler;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.SynchronousQueue;
-import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadPoolExecutor;
 
 import com.alipay.remoting.rpc.RpcServer;
+import com.alipay.sofa.jraft.rhea.cmd.store.BatchDeleteRequest;
 import com.alipay.sofa.jraft.rhea.cmd.store.BatchPutRequest;
+import com.alipay.sofa.jraft.rhea.cmd.store.CompareAndPutRequest;
 import com.alipay.sofa.jraft.rhea.cmd.store.DeleteRangeRequest;
 import com.alipay.sofa.jraft.rhea.cmd.store.DeleteRequest;
 import com.alipay.sofa.jraft.rhea.cmd.store.GetAndPutRequest;
@@ -57,38 +58,38 @@ public final class StoreEngineHelper {
     public static ExecutorService createReadIndexExecutor(final int coreThreads) {
         final int maxThreads = coreThreads << 2;
         final RejectedExecutionHandler handler = new ThreadPoolExecutor.AbortPolicy();
-        return newPool(coreThreads, maxThreads, "read-index-callback", handler);
+        return newPool(coreThreads, maxThreads, "rheakv-read-index-callback", handler);
     }
 
-    public static ExecutorService createLeaderStateTrigger(final int coreThreads) {
+    public static ExecutorService createRaftStateTrigger(final int coreThreads) {
         final BlockingQueue<Runnable> workQueue = new ArrayBlockingQueue<>(32);
-        return newPool(coreThreads, coreThreads, "leader-state-trigger", workQueue);
+        return newPool(coreThreads, coreThreads, "rheakv-raft-state-trigger", workQueue);
     }
 
     public static ExecutorService createSnapshotExecutor(final int coreThreads) {
         final BlockingQueue<Runnable> workQueue = new ArrayBlockingQueue<>(1);
-        final String name = "snapshot-executor";
+        final String name = "rheakv-snapshot-executor";
         final RejectedExecutionHandler handler = new DiscardOldPolicyWithReport(name);
         return newPool(coreThreads, coreThreads, workQueue, name, handler);
     }
 
     public static ExecutorService createCliRpcExecutor(final int coreThreads) {
         final int maxThreads = coreThreads << 2;
-        return newPool(coreThreads, maxThreads, "cli-rpc-executor");
+        return newPool(coreThreads, maxThreads, "rheakv-cli-rpc-executor");
     }
 
     public static ExecutorService createRaftRpcExecutor(final int coreThreads) {
         final int maxThreads = coreThreads << 1;
-        return newPool(coreThreads, maxThreads, "raft-rpc-executor");
+        return newPool(coreThreads, maxThreads, "rheakv-raft-rpc-executor");
     }
 
     public static ExecutorService createKvRpcExecutor(final int coreThreads) {
         final int maxThreads = coreThreads << 2;
-        return newPool(coreThreads, maxThreads, "kv-store-rpc-executor");
+        return newPool(coreThreads, maxThreads, "rheakv-kv-store-rpc-executor");
     }
 
     public static ScheduledExecutorService createMetricsScheduler() {
-        return Executors.newSingleThreadScheduledExecutor(new NamedThreadFactory("metrics-reporter", true));
+        return Executors.newSingleThreadScheduledExecutor(new NamedThreadFactory("rheakv-metrics-reporter", true));
     }
 
     public static void addKvStoreRequestProcessor(final RpcServer rpcServer, final StoreEngine engine) {
@@ -99,6 +100,7 @@ public final class StoreEngineHelper {
         rpcServer.registerUserProcessor(new KVCommandProcessor<>(ScanRequest.class, engine));
         rpcServer.registerUserProcessor(new KVCommandProcessor<>(PutRequest.class, engine));
         rpcServer.registerUserProcessor(new KVCommandProcessor<>(GetAndPutRequest.class, engine));
+        rpcServer.registerUserProcessor(new KVCommandProcessor<>(CompareAndPutRequest.class, engine));
         rpcServer.registerUserProcessor(new KVCommandProcessor<>(MergeRequest.class, engine));
         rpcServer.registerUserProcessor(new KVCommandProcessor<>(PutIfAbsentRequest.class, engine));
         rpcServer.registerUserProcessor(new KVCommandProcessor<>(KeyLockRequest.class, engine));
@@ -106,6 +108,7 @@ public final class StoreEngineHelper {
         rpcServer.registerUserProcessor(new KVCommandProcessor<>(BatchPutRequest.class, engine));
         rpcServer.registerUserProcessor(new KVCommandProcessor<>(DeleteRequest.class, engine));
         rpcServer.registerUserProcessor(new KVCommandProcessor<>(DeleteRangeRequest.class, engine));
+        rpcServer.registerUserProcessor(new KVCommandProcessor<>(BatchDeleteRequest.class, engine));
         rpcServer.registerUserProcessor(new KVCommandProcessor<>(NodeExecuteRequest.class, engine));
         rpcServer.registerUserProcessor(new KVCommandProcessor<>(RangeSplitRequest.class, engine));
     }
@@ -131,9 +134,16 @@ public final class StoreEngineHelper {
     private static ExecutorService newPool(final int coreThreads, final int maxThreads,
                                            final BlockingQueue<Runnable> workQueue, final String name,
                                            final RejectedExecutionHandler handler) {
-        final ThreadFactory defaultFactory = new NamedThreadFactory(name, true);
-        return ThreadPoolUtil.newThreadPool(name, true, coreThreads, maxThreads, 60L, workQueue, defaultFactory,
-            handler);
+        return ThreadPoolUtil.newBuilder() //
+            .poolName(name) //
+            .enableMetric(true) //
+            .coreThreads(coreThreads) //
+            .maximumThreads(maxThreads) //
+            .keepAliveSeconds(60L) //
+            .workQueue(workQueue) //
+            .threadFactory(new NamedThreadFactory(name, true)) //
+            .rejectedHandler(handler) //
+            .build();
     }
 
     private StoreEngineHelper() {

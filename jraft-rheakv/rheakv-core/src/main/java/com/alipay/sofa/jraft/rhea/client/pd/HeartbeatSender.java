@@ -44,13 +44,13 @@ import com.alipay.sofa.jraft.rhea.metadata.TimeInterval;
 import com.alipay.sofa.jraft.rhea.options.HeartbeatOptions;
 import com.alipay.sofa.jraft.rhea.rpc.ExtSerializerSupports;
 import com.alipay.sofa.jraft.rhea.storage.BaseKVStoreClosure;
-import com.alipay.sofa.jraft.rhea.util.ExecutorServiceHelper;
 import com.alipay.sofa.jraft.rhea.util.Lists;
 import com.alipay.sofa.jraft.rhea.util.Pair;
 import com.alipay.sofa.jraft.rhea.util.StackTraceUtil;
 import com.alipay.sofa.jraft.rhea.util.concurrent.DiscardOldPolicyWithReport;
 import com.alipay.sofa.jraft.rhea.util.concurrent.NamedThreadFactory;
 import com.alipay.sofa.jraft.util.Endpoint;
+import com.alipay.sofa.jraft.util.ExecutorServiceHelper;
 import com.alipay.sofa.jraft.util.ThreadPoolUtil;
 import com.alipay.sofa.jraft.util.timer.HashedWheelTimer;
 import com.alipay.sofa.jraft.util.timer.Timeout;
@@ -97,9 +97,17 @@ public class HeartbeatSender implements Lifecycle<HeartbeatOptions> {
             throw new IllegalArgumentException("Heartbeat rpc timeout millis must > 0, "
                                                + this.heartbeatRpcTimeoutMillis);
         }
-        final String name = "heartbeat-callback";
-        this.heartbeatRpcCallbackExecutor = ThreadPoolUtil.newThreadPool(name, true, 4, 4, 120L,
-            new ArrayBlockingQueue<>(1024), new NamedThreadFactory(name, true), new DiscardOldPolicyWithReport(name));
+        final String name = "rheakv-heartbeat-callback";
+        this.heartbeatRpcCallbackExecutor = ThreadPoolUtil.newBuilder() //
+            .poolName(name) //
+            .enableMetric(true) //
+            .coreThreads(4) //
+            .maximumThreads(4) //
+            .keepAliveSeconds(120L) //
+            .workQueue(new ArrayBlockingQueue<>(1024)) //
+            .threadFactory(new NamedThreadFactory(name, true)) //
+            .rejectedHandler(new DiscardOldPolicyWithReport(name)) //
+            .build();
         final long storeHeartbeatIntervalSeconds = opts.getStoreHeartbeatIntervalSeconds();
         final long regionHeartbeatIntervalSeconds = opts.getRegionHeartbeatIntervalSeconds();
         if (storeHeartbeatIntervalSeconds <= 0) {
@@ -211,7 +219,7 @@ public class HeartbeatSender implements Lifecycle<HeartbeatOptions> {
                     closure.run(Status.OK());
                 } else {
                     closure.setError(response.getError());
-                    closure.run(new Status(-1, "RPC failed: %s", response));
+                    closure.run(new Status(-1, "RPC failed with address: %s, response: %s", address, response));
                 }
             }
 
@@ -259,7 +267,7 @@ public class HeartbeatSender implements Lifecycle<HeartbeatOptions> {
         }
 
         @Override
-        public void run(Timeout timeout) throws Exception {
+        public void run(final Timeout timeout) throws Exception {
             try {
                 sendStoreHeartbeat(this.nextDelay, this.forceRefreshLeader, this.lastTime);
             } catch (final Throwable t) {
@@ -285,7 +293,7 @@ public class HeartbeatSender implements Lifecycle<HeartbeatOptions> {
         }
 
         @Override
-        public void run(Timeout timeout) throws Exception {
+        public void run(final Timeout timeout) throws Exception {
             try {
                 sendRegionHeartbeat(this.nextDelay, this.lastTime, this.forceRefreshLeader);
             } catch (final Throwable t) {

@@ -47,16 +47,20 @@ import com.alipay.sofa.jraft.option.FSMCallerOptions;
 import com.alipay.sofa.jraft.storage.LogManager;
 import com.alipay.sofa.jraft.storage.snapshot.SnapshotReader;
 import com.alipay.sofa.jraft.storage.snapshot.SnapshotWriter;
+import com.alipay.sofa.jraft.util.DisruptorBuilder;
+import com.alipay.sofa.jraft.util.DisruptorMetricSet;
 import com.alipay.sofa.jraft.util.LogExceptionHandler;
 import com.alipay.sofa.jraft.util.NamedThreadFactory;
 import com.alipay.sofa.jraft.util.OnlyForTest;
 import com.alipay.sofa.jraft.util.Requires;
 import com.alipay.sofa.jraft.util.Utils;
+import com.lmax.disruptor.BlockingWaitStrategy;
 import com.lmax.disruptor.EventFactory;
 import com.lmax.disruptor.EventHandler;
 import com.lmax.disruptor.EventTranslator;
 import com.lmax.disruptor.RingBuffer;
 import com.lmax.disruptor.dsl.Disruptor;
+import com.lmax.disruptor.dsl.ProducerType;
 
 /**
  * The finite state machine caller implementation.
@@ -153,7 +157,7 @@ public class FSMCallerImpl implements FSMCaller {
     private NodeImpl                                                node;
     private volatile TaskType                                       currTask;
     private final AtomicLong                                        applyingIndex;
-    private RaftException                                           error;
+    private volatile RaftException                                  error;
     private Disruptor<ApplyTask>                                    disruptor;
     private RingBuffer<ApplyTask>                                   taskQueue;
     private volatile CountDownLatch                                 shutdownLatch;
@@ -176,14 +180,22 @@ public class FSMCallerImpl implements FSMCaller {
         this.node = opts.getNode();
         this.nodeMetrics = this.node.getNodeMetrics();
         this.lastAppliedIndex.set(opts.getBootstrapId().getIndex());
-        this.notifyLastAppliedIndexUpdated(this.lastAppliedIndex.get());
+        notifyLastAppliedIndexUpdated(this.lastAppliedIndex.get());
         this.lastAppliedTerm = opts.getBootstrapId().getTerm();
-        this.disruptor = new Disruptor<>(new ApplyTaskFactory(), opts.getDisruptorBufferSize(), new NamedThreadFactory(
-            "JRaft-FSMCaller-disruptor-", true));
+        this.disruptor = DisruptorBuilder.<ApplyTask> newInstance() //
+            .setEventFactory(new ApplyTaskFactory()) //
+            .setRingBufferSize(opts.getDisruptorBufferSize()) //
+            .setThreadFactory(new NamedThreadFactory("JRaft-FSMCaller-Disruptor-", true)) //
+            .setProducerType(ProducerType.MULTI) //
+            .setWaitStrategy(new BlockingWaitStrategy()) //
+            .build();
         this.disruptor.handleEventsWith(new ApplyTaskHandler());
         this.disruptor.setDefaultExceptionHandler(new LogExceptionHandler<Object>(getClass().getSimpleName()));
-        this.disruptor.start();
-        this.taskQueue = this.disruptor.getRingBuffer();
+        this.taskQueue = this.disruptor.start();
+        if (this.nodeMetrics.getMetricRegistry() != null) {
+            this.nodeMetrics.getMetricRegistry().register("jraft-fsm-caller-disruptor",
+                new DisruptorMetricSet(this.taskQueue));
+        }
         this.error = new RaftException(EnumOutter.ErrorType.ERROR_TYPE_NONE);
         LOG.info("Starts FSMCaller successfully.");
         return true;
@@ -262,7 +274,7 @@ public class FSMCallerImpl implements FSMCaller {
 
     @Override
     public boolean onLeaderStop(final Status status) {
-        return this.enqueueTask((task, sequence) -> {
+        return enqueueTask((task, sequence) -> {
             task.type = TaskType.LEADER_STOP;
             task.status = new Status(status);
         });
@@ -270,7 +282,7 @@ public class FSMCallerImpl implements FSMCaller {
 
     @Override
     public boolean onLeaderStart(final long term) {
-        return this.enqueueTask((task, sequence) -> {
+        return enqueueTask((task, sequence) -> {
             task.type = TaskType.LEADER_START;
             task.term = term;
         });
@@ -301,7 +313,7 @@ public class FSMCallerImpl implements FSMCaller {
     public class OnErrorClosure implements Closure {
         private RaftException error;
 
-        public OnErrorClosure(RaftException error) {
+        public OnErrorClosure(final RaftException error) {
             super();
             this.error = error;
         }
@@ -310,7 +322,7 @@ public class FSMCallerImpl implements FSMCaller {
             return this.error;
         }
 
-        public void setError(RaftException error) {
+        public void setError(final RaftException error) {
             this.error = error;
         }
 
@@ -321,8 +333,12 @@ public class FSMCallerImpl implements FSMCaller {
 
     @Override
     public boolean onError(final RaftException error) {
+        if (!this.error.getStatus().isOk()) {
+            LOG.warn("FSMCaller already in error status, ignore new error: {}", error);
+            return false;
+        }
         final OnErrorClosure c = new OnErrorClosure(error);
-        return this.enqueueTask((task, sequence) -> {
+        return enqueueTask((task, sequence) -> {
             task.type = TaskType.ERROR;
             task.done = c;
         });
@@ -406,7 +422,7 @@ public class FSMCallerImpl implements FSMCaller {
                         break;
                 }
             } finally {
-                nodeMetrics.recordLatency(task.type.metricName(), Utils.monotonicMs() - startMs);
+                this.nodeMetrics.recordLatency(task.type.metricName(), Utils.monotonicMs() - startMs);
             }
         }
         try {
@@ -680,7 +696,7 @@ public class FSMCallerImpl implements FSMCaller {
 
     @OnlyForTest
     RaftException getError() {
-        return error;
+        return this.error;
     }
 
     private boolean passByStatus(final Closure done) {
@@ -692,5 +708,11 @@ public class FSMCallerImpl implements FSMCaller {
             }
         }
         return true;
+    }
+
+    @Override
+    public void describe(final Printer out) {
+        out.print("  ") //
+            .println(toString());
     }
 }

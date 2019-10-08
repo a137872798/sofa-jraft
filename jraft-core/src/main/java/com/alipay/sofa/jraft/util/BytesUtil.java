@@ -17,9 +17,11 @@
 package com.alipay.sofa.jraft.util;
 
 import java.io.Serializable;
+import java.nio.charset.StandardCharsets;
 import java.util.Comparator;
 
 import com.alipay.sofa.jraft.util.internal.UnsafeUtf8Util;
+import com.alipay.sofa.jraft.util.internal.UnsafeUtil;
 
 /**
  * @author jiachun.fjc
@@ -47,11 +49,15 @@ public final class BytesUtil {
         if (in == null) {
             return null;
         }
-        // Calculate the encoded length.
-        final int len = UnsafeUtf8Util.encodedLength(in);
-        final byte[] outBytes = new byte[len];
-        UnsafeUtf8Util.encodeUtf8(in, outBytes, 0, len);
-        return outBytes;
+        if (UnsafeUtil.hasUnsafe()) {
+            // Calculate the encoded length.
+            final int len = UnsafeUtf8Util.encodedLength(in);
+            final byte[] outBytes = new byte[len];
+            UnsafeUtf8Util.encodeUtf8(in, outBytes, 0, len);
+            return outBytes;
+        } else {
+            return in.getBytes(StandardCharsets.UTF_8);
+        }
     }
 
     /**
@@ -62,7 +68,11 @@ public final class BytesUtil {
         if (in == null) {
             return null;
         }
-        return UnsafeUtf8Util.decodeUtf8(in, 0, in.length);
+        if (UnsafeUtil.hasUnsafe()) {
+            return UnsafeUtf8Util.decodeUtf8(in, 0, in.length);
+        } else {
+            return new String(in, StandardCharsets.UTF_8);
+        }
     }
 
     public static byte[] nextBytes(final byte[] bytes) {
@@ -108,6 +118,7 @@ public final class BytesUtil {
             return compare(buffer1, 0, buffer1.length, buffer2, 0, buffer2.length);
         }
 
+        @Override
         public int compare(final byte[] buffer1, final int offset1, final int length1, final byte[] buffer2,
                            final int offset2, final int length2) {
             // short circuit equal case
@@ -126,6 +137,45 @@ public final class BytesUtil {
             }
             return length1 - length2;
         }
+    }
+
+    private final static char[] HEX_ARRAY = "0123456789ABCDEF".toCharArray();
+
+    /**
+     * Dump byte array into a hex string.
+     * See https://stackoverflow.com/questions/9655181/how-to-convert-a-byte-array-to-a-hex-string-in-java
+     * @param bytes bytes
+     * @return hex string
+     */
+    public static String toHex(final byte[] bytes) {
+        if (bytes == null) {
+            return null;
+        }
+        final char[] hexChars = new char[bytes.length * 2];
+        for (int j = 0; j < bytes.length; j++) {
+            int v = bytes[j] & 0xFF;
+            hexChars[j * 2] = HEX_ARRAY[v >>> 4];
+            hexChars[j * 2 + 1] = HEX_ARRAY[v & 0x0F];
+        }
+        return new String(hexChars);
+    }
+
+    /**
+     * Convert a string representation of a hex dump to a byte array.
+     * See https://stackoverflow.com/questions/140131/convert-a-string-representation-of-a-hex-dump-to-a-byte-array-using-java
+     * @param s hex string
+     * @return bytes
+     */
+    public static byte[] hexStringToByteArray(final String s) {
+        if (s == null) {
+            return null;
+        }
+        final int len = s.length();
+        final byte[] bytes = new byte[len / 2];
+        for (int i = 0; i < len; i += 2) {
+            bytes[i / 2] = (byte) ((Character.digit(s.charAt(i), 16) << 4) + Character.digit(s.charAt(i + 1), 16));
+        }
+        return bytes;
     }
 
     private BytesUtil() {

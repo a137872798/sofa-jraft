@@ -75,16 +75,16 @@ public class RaftRawKVStore implements RawKVStore {
             @Override
             public void run(final Status status, final long index, final byte[] reqCtx) {
                 if (status.isOk()) {
-                    kvStore.get(key, true, closure);
+                    RaftRawKVStore.this.kvStore.get(key, true, closure);
                     return;
                 }
-                readIndexExecutor.execute(() -> {
+                RaftRawKVStore.this.readIndexExecutor.execute(() -> {
                     if (isLeader()) {
-                        LOG.warn("Fail to read with 'ReadIndex': {}, try to applying to the state machine.", status);
+                        LOG.warn("Fail to [get] with 'ReadIndex': {}, try to applying to the state machine.", status);
                         // If 'read index' read fails, try to applying to the state machine at the leader node
                         applyOperation(KVOperation.createGet(key), closure);
                     } else {
-                        LOG.warn("Fail to read with 'ReadIndex': {}.", status);
+                        LOG.warn("Fail to [get] with 'ReadIndex': {}.", status);
                         // Client will retry to leader node
                         new KVClosureAdapter(closure, null).run(status);
                     }
@@ -109,16 +109,16 @@ public class RaftRawKVStore implements RawKVStore {
             @Override
             public void run(final Status status, final long index, final byte[] reqCtx) {
                 if (status.isOk()) {
-                    kvStore.multiGet(keys, true, closure);
+                    RaftRawKVStore.this.kvStore.multiGet(keys, true, closure);
                     return;
                 }
-                readIndexExecutor.execute(() -> {
+                RaftRawKVStore.this.readIndexExecutor.execute(() -> {
                     if (isLeader()) {
-                        LOG.warn("Fail to read with 'ReadIndex': {}, try to applying to the state machine.", status);
+                        LOG.warn("Fail to [multiGet] with 'ReadIndex': {}, try to applying to the state machine.", status);
                         // If 'read index' read fails, try to applying to the state machine at the leader node
                         applyOperation(KVOperation.createMultiGet(keys), closure);
                     } else {
-                        LOG.warn("Fail to read with 'ReadIndex': {}.", status);
+                        LOG.warn("Fail to [multiGet] with 'ReadIndex': {}.", status);
                         // Client will retry to leader node
                         new KVClosureAdapter(closure, null).run(status);
                     }
@@ -139,6 +139,12 @@ public class RaftRawKVStore implements RawKVStore {
     }
 
     @Override
+    public void scan(final byte[] startKey, final byte[] endKey, final boolean readOnlySafe, final boolean returnValue,
+                     final KVStoreClosure closure) {
+        scan(startKey, endKey, Integer.MAX_VALUE, readOnlySafe, returnValue, closure);
+    }
+
+    @Override
     public void scan(final byte[] startKey, final byte[] endKey, final int limit, final KVStoreClosure closure) {
         scan(startKey, endKey, limit, true, closure);
     }
@@ -146,8 +152,14 @@ public class RaftRawKVStore implements RawKVStore {
     @Override
     public void scan(final byte[] startKey, final byte[] endKey, final int limit, final boolean readOnlySafe,
                      final KVStoreClosure closure) {
+        scan(startKey, endKey, limit, readOnlySafe, true, closure);
+    }
+
+    @Override
+    public void scan(final byte[] startKey, final byte[] endKey, final int limit, final boolean readOnlySafe,
+                     final boolean returnValue, final KVStoreClosure closure) {
         if (!readOnlySafe) {
-            this.kvStore.scan(startKey, endKey, limit, false, closure);
+            this.kvStore.scan(startKey, endKey, limit, false, returnValue, closure);
             return;
         }
         this.node.readIndex(BytesUtil.EMPTY_BYTES, new ReadIndexClosure() {
@@ -155,16 +167,16 @@ public class RaftRawKVStore implements RawKVStore {
             @Override
             public void run(final Status status, final long index, final byte[] reqCtx) {
                 if (status.isOk()) {
-                    kvStore.scan(startKey, endKey, limit, true, closure);
+                    RaftRawKVStore.this.kvStore.scan(startKey, endKey, limit, true, returnValue, closure);
                     return;
                 }
-                readIndexExecutor.execute(() -> {
+                RaftRawKVStore.this.readIndexExecutor.execute(() -> {
                     if (isLeader()) {
-                        LOG.warn("Fail to read with 'ReadIndex': {}, try to applying to the state machine.", status);
+                        LOG.warn("Fail to [scan] with 'ReadIndex': {}, try to applying to the state machine.", status);
                         // If 'read index' read fails, try to applying to the state machine at the leader node
-                        applyOperation(KVOperation.createScan(startKey, endKey, limit), closure);
+                        applyOperation(KVOperation.createScan(startKey, endKey, limit, returnValue), closure);
                     } else {
-                        LOG.warn("Fail to read with 'ReadIndex': {}.", status);
+                        LOG.warn("Fail to [scan] with 'ReadIndex': {}.", status);
                         // Client will retry to leader node
                         new KVClosureAdapter(closure, null).run(status);
                     }
@@ -175,7 +187,32 @@ public class RaftRawKVStore implements RawKVStore {
 
     @Override
     public void getSequence(final byte[] seqKey, final int step, final KVStoreClosure closure) {
-        applyOperation(KVOperation.createGetSequence(seqKey, step), closure);
+        if (step > 0) {
+            applyOperation(KVOperation.createGetSequence(seqKey, step), closure);
+            return;
+        }
+        // read-only (step==0)
+        this.node.readIndex(BytesUtil.EMPTY_BYTES, new ReadIndexClosure() {
+
+            @Override
+            public void run(final Status status, final long index, final byte[] reqCtx) {
+                if (status.isOk()) {
+                    RaftRawKVStore.this.kvStore.getSequence(seqKey, 0, closure);
+                    return;
+                }
+                RaftRawKVStore.this.readIndexExecutor.execute(() -> {
+                    if (isLeader()) {
+                        LOG.warn("Fail to [getSequence] with 'ReadIndex': {}, try to applying to the state machine.", status);
+                        // If 'read index' read fails, try to applying to the state machine at the leader node
+                        applyOperation(KVOperation.createGetSequence(seqKey, 0), closure);
+                    } else {
+                        LOG.warn("Fail to [getSequence] with 'ReadIndex': {}.", status);
+                        // Client will retry to leader node
+                        new KVClosureAdapter(closure, null).run(status);
+                    }
+                });
+            }
+        });
     }
 
     @Override
@@ -191,6 +228,11 @@ public class RaftRawKVStore implements RawKVStore {
     @Override
     public void getAndPut(final byte[] key, final byte[] value, final KVStoreClosure closure) {
         applyOperation(KVOperation.createGetAndPut(key, value), closure);
+    }
+
+    @Override
+    public void compareAndPut(final byte[] key, final byte[] expect, final byte[] update, final KVStoreClosure closure) {
+        applyOperation(KVOperation.createCompareAndPut(key, expect, update), closure);
     }
 
     @Override
@@ -232,6 +274,11 @@ public class RaftRawKVStore implements RawKVStore {
     @Override
     public void deleteRange(final byte[] startKey, final byte[] endKey, final KVStoreClosure closure) {
         applyOperation(KVOperation.createDeleteRange(startKey, endKey), closure);
+    }
+
+    @Override
+    public void delete(final List<byte[]> keys, final KVStoreClosure closure) {
+        applyOperation(KVOperation.createDeleteList(keys), closure);
     }
 
     @Override

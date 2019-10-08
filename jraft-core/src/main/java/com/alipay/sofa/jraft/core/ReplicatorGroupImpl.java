@@ -78,7 +78,6 @@ public class ReplicatorGroupImpl implements ReplicatorGroup {
         this.commonOptions.setGroupId(nodeId.getGroupId());
         this.commonOptions.setServerId(nodeId.getPeerId());
         this.commonOptions.setSnapshotStorage(opts.getSnapshotStorage());
-        this.commonOptions.setRaftRpcService(opts.getRaftRpcClientService());
         this.commonOptions.setTimerManager(opts.getTimerManager());
         return true;
     }
@@ -107,7 +106,8 @@ public class ReplicatorGroupImpl implements ReplicatorGroup {
             this.failureReplicators.remove(peer);
             return true;
         }
-        final ReplicatorOptions opts = this.commonOptions.copy();
+        final ReplicatorOptions opts = this.commonOptions == null ? new ReplicatorOptions() : this.commonOptions.copy();
+
         opts.setPeerId(peer);
         final ThreadId rid = Replicator.start(opts, this.raftOptions);
         if (rid == null) {
@@ -274,5 +274,13 @@ public class ReplicatorGroupImpl implements ReplicatorGroup {
     @Override
     public List<ThreadId> listReplicators() {
         return new ArrayList<>(this.replicatorMap.values());
+    }
+
+    @Override
+    public void describe(final Printer out) {
+        out.print("  replicators: ") //
+            .println(this.replicatorMap.values());
+        out.print("  failureReplicators: ") //
+            .println(this.failureReplicators);
     }
 }

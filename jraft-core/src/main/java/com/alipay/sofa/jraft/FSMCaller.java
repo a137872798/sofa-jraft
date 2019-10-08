@@ -21,6 +21,7 @@ import com.alipay.sofa.jraft.closure.SaveSnapshotClosure;
 import com.alipay.sofa.jraft.entity.LeaderChangeContext;
 import com.alipay.sofa.jraft.error.RaftException;
 import com.alipay.sofa.jraft.option.FSMCallerOptions;
+import com.alipay.sofa.jraft.util.Describer;
 
 /**
  * Finite state machine caller.
@@ -29,7 +30,7 @@ import com.alipay.sofa.jraft.option.FSMCallerOptions;
  *
  * 2018-Apr-03 11:07:52 AM
  */
-public interface FSMCaller extends Lifecycle<FSMCallerOptions> {
+public interface FSMCaller extends Lifecycle<FSMCallerOptions>, Describer {
 
     /**
      * Listen on lastAppliedLogIndex update events.
@@ -43,69 +44,69 @@ public interface FSMCaller extends Lifecycle<FSMCallerOptions> {
          *
          * @param lastAppliedLogIndex the log index of last applied
          */
-        void onApplied(long lastAppliedLogIndex);
+        void onApplied(final long lastAppliedLogIndex);
     }
 
     /**
      * Adds a LastAppliedLogIndexListener.
      */
-    void addLastAppliedLogIndexListener(LastAppliedLogIndexListener listener);
+    void addLastAppliedLogIndexListener(final LastAppliedLogIndexListener listener);
 
     /**
      * Called when log entry committed
      *
      * @param committedIndex committed log indexx
      */
-    boolean onCommitted(long committedIndex);
+    boolean onCommitted(final long committedIndex);
 
     /**
      * Called after loading snapshot.
      *
      * @param done callback
      */
-    boolean onSnapshotLoad(LoadSnapshotClosure done);
+    boolean onSnapshotLoad(final LoadSnapshotClosure done);
 
     /**
      * Called after saving snapshot.
      *
      * @param done callback
      */
-    boolean onSnapshotSave(SaveSnapshotClosure done);
+    boolean onSnapshotSave(final SaveSnapshotClosure done);
 
     /**
      * Called when the leader stops.
      *
      * @param status status info
      */
-    boolean onLeaderStop(Status status);
+    boolean onLeaderStop(final Status status);
 
     /**
      * Called when the leader starts.
      *
      * @param term current term
      */
-    boolean onLeaderStart(long term);
+    boolean onLeaderStart(final long term);
 
     /**
      * Called when start following a leader.
      *
      * @param ctx context of leader change
      */
-    boolean onStartFollowing(LeaderChangeContext ctx);
+    boolean onStartFollowing(final LeaderChangeContext ctx);
 
     /**
      * Called when stop following a leader.
      *
      * @param ctx context of leader change
      */
-    boolean onStopFollowing(LeaderChangeContext ctx);
+    boolean onStopFollowing(final LeaderChangeContext ctx);
 
     /**
      * Called when error happens.
      *
      * @param error error info
      */
-    boolean onError(RaftException error);
+    boolean onError(final RaftException error);
 
     /**
      * Returns the last log entry index to apply state machine.

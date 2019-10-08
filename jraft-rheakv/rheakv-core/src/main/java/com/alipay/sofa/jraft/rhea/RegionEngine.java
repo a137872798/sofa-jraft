@@ -219,19 +219,7 @@ public class RegionEngine implements Lifecycle<RegionEngineOptions> {
     }
 
     public RegionEngineOptions copyRegionOpts() {
-        final RegionEngineOptions copy = new RegionEngineOptions();
-        copy.setRegionId(this.regionOpts.getRegionId());
-        copy.setStartKey(this.regionOpts.getStartKey());
-        copy.setStartKeyBytes(this.regionOpts.getStartKeyBytes());
-        copy.setEndKey(this.regionOpts.getEndKey());
-        copy.setEndKeyBytes(this.regionOpts.getEndKeyBytes());
-        copy.setNodeOptions(JRaftHelper.copyNodeOptionsFrom(this.regionOpts.getNodeOptions()));
-        copy.setRaftGroupId(this.regionOpts.getRaftGroupId());
-        copy.setRaftDataPath(this.regionOpts.getRaftDataPath());
-        copy.setServerAddress(this.regionOpts.getServerAddress());
-        copy.setInitialServerList(this.regionOpts.getInitialServerList());
-        copy.setMetricsReportPeriod(this.regionOpts.getMetricsReportPeriod());
-        return copy;
+        return Requires.requireNonNull(this.regionOpts, "opts").copy();
     }
 
     @Override

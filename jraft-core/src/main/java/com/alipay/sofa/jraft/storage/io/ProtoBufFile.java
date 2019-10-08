@@ -26,6 +26,7 @@ import java.io.InputStream;
 
 import com.alipay.sofa.jraft.rpc.ProtobufMsgFactory;
 import com.alipay.sofa.jraft.util.Bits;
+import com.alipay.sofa.jraft.util.Utils;
 import com.google.protobuf.Message;
 
 /**
@@ -49,7 +50,7 @@ public class ProtoBufFile {
     /** file path */
     private final String path;
 
-    public ProtoBufFile(String path) {
+    public ProtoBufFile(final String path) {
         this.path = path;
     }
 
@@ -63,25 +64,26 @@ public class ProtoBufFile {
             return null;
         }
 
-        byte[] lenBytes = new byte[4];
-        try (FileInputStream fin = new FileInputStream(file); BufferedInputStream input = new BufferedInputStream(fin)) {
+        final byte[] lenBytes = new byte[4];
+        try (final FileInputStream fin = new FileInputStream(file);
+                final BufferedInputStream input = new BufferedInputStream(fin)) {
             readBytes(lenBytes, input);
-            int len = Bits.getInt(lenBytes, 0);
+            final int len = Bits.getInt(lenBytes, 0);
             if (len <= 0) {
                 throw new IOException("Invalid message fullName.");
             }
-            byte[] nameBytes = new byte[len];
+            final byte[] nameBytes = new byte[len];
             readBytes(nameBytes, input);
-            String name = new String(nameBytes);
+            final String name = new String(nameBytes);
             readBytes(lenBytes, input);
-            int msgLen = Bits.getInt(lenBytes, 0);
-            byte[] msgBytes = new byte[msgLen];
+            final int msgLen = Bits.getInt(lenBytes, 0);
+            final byte[] msgBytes = new byte[msgLen];
             readBytes(msgBytes, input);
             return ProtobufMsgFactory.newMessageByProtoClassName(name, msgBytes);
         }
     }
 
-    private void readBytes(byte[] bs, InputStream input) throws IOException {
+    private void readBytes(final byte[] bs, final InputStream input) throws IOException {
         int read;
         if ((read = input.read(bs)) != bs.length) {
             throw new IOException("Read error, expects " + bs.length + " bytes, but read " + read);
@@ -91,24 +93,25 @@ public class ProtoBufFile {
     /**
      * Save a protobuf message to file.
      *
-     * @param msg   protobuf message
-     * @param sync  if sync flush data to disk
-     * @return      true if save success
+     * @param msg  protobuf message
+     * @param sync if sync flush data to disk
+     * @return true if save success
      */
-    public boolean save(Message msg, boolean sync) throws IOException {
-        File file = new File(this.path + ".tmp");
-        try (FileOutputStream fOut = new FileOutputStream(file);
-                BufferedOutputStream output = new BufferedOutputStream(fOut)) {
-            byte[] lenBytes = new byte[4];
+    public boolean save(final Message msg, final boolean sync) throws IOException {
+        // Write message into temp file
+        final File file = new File(this.path + ".tmp");
+        try (final FileOutputStream fOut = new FileOutputStream(file);
+                final BufferedOutputStream output = new BufferedOutputStream(fOut)) {
+            final byte[] lenBytes = new byte[4];
 
             // name len + name
-            String fullName = msg.getDescriptorForType().getFullName();
-            int nameLen = fullName.length();
+            final String fullName = msg.getDescriptorForType().getFullName();
+            final int nameLen = fullName.length();
             Bits.putInt(lenBytes, 0, nameLen);
             output.write(lenBytes);
             output.write(fullName.getBytes());
             // msg len + msg
-            int msgLen = msg.getSerializedSize();
+            final int msgLen = msg.getSerializedSize();
             Bits.putInt(lenBytes, 0, msgLen);
             output.write(lenBytes);
             msg.writeTo(output);
@@ -117,6 +120,6 @@ public class ProtoBufFile {
             }
         }
 
-        return file.renameTo(new File(path));
+        return Utils.atomicMoveFile(file, new File(this.path));
     }
 }

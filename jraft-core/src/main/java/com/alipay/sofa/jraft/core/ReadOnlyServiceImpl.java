@@ -28,6 +28,9 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import com.alipay.sofa.jraft.FSMCaller;
 import com.alipay.sofa.jraft.FSMCaller.LastAppliedLogIndexListener;
 import com.alipay.sofa.jraft.ReadOnlyService;
@@ -42,36 +45,48 @@ import com.alipay.sofa.jraft.rpc.RpcRequests.ReadIndexRequest;
 import com.alipay.sofa.jraft.rpc.RpcRequests.ReadIndexResponse;
 import com.alipay.sofa.jraft.rpc.RpcResponseClosureAdapter;
 import com.alipay.sofa.jraft.util.Bytes;
+import com.alipay.sofa.jraft.util.DisruptorBuilder;
+import com.alipay.sofa.jraft.util.DisruptorMetricSet;
 import com.alipay.sofa.jraft.util.LogExceptionHandler;
 import com.alipay.sofa.jraft.util.NamedThreadFactory;
 import com.alipay.sofa.jraft.util.OnlyForTest;
+import com.alipay.sofa.jraft.util.ThreadHelper;
 import com.alipay.sofa.jraft.util.Utils;
 import com.google.protobuf.ZeroByteStringHelper;
+import com.lmax.disruptor.BlockingWaitStrategy;
 import com.lmax.disruptor.EventFactory;
 import com.lmax.disruptor.EventHandler;
+import com.lmax.disruptor.EventTranslator;
 import com.lmax.disruptor.RingBuffer;
 import com.lmax.disruptor.dsl.Disruptor;
+import com.lmax.disruptor.dsl.ProducerType;
 
 /**
  * Read-only service implementation.
- * @author dennis
  *
+ * @author dennis
  */
 public class ReadOnlyServiceImpl implements ReadOnlyService, LastAppliedLogIndexListener {
 
-    /** disruptor to run readonly service. */
+    private static final int                           MAX_ADD_REQUEST_RETRY_TIMES = 3;
+    /** Disruptor to run readonly service. */
     private Disruptor<ReadIndexEvent>                  readIndexDisruptor;
     private RingBuffer<ReadIndexEvent>                 readIndexQueue;
     private RaftOptions                                raftOptions;
     private NodeImpl                                   node;
-    private final Lock                                 lock                = new ReentrantLock();
+    private final Lock                                 lock                        = new ReentrantLock();
     private FSMCaller                                  fsmCaller;
     private volatile CountDownLatch                    shutdownLatch;
 
     private ScheduledExecutorService                   scheduledExecutorService;
 
+    private NodeMetrics                                nodeMetrics;
+
     // <logIndex, statusList>
-    private final TreeMap<Long, List<ReadIndexStatus>> pendingNotifyStatus = new TreeMap<>();
+    private final TreeMap<Long, List<ReadIndexStatus>> pendingNotifyStatus         = new TreeMap<>();
+
+    private static final Logger                        LOG                         = LoggerFactory
+                                                                                       .getLogger(ReadOnlyServiceImpl.class);
 
     private static class ReadIndexEvent {
         Bytes            requestContext;
@@ -90,20 +105,23 @@ public class ReadOnlyServiceImpl implements ReadOnlyService, LastAppliedLogIndex
 
     private class ReadIndexEventHandler implements EventHandler<ReadIndexEvent> {
         // task list for batch
-        private List<ReadIndexEvent> events = new ArrayList<>(raftOptions.getApplyBatch());
+        private final List<ReadIndexEvent> events = new ArrayList<>(
+                                                      ReadOnlyServiceImpl.this.raftOptions.getApplyBatch());
 
         @Override
-        public void onEvent(ReadIndexEvent newEvent, long sequence, boolean endOfBatch) throws Exception {
+        public void onEvent(final ReadIndexEvent newEvent, final long sequence, final boolean endOfBatch)
+                                                                                                         throws Exception {
             if (newEvent.shutdownLatch != null) {
-                executeReadIndexEvents(events);
+                executeReadIndexEvents(this.events);
+                this.events.clear();
                 newEvent.shutdownLatch.countDown();
                 return;
             }
 
-            events.add(newEvent);
-            if (events.size() >= raftOptions.getApplyBatch() || endOfBatch) {
-                executeReadIndexEvents(events);
-                events = new ArrayList<>(raftOptions.getApplyBatch());
+            this.events.add(newEvent);
+            if (this.events.size() >= ReadOnlyServiceImpl.this.raftOptions.getApplyBatch() || endOfBatch) {
+                executeReadIndexEvents(this.events);
+                this.events.clear();
             }
         }
     }
@@ -115,14 +133,11 @@ public class ReadOnlyServiceImpl implements ReadOnlyService, LastAppliedLogIndex
      */
     class ReadIndexResponseClosure extends RpcResponseClosureAdapter<ReadIndexResponse> {
 
-        final List<ReadIndexEvent> events;
         final List<ReadIndexState> states;
         final ReadIndexRequest     request;
 
-        public ReadIndexResponseClosure(List<ReadIndexEvent> events, List<ReadIndexState> states,
-                                        final ReadIndexRequest request) {
+        public ReadIndexResponseClosure(final List<ReadIndexState> states, final ReadIndexRequest request) {
             super();
-            this.events = events;
             this.states = states;
             this.request = request;
         }
@@ -131,7 +146,7 @@ public class ReadOnlyServiceImpl implements ReadOnlyService, LastAppliedLogIndex
          * Called when ReadIndex response returns.
          */
         @Override
-        public void run(Status status) {
+        public void run(final Status status) {
             if (!status.isOk()) {
                 notifyFail(status);
                 return;
@@ -141,52 +156,55 @@ public class ReadOnlyServiceImpl implements ReadOnlyService, LastAppliedLogIndex
                 notifyFail(new Status(-1, "Fail to run ReadIndex task, maybe the leader stepped down."));
                 return;
             }
-            //Success
-            final ReadIndexStatus readIndexStatus = new ReadIndexStatus(states, request, readIndexResponse.getIndex());
-            for (final ReadIndexState state : states) {
-                //Records current commit log index.
+            // Success
+            final ReadIndexStatus readIndexStatus = new ReadIndexStatus(this.states, this.request,
+                readIndexResponse.getIndex());
+            for (final ReadIndexState state : this.states) {
+                // Records current commit log index.
                 state.setIndex(readIndexResponse.getIndex());
             }
 
             boolean doUnlock = true;
-            lock.lock();
+            ReadOnlyServiceImpl.this.lock.lock();
             try {
-                if (readIndexStatus.isApplied(fsmCaller.getLastAppliedIndex())) {
-                    // Already applied,notify readIndex request.
-                    lock.unlock();
+                if (readIndexStatus.isApplied(ReadOnlyServiceImpl.this.fsmCaller.getLastAppliedIndex())) {
+                    // Already applied, notify readIndex request.
+                    ReadOnlyServiceImpl.this.lock.unlock();
                     doUnlock = false;
                     notifySuccess(readIndexStatus);
                 } else {
                     // Not applied, add it to pending-notify cache.
-                    pendingNotifyStatus.computeIfAbsent(readIndexStatus.getIndex(), k -> new ArrayList<>(10))
+                    ReadOnlyServiceImpl.this.pendingNotifyStatus
+                        .computeIfAbsent(readIndexStatus.getIndex(), k -> new ArrayList<>(10)) //
                         .add(readIndexStatus);
                 }
             } finally {
                 if (doUnlock) {
-                    lock.unlock();
+                    ReadOnlyServiceImpl.this.lock.unlock();
                 }
             }
         }
 
-        private void notifyFail(Status status) {
+        private void notifyFail(final Status status) {
             final long nowMs = Utils.monotonicMs();
-            for (final ReadIndexEvent event : events) {
-                node.getNodeMetrics().recordLatency("read-index", nowMs - event.startTime);
-                if (event.done != null) {
-                    event.done.run(status, ReadIndexClosure.INVALID_LOG_INDEX, event.requestContext.get());
+            for (final ReadIndexState state : this.states) {
+                ReadOnlyServiceImpl.this.nodeMetrics.recordLatency("read-index", nowMs - state.getStartTimeMs());
+                final ReadIndexClosure done = state.getDone();
+                if (done != null) {
+                    final Bytes reqCtx = state.getRequestContext();
+                    done.run(status, ReadIndexClosure.INVALID_LOG_INDEX, reqCtx != null ? reqCtx.get() : null);
                 }
             }
         }
-
     }
 
-    private void executeReadIndexEvents(List<ReadIndexEvent> events) {
+    private void executeReadIndexEvents(final List<ReadIndexEvent> events) {
         if (events.isEmpty()) {
             return;
         }
-        final ReadIndexRequest.Builder rb = ReadIndexRequest.newBuilder();
-        rb.setGroupId(node.getGroupId());
-        rb.setServerId(node.getServerId().toString());
+        final ReadIndexRequest.Builder rb = ReadIndexRequest.newBuilder() //
+            .setGroupId(this.node.getGroupId()) //
+            .setServerId(this.node.getServerId().toString());
 
         final List<ReadIndexState> states = new ArrayList<>(events.size());
 
@@ -196,30 +214,43 @@ public class ReadOnlyServiceImpl implements ReadOnlyService, LastAppliedLogIndex
         }
         final ReadIndexRequest request = rb.build();
 
-        node.handleReadIndexRequest(request, new ReadIndexResponseClosure(events, states, request));
+        this.node.handleReadIndexRequest(request, new ReadIndexResponseClosure(states, request));
     }
 
     @Override
-    public boolean init(ReadOnlyServiceOptions opts) {
+    public boolean init(final ReadOnlyServiceOptions opts) {
         this.node = opts.getNode();
+        this.nodeMetrics = this.node.getNodeMetrics();
         this.fsmCaller = opts.getFsmCaller();
         this.raftOptions = opts.getRaftOptions();
 
         this.scheduledExecutorService = Executors
-                .newSingleThreadScheduledExecutor(new NamedThreadFactory("ReadOnlyService-PendingNotify-Scanner", true));
-        this.readIndexDisruptor = new Disruptor<>(new ReadIndexEventFactory(), raftOptions.getDisruptorBufferSize(),
-                new NamedThreadFactory("JRaft-ReadOnlyService-Disruptor-", true));
+            .newSingleThreadScheduledExecutor(new NamedThreadFactory("ReadOnlyService-PendingNotify-Scanner", true));
+        this.readIndexDisruptor = DisruptorBuilder.<ReadIndexEvent> newInstance() //
+            .setEventFactory(new ReadIndexEventFactory()) //
+            .setRingBufferSize(this.raftOptions.getDisruptorBufferSize()) //
+            .setThreadFactory(new NamedThreadFactory("JRaft-ReadOnlyService-Disruptor-", true)) //
+            .setWaitStrategy(new BlockingWaitStrategy()) //
+            .setProducerType(ProducerType.MULTI) //
+            .build();
         this.readIndexDisruptor.handleEventsWith(new ReadIndexEventHandler());
-        this.readIndexDisruptor.setDefaultExceptionHandler(new LogExceptionHandler<Object>(this.getClass().getSimpleName()));
-        this.readIndexDisruptor.start();
-        this.readIndexQueue = this.readIndexDisruptor.getRingBuffer();
-
-        //listen on lastAppliedLogIndex change events.
+        this.readIndexDisruptor
+            .setDefaultExceptionHandler(new LogExceptionHandler<Object>(this.getClass().getSimpleName()));
+        this.readIndexQueue = this.readIndexDisruptor.start();
+        if(this.nodeMetrics.getMetricRegistry() != null) {
+            this.nodeMetrics.getMetricRegistry() //
+                .register("jraft-read-only-service-disruptor", new DisruptorMetricSet(this.readIndexQueue));
+        }
+        // listen on lastAppliedLogIndex change events.
         this.fsmCaller.addLastAppliedLogIndexListener(this);
 
-        //start scanner
-        this.scheduledExecutorService.scheduleAtFixedRate(() -> onApplied(this.fsmCaller.getLastAppliedIndex()),
-                this.raftOptions.getMaxElectionDelayMs(), this.raftOptions.getMaxElectionDelayMs(), TimeUnit.MILLISECONDS);
+        // start scanner
+        this.scheduledExecutorService.scheduleAtFixedRate(
+            () -> onApplied(this.fsmCaller.getLastAppliedIndex()),
+            this.raftOptions.getMaxElectionDelayMs(),
+            this.raftOptions.getMaxElectionDelayMs(),
+            TimeUnit.MILLISECONDS
+        );
         return true;
     }
 
@@ -243,32 +274,48 @@ public class ReadOnlyServiceImpl implements ReadOnlyService, LastAppliedLogIndex
     }
 
     @Override
-    public void addRequest(byte[] reqCtx, ReadIndexClosure closure) {
+    public void addRequest(final byte[] reqCtx, final ReadIndexClosure closure) {
         if (this.shutdownLatch != null) {
-            Utils.runClosureInThread(closure, new Status(RaftError.EHOSTDOWN, "was stopped"));
+            Utils.runClosureInThread(closure, new Status(RaftError.EHOSTDOWN, "Was stopped"));
             throw new IllegalStateException("Service already shutdown.");
         }
         try {
-            this.readIndexQueue.publishEvent((event, sequence) -> {
+            EventTranslator<ReadIndexEvent> translator = (event, sequence) -> {
                 event.done = closure;
                 event.requestContext = new Bytes(reqCtx);
                 event.startTime = Utils.monotonicMs();
-            });
+            };
+            int retryTimes = 0;
+            while (true) {
+                if (this.readIndexQueue.tryPublishEvent(translator)) {
+                    break;
+                } else {
+                    retryTimes++;
+                    if (retryTimes > MAX_ADD_REQUEST_RETRY_TIMES) {
+                        Utils.runClosureInThread(closure,
+                            new Status(RaftError.EBUSY, "Node is busy, has too many read-only requests."));
+                        this.nodeMetrics.recordTimes("read-index-overload-times", 1);
+                        LOG.warn("Node {} ReadOnlyServiceImpl readIndexQueue is overload.", this.node.getNodeId());
+                        return;
+                    }
+                    ThreadHelper.onSpinWait();
+                }
+            }
         } catch (final Exception e) {
             Utils.runClosureInThread(closure, new Status(RaftError.EPERM, "Node is down."));
         }
     }
 
     /**
-     * Called when lastAppliedIndex updates
+     * Called when lastAppliedIndex updates.
      *
      * @param appliedIndex applied index
      */
     @Override
-    public void onApplied(long appliedIndex) {
+    public void onApplied(final long appliedIndex) {
         // TODO reuse pendingStatuses list?
         List<ReadIndexStatus> pendingStatuses = null;
-        lock.lock();
+        this.lock.lock();
         try {
             if (this.pendingNotifyStatus.isEmpty()) {
                 return;
@@ -288,7 +335,7 @@ public class ReadOnlyServiceImpl implements ReadOnlyService, LastAppliedLogIndex
 
             }
         } finally {
-            lock.unlock();
+            this.lock.unlock();
             if (pendingStatuses != null && !pendingStatuses.isEmpty()) {
                 for (final ReadIndexStatus status : pendingStatuses) {
                     notifySuccess(status);
@@ -309,7 +356,7 @@ public class ReadOnlyServiceImpl implements ReadOnlyService, LastAppliedLogIndex
 
     @OnlyForTest
     TreeMap<Long, List<ReadIndexStatus>> getPendingNotifyStatus() {
-        return pendingNotifyStatus;
+        return this.pendingNotifyStatus;
     }
 
     private void notifySuccess(final ReadIndexStatus status) {
@@ -320,11 +367,10 @@ public class ReadOnlyServiceImpl implements ReadOnlyService, LastAppliedLogIndex
             final ReadIndexState task = states.get(i);
             final ReadIndexClosure done = task.getDone(); // stack copy
             if (done != null) {
-                this.node.getNodeMetrics().recordLatency("read-index", nowMs - task.getStartTimeMs());
+                this.nodeMetrics.recordLatency("read-index", nowMs - task.getStartTimeMs());
                 done.setResult(task.getIndex(), task.getRequestContext().get());
                 done.run(Status.OK());
             }
         }
     }
-
 }

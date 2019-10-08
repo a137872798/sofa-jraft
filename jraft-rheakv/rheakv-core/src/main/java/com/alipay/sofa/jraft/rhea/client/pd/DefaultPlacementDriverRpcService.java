@@ -35,10 +35,10 @@ import com.alipay.sofa.jraft.rhea.errors.Errors;
 import com.alipay.sofa.jraft.rhea.errors.ErrorsHelper;
 import com.alipay.sofa.jraft.rhea.options.RpcOptions;
 import com.alipay.sofa.jraft.rhea.rpc.ExtSerializerSupports;
-import com.alipay.sofa.jraft.rhea.util.ExecutorServiceHelper;
 import com.alipay.sofa.jraft.rhea.util.concurrent.CallerRunsPolicyWithReport;
 import com.alipay.sofa.jraft.rhea.util.concurrent.NamedThreadFactory;
 import com.alipay.sofa.jraft.util.Endpoint;
+import com.alipay.sofa.jraft.util.ExecutorServiceHelper;
 import com.alipay.sofa.jraft.util.Requires;
 import com.alipay.sofa.jraft.util.ThreadPoolUtil;
 
@@ -68,8 +68,7 @@ public class DefaultPlacementDriverRpcService implements PlacementDriverRpcServi
             LOG.info("[DefaultPlacementDriverRpcService] already started.");
             return true;
         }
-        this.rpcCallbackExecutor = createRpcCallbackExecutor(opts.getCallbackExecutorCorePoolSize(),
-            opts.getCallbackExecutorMaximumPoolSize(), opts.getCallbackExecutorQueueCapacity());
+        this.rpcCallbackExecutor = createRpcCallbackExecutor(opts);
         this.rpcTimeoutMillis = opts.getRpcTimeoutMillis();
         Requires.requireTrue(this.rpcTimeoutMillis > 0, "opts.rpcTimeoutMillis must > 0");
         LOG.info("[DefaultPlacementDriverRpcService] start successfully, options: {}.", opts);
@@ -106,7 +105,7 @@ public class DefaultPlacementDriverRpcService implements PlacementDriverRpcServi
                     closure.run(Status.OK());
                 } else {
                     closure.setError(response.getError());
-                    closure.run(new Status(-1, "RPC failed: %s", response));
+                    closure.run(new Status(-1, "RPC failed with address: %s, response: %s", address, response));
                 }
             }
 
@@ -127,13 +126,23 @@ public class DefaultPlacementDriverRpcService implements PlacementDriverRpcServi
         }
     }
 
-    private ThreadPoolExecutor createRpcCallbackExecutor(final int corePoolSize, final int maximumPoolSize,
-                                                         final int queueCapacity) {
-        if (corePoolSize <= 0 || maximumPoolSize <= 0) {
+    private ThreadPoolExecutor createRpcCallbackExecutor(final RpcOptions opts) {
+        final int callbackExecutorCorePoolSize = opts.getCallbackExecutorCorePoolSize();
+        final int callbackExecutorMaximumPoolSize = opts.getCallbackExecutorMaximumPoolSize();
+        if (callbackExecutorCorePoolSize <= 0 || callbackExecutorMaximumPoolSize <= 0) {
             return null;
         }
-        final String name = "pd-rpc-callback";
-        return ThreadPoolUtil.newThreadPool(name, true, corePoolSize, maximumPoolSize, 120L, new ArrayBlockingQueue<>(
-            queueCapacity), new NamedThreadFactory(name, true), new CallerRunsPolicyWithReport(name));
+
+        final String name = "rheakv-pd-rpc-callback";
+        return ThreadPoolUtil.newBuilder() //
+            .poolName(name) //
+            .enableMetric(true) //
+            .coreThreads(callbackExecutorCorePoolSize) //
+            .maximumThreads(callbackExecutorMaximumPoolSize) //
+            .keepAliveSeconds(120L) //
+            .workQueue(new ArrayBlockingQueue<>(opts.getCallbackExecutorQueueCapacity())) //
+            .threadFactory(new NamedThreadFactory(name, true)) //
+            .rejectedHandler(new CallerRunsPolicyWithReport(name)) //
+            .build();
     }
 }

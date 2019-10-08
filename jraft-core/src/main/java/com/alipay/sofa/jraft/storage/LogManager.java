@@ -26,6 +26,7 @@ import com.alipay.sofa.jraft.entity.LogEntry;
 import com.alipay.sofa.jraft.entity.LogId;
 import com.alipay.sofa.jraft.entity.RaftOutter.SnapshotMeta;
 import com.alipay.sofa.jraft.option.LogManagerOptions;
+import com.alipay.sofa.jraft.util.Describer;
 
 /**
  * Log manager.
@@ -34,7 +35,7 @@ import com.alipay.sofa.jraft.option.LogManagerOptions;
  *
  * 2018-Apr-04 3:02:42 PM
  */
-public interface LogManager extends Lifecycle<LogManagerOptions> {
+public interface LogManager extends Lifecycle<LogManagerOptions>, Describer {
 
     /**
      * Closure to to run in stable state.
@@ -57,7 +58,7 @@ public interface LogManager extends Lifecycle<LogManagerOptions> {
             return this.firstLogIndex;
         }
 
-        public void setFirstLogIndex(long firstLogIndex) {
+        public void setFirstLogIndex(final long firstLogIndex) {
             this.firstLogIndex = firstLogIndex;
         }
 
@@ -65,7 +66,7 @@ public interface LogManager extends Lifecycle<LogManagerOptions> {
             return this.entries;
         }
 
-        public void setEntries(List<LogEntry> entries) {
+        public void setEntries(final List<LogEntry> entries) {
             this.entries = entries;
             if (entries != null) {
                 this.nEntries = entries.size();
@@ -74,7 +75,7 @@ public interface LogManager extends Lifecycle<LogManagerOptions> {
             }
         }
 
-        public StableClosure(List<LogEntry> entries) {
+        public StableClosure(final List<LogEntry> entries) {
             super();
             setEntries(entries);
         }
@@ -94,18 +95,18 @@ public interface LogManager extends Lifecycle<LogManagerOptions> {
          *
          * @param lastLogIndex last log index
          */
-        void onLastLogIndexChanged(long lastLogIndex);
+        void onLastLogIndexChanged(final long lastLogIndex);
     }
 
     /**
      * Adds a last log index listener
      */
-    void addLastLogIndexListener(LastLogIndexListener listener);
+    void addLastLogIndexListener(final LastLogIndexListener listener);
 
     /**
      * Remove the last log index listener.
      */
-    void removeLastLogIndexListener(LastLogIndexListener listener);
+    void removeLastLogIndexListener(final LastLogIndexListener listener);
 
     /**
      * Wait the log manager to be shut down.
@@ -121,7 +122,7 @@ public interface LogManager extends Lifecycle<LogManagerOptions> {
      * @param entries log entries
      * @param done    callback
      */
-    void appendEntries(List<LogEntry> entries, StableClosure done);
+    void appendEntries(final List<LogEntry> entries, StableClosure done);
 
     /**
      * Notify the log manager about the latest snapshot, which indicates the
@@ -129,7 +130,7 @@ public interface LogManager extends Lifecycle<LogManagerOptions> {
      *
      * @param meta snapshot metadata
      */
-    void setSnapshot(SnapshotMeta meta);
+    void setSnapshot(final SnapshotMeta meta);
 
     /**
      * We don't delete all the logs before last snapshot to avoid installing
@@ -144,7 +145,7 @@ public interface LogManager extends Lifecycle<LogManagerOptions> {
      * @param index the index of log entry
      * @return the log entry with {@code index}
      */
-    LogEntry getEntry(long index);
+    LogEntry getEntry(final long index);
 
     /**
      * Get the log term at index.
@@ -152,7 +153,7 @@ public interface LogManager extends Lifecycle<LogManagerOptions> {
      * @param index the index of log entry
      * @return the term of log entry
      */
-    long getTerm(long index);
+    long getTerm(final long index);
 
     /**
      * Get the first log index of log
@@ -169,25 +170,25 @@ public interface LogManager extends Lifecycle<LogManagerOptions> {
      *
      * @param isFlush whether to flush from disk.
      */
-    long getLastLogIndex(boolean isFlush);
+    long getLastLogIndex(final boolean isFlush);
 
     /**
      * Return the id the last log.
      *
      * @param isFlush whether to flush all pending task.
      */
-    LogId getLastLogId(boolean isFlush);
+    LogId getLastLogId(final boolean isFlush);
 
     /**
      * Get the configuration at index.
      */
-    ConfigurationEntry getConfiguration(long index);
+    ConfigurationEntry getConfiguration(final long index);
 
     /**
      * Check if |current| should be updated to the latest configuration
      * Returns the latest configuration, otherwise null.
      */
-    ConfigurationEntry checkAndSetConfiguration(ConfigurationEntry current);
+    ConfigurationEntry checkAndSetConfiguration(final ConfigurationEntry current);
 
     /**
      * New log notifier callback.
@@ -196,7 +197,7 @@ public interface LogManager extends Lifecycle<LogManagerOptions> {
      *
      * 2018-Apr-04 4:40:04 PM
      */
-    interface onNewLogCallback {
+    interface NewLogCallback {
 
         /**
          * Called while new log come in.
@@ -204,7 +205,7 @@ public interface LogManager extends Lifecycle<LogManagerOptions> {
          * @param arg       the waiter pass-in argument
          * @param errorCode error code
          */
-        boolean onNewLog(Object arg, int errorCode);
+        boolean onNewLog(final Object arg, final int errorCode);
     }
 
     /**
@@ -215,7 +216,7 @@ public interface LogManager extends Lifecycle<LogManagerOptions> {
      * @param cb                    callback
      * @param arg                   the waiter pass-in argument
      */
-    long wait(long expectedLastLogIndex, onNewLogCallback cb, Object arg);
+    long wait(final long expectedLastLogIndex, final NewLogCallback cb, final Object arg);
 
     /**
      * Remove a waiter.
@@ -223,13 +224,13 @@ public interface LogManager extends Lifecycle<LogManagerOptions> {
      * @param id waiter id
      * @return true on success
      */
-    boolean removeWaiter(long id);
+    boolean removeWaiter(final long id);
 
     /**
      * Set the applied id, indicating that the log before applied_id (included)
      * can be dropped from memory logs.
      */
-    void setAppliedId(LogId appliedId);
+    void setAppliedId(final LogId appliedId);
 
     /**
      * Check log consistency, returns the status

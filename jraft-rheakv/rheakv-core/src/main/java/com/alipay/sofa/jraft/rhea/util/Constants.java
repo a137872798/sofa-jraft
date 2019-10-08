@@ -27,25 +27,17 @@ import com.alipay.sofa.jraft.util.SystemPropertyUtil;
  */
 public final class Constants {
 
-    /** 换行符 */
     public static final String  NEWLINE;
 
     static {
         String newLine;
         try {
             newLine = new Formatter().format("%n").toString();
-        } catch (Exception e) {
+        } catch (final Exception e) {
             newLine = "\n";
         }
         NEWLINE = newLine;
     }
-
-    /** ANY IP address 0.0.0.0 */
-    // TODO support ipv6
-    public static final String  IP_ANY                  = "0.0.0.0";
-
-    /** CPU cores */
-    public static final int     AVAILABLE_PROCESSORS    = Runtime.getRuntime().availableProcessors();
 
     public static final boolean THREAD_AFFINITY_ENABLED = SystemPropertyUtil.getBoolean("rhea.thread.affinity.enabled",
                                                             false);

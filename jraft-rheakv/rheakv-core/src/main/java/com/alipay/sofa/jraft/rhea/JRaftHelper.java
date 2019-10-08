@@ -19,8 +19,6 @@ package com.alipay.sofa.jraft.rhea;
 import java.util.List;
 
 import com.alipay.sofa.jraft.entity.PeerId;
-import com.alipay.sofa.jraft.option.NodeOptions;
-import com.alipay.sofa.jraft.option.RaftOptions;
 import com.alipay.sofa.jraft.rhea.metadata.Peer;
 import com.alipay.sofa.jraft.rhea.util.Lists;
 import com.alipay.sofa.jraft.util.Endpoint;
@@ -75,45 +73,5 @@ public final class JRaftHelper {
             peerList.add(toPeer(peerId));
         }
         return peerList;
-    }
-
-    public static NodeOptions copyNodeOptionsFrom(final NodeOptions from) {
-        final NodeOptions to = new NodeOptions();
-        if (from == null) {
-            return to;
-        }
-        to.setElectionTimeoutMs(from.getElectionTimeoutMs());
-        to.setSnapshotIntervalSecs(from.getSnapshotIntervalSecs());
-        to.setCatchupMargin(from.getCatchupMargin());
-        to.setFilterBeforeCopyRemote(from.isFilterBeforeCopyRemote());
-        to.setDisableCli(from.isDisableCli());
-        to.setTimerPoolSize(from.getTimerPoolSize());
-        to.setCliRpcThreadPoolSize(from.getCliRpcThreadPoolSize());
-        to.setRaftRpcThreadPoolSize(from.getRaftRpcThreadPoolSize());
-        to.setEnableMetrics(from.isEnableMetrics());
-        to.setRaftOptions(copyRaftOptionsFrom(from.getRaftOptions()));
-        return to;
-    }
-
-    public static RaftOptions copyRaftOptionsFrom(final RaftOptions from) {
-        final RaftOptions to = new RaftOptions();
-        if (from == null) {
-            return to;
-        }
-        to.setMaxByteCountPerRpc(from.getMaxByteCountPerRpc());
-        to.setFileCheckHole(from.isFileCheckHole());
-        to.setMaxEntriesSize(from.getMaxEntriesSize());
-        to.setMaxBodySize(from.getMaxBodySize());
-        to.setMaxAppendBufferSize(from.getMaxAppendBufferSize());
-        to.setMaxElectionDelayMs(from.getMaxElectionDelayMs());
-        to.setElectionHeartbeatFactor(from.getElectionHeartbeatFactor());
-        to.setApplyBatch(from.getApplyBatch());
-        to.setSync(from.isSync());
-        to.setSyncMeta(from.isSyncMeta());
-        to.setReplicatorPipeline(from.isReplicatorPipeline());
-        to.setMaxReplicatorInflightMsgs(from.getMaxReplicatorInflightMsgs());
-        to.setDisruptorBufferSize(from.getDisruptorBufferSize());
-        to.setReadOnlyOptions(from.getReadOnlyOptions());
-        return to;
     }
 }

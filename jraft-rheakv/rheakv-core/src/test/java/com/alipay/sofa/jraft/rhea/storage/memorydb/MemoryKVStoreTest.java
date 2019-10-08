@@ -32,8 +32,10 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 
+import com.alipay.sofa.jraft.Status;
 import com.alipay.sofa.jraft.rhea.metadata.Region;
 import com.alipay.sofa.jraft.rhea.options.MemoryDBOptions;
+import com.alipay.sofa.jraft.rhea.storage.BaseKVStoreClosure;
 import com.alipay.sofa.jraft.rhea.storage.KVEntry;
 import com.alipay.sofa.jraft.rhea.storage.KVIterator;
 import com.alipay.sofa.jraft.rhea.storage.KVStoreAccessHelper;
@@ -307,6 +309,42 @@ public class MemoryKVStoreTest extends BaseKVStoreTest {
         }.apply(this.kvStore);
         assertEquals(sequence3.getStartValue(), 0);
         assertEquals(sequence3.getEndValue(), 11);
+
+        // read-only
+        Sequence sequence4 = new SyncKVStore<Sequence>() {
+            @Override
+            public void execute(RawKVStore kvStore, KVStoreClosure closure) {
+                kvStore.getSequence(seqKey, 0, closure);
+            }
+        }.apply(this.kvStore);
+        assertEquals(sequence4.getStartValue(), 11);
+        assertEquals(sequence4.getEndValue(), 11);
+
+        KVStoreClosure assertFailed = new BaseKVStoreClosure() {
+            @Override
+            public void run(Status status) {
+                assertEquals("Fail to [GET_SEQUENCE], step must >= 0", status.getErrorMsg());
+            }
+        };
+        this.kvStore.getSequence(seqKey, -1, assertFailed);
+    }
+
+    /**
+     * Test method: {@link MemoryRawKVStore#getSafeEndValueForSequence(long, int)}
+     */
+    @Test
+    public void getSafeEndValueForSequenceTest() {
+        long startVal = 1;
+        assertEquals(2, this.kvStore.getSafeEndValueForSequence(startVal, 1));
+        startVal = Long.MAX_VALUE - 1;
+        assertEquals(Long.MAX_VALUE, this.kvStore.getSafeEndValueForSequence(startVal, 1));
+        assertEquals(Long.MAX_VALUE, this.kvStore.getSafeEndValueForSequence(startVal, 2));
+        assertEquals(Long.MAX_VALUE, this.kvStore.getSafeEndValueForSequence(startVal, Integer.MAX_VALUE));
+        startVal = Long.MAX_VALUE;
+        assertEquals(Long.MAX_VALUE, this.kvStore.getSafeEndValueForSequence(startVal, 0));
+        assertEquals(Long.MAX_VALUE, this.kvStore.getSafeEndValueForSequence(startVal, 1));
+        assertEquals(Long.MAX_VALUE, this.kvStore.getSafeEndValueForSequence(startVal, 2));
+        assertEquals(Long.MAX_VALUE, this.kvStore.getSafeEndValueForSequence(startVal, Integer.MAX_VALUE));
     }
 
     /**
@@ -329,6 +367,62 @@ public class MemoryKVStoreTest extends BaseKVStoreTest {
             }
         }.apply(this.kvStore);
         assertArrayEquals(value, newValue);
+    }
+
+    /**
+     * Test method: {@link MemoryRawKVStore#getAndPut(byte[], byte[], KVStoreClosure)}
+     */
+    @Test
+    public void getAndPutTest() {
+        final byte[] key = makeKey("put_test");
+        TestClosure closure = new TestClosure();
+        this.kvStore.get(key, closure);
+        byte[] value = (byte[]) closure.getData();
+        assertNull(value);
+
+        value = makeValue("put_test_value");
+        KVStoreClosure kvStoreClosure = new BaseKVStoreClosure() {
+            @Override
+            public void run(Status status) {
+                assertEquals(status, Status.OK());
+            }
+        };
+        this.kvStore.getAndPut(key, value, kvStoreClosure);
+        assertNull(kvStoreClosure.getData());
+
+        byte[] newVal = makeValue("put_test_value_new");
+        this.kvStore.getAndPut(key, newVal, kvStoreClosure);
+        assertArrayEquals(value, (byte[]) kvStoreClosure.getData());
+    }
+
+    /**
+     * Test method: {@link MemoryRawKVStore#compareAndPut(byte[], byte[], byte[], KVStoreClosure)}
+     */
+    @Test
+    public void compareAndPutTest() {
+        final byte[] key = makeKey("put_test");
+        byte[] value = makeValue("put_test_value");
+        this.kvStore.put(key, value, null);
+
+        byte[] update = makeValue("put_test_update");
+        KVStoreClosure kvStoreClosure = new BaseKVStoreClosure() {
+            @Override
+            public void run(Status status) {
+                assertEquals(status, Status.OK());
+            }
+        };
+        this.kvStore.compareAndPut(key, value, update, kvStoreClosure);
+        assertEquals(kvStoreClosure.getData(), Boolean.TRUE);
+        byte[] newValue = new SyncKVStore<byte[]>() {
+            @Override
+            public void execute(RawKVStore kvStore, KVStoreClosure closure) {
+                kvStore.get(key, closure);
+            }
+        }.apply(this.kvStore);
+        assertArrayEquals(update, newValue);
+
+        this.kvStore.compareAndPut(key, value, update, kvStoreClosure);
+        assertEquals(kvStoreClosure.getData(), Boolean.FALSE);
     }
 
     /**
@@ -468,6 +562,32 @@ public class MemoryKVStoreTest extends BaseKVStoreTest {
         this.kvStore.get(makeKey("del_range_test8"), closure);
         value = (byte[]) closure.getData();
         assertNotNull(value);
+    }
+
+    /**
+     * Test method: {@link MemoryRawKVStore#delete(List, KVStoreClosure)}
+     */
+    @Test
+    public void deleteListTest() {
+        final List<KVEntry> entries = Lists.newArrayList();
+        final List<byte[]> keys = Lists.newArrayList();
+        for (int i = 0; i < 10; i++) {
+            final byte[] key = makeKey("batch_del_test" + i);
+            entries.add(new KVEntry(key, makeValue("batch_del_test_value")));
+            keys.add(key);
+        }
+        this.kvStore.put(entries, null);
+        this.kvStore.delete(keys, null);
+        TestClosure closure = new TestClosure();
+        this.kvStore.scan(makeKey("batch_del_test"), makeKey("batch_del_test" + 99), closure);
+        List<KVEntry> entries2 = (List<KVEntry>) closure.getData();
+        assertEquals(0, entries2.size());
+        for (int i = 0; i < keys.size(); i++) {
+            closure = new TestClosure();
+            this.kvStore.get(keys.get(i), closure);
+            byte[] value = (byte[]) closure.getData();
+            assertNull(value);
+        }
     }
 
     private byte[] get(final byte[] key) {

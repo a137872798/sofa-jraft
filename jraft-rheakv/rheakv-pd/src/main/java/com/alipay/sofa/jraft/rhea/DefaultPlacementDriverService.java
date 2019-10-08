@@ -50,20 +50,16 @@ import com.alipay.sofa.jraft.rhea.pipeline.event.RegionPingEvent;
 import com.alipay.sofa.jraft.rhea.pipeline.event.StorePingEvent;
 import com.alipay.sofa.jraft.rhea.pipeline.handler.LogHandler;
 import com.alipay.sofa.jraft.rhea.pipeline.handler.PlacementDriverTailHandler;
-import com.alipay.sofa.jraft.rhea.pipeline.handler.RegionLeaderBalanceHandler;
-import com.alipay.sofa.jraft.rhea.pipeline.handler.RegionStatsPersistenceHandler;
-import com.alipay.sofa.jraft.rhea.pipeline.handler.RegionStatsValidator;
-import com.alipay.sofa.jraft.rhea.pipeline.handler.SplittingJudgeByApproximateKeysHandler;
-import com.alipay.sofa.jraft.rhea.pipeline.handler.StoreStatsPersistenceHandler;
-import com.alipay.sofa.jraft.rhea.pipeline.handler.StoreStatsValidator;
 import com.alipay.sofa.jraft.rhea.util.StackTraceUtil;
 import com.alipay.sofa.jraft.rhea.util.concurrent.CallerRunsPolicyWithReport;
 import com.alipay.sofa.jraft.rhea.util.concurrent.NamedThreadFactory;
 import com.alipay.sofa.jraft.rhea.util.pipeline.DefaultHandlerInvoker;
 import com.alipay.sofa.jraft.rhea.util.pipeline.DefaultPipeline;
+import com.alipay.sofa.jraft.rhea.util.pipeline.Handler;
 import com.alipay.sofa.jraft.rhea.util.pipeline.HandlerInvoker;
 import com.alipay.sofa.jraft.rhea.util.pipeline.Pipeline;
 import com.alipay.sofa.jraft.rhea.util.pipeline.future.PipelineFuture;
+import com.alipay.sofa.jraft.util.JRaftServiceLoader;
 import com.alipay.sofa.jraft.util.Requires;
 import com.alipay.sofa.jraft.util.ThreadPoolUtil;
 
@@ -96,24 +92,12 @@ public class DefaultPlacementDriverService implements PlacementDriverService, Le
         }
         Requires.requireNonNull(opts, "placementDriverServerOptions");
         this.metadataStore = new DefaultMetadataStore(this.rheaKVStore);
-        final int corePoolSize = opts.getPipelineCorePoolSize();
-        final int maximumPoolSize = opts.getPipelineMaximumPoolSize();
-        if (corePoolSize > 0 && maximumPoolSize > 0) {
-            final String name = "pipeline-executor";
-            final ThreadPoolExecutor threadPool = ThreadPoolUtil.newThreadPool(name, false, corePoolSize,
-                maximumPoolSize, 120L, new ArrayBlockingQueue<>(1024), new NamedThreadFactory(name, true),
-                new CallerRunsPolicyWithReport(name));
+        final ThreadPoolExecutor threadPool = createPipelineExecutor(opts);
+        if (threadPool != null) {
             this.pipelineInvoker = new DefaultHandlerInvoker(threadPool);
         }
-        this.pipeline = new DefaultPipeline() //
-            .addLast(this.pipelineInvoker, "logHandler", new LogHandler()) //
-            .addLast("storeStatsValidator", new StoreStatsValidator()) //
-            .addLast("regionStatsValidator", new RegionStatsValidator()) //
-            .addLast("storeStatsPersistence", new StoreStatsPersistenceHandler()) //
-            .addLast("regionStatsPersistence", new RegionStatsPersistenceHandler()) //
-            .addLast("regionLeaderBalance", new RegionLeaderBalanceHandler()) //
-            .addLast("splittingJudgeByApproximateKeys", new SplittingJudgeByApproximateKeysHandler()) //
-            .addLast("placementDriverTail", new PlacementDriverTailHandler());
+        this.pipeline = new DefaultPipeline(); //
+        initPipeline(this.pipeline);
         LOG.info("[DefaultPlacementDriverService] start successfully, options: {}.", opts);
         return this.started = true;
     }
@@ -322,10 +306,54 @@ public class DefaultPlacementDriverService implements PlacementDriverService, Le
         invalidLocalCache();
     }
 
+    protected void initPipeline(final Pipeline pipeline) {
+        final List<Handler> sortedHandlers = JRaftServiceLoader.load(Handler.class) //
+            .sort();
+
+        // default handlers and order:
+        //
+        // 1. logHandler
+        // 2. storeStatsValidator
+        // 3. regionStatsValidator
+        // 4. storeStatsPersistence
+        // 5. regionStatsPersistence
+        // 6. regionLeaderBalance
+        // 7. splittingJudgeByApproximateKeys
+        // 8: placementDriverTail
+        for (final Handler h : sortedHandlers) {
+            pipeline.addLast(h);
+        }
+
+        // first handler
+        pipeline.addFirst(this.pipelineInvoker, "logHandler", new LogHandler());
+        // last handler
+        pipeline.addLast("placementDriverTail", new PlacementDriverTailHandler());
+    }
+
     private void invalidLocalCache() {
         if (this.metadataStore != null) {
             this.metadataStore.invalidCache();
         }
         ClusterStatsManager.invalidCache();
+    }
+
+    private ThreadPoolExecutor createPipelineExecutor(final PlacementDriverServerOptions opts) {
+        final int corePoolSize = opts.getPipelineCorePoolSize();
+        final int maximumPoolSize = opts.getPipelineMaximumPoolSize();
+        if (corePoolSize <= 0 || maximumPoolSize <= 0) {
+            return null;
+        }
+
+        final String name = "rheakv-pipeline-executor";
+        return ThreadPoolUtil.newBuilder() //
+            .poolName(name) //
+            .enableMetric(false) //
+            .coreThreads(corePoolSize) //
+            .maximumThreads(maximumPoolSize) //
+            .keepAliveSeconds(120L) //
+            .workQueue(new ArrayBlockingQueue<>(1024)) //
+            .threadFactory(new NamedThreadFactory(name, true)) //
+            .rejectedHandler(new CallerRunsPolicyWithReport(name)) //
+            .build();
     }
 }

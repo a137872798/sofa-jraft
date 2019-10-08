@@ -21,6 +21,7 @@ import java.util.List;
 import com.alipay.sofa.jraft.closure.ReadIndexClosure;
 import com.alipay.sofa.jraft.conf.Configuration;
 import com.alipay.sofa.jraft.core.NodeMetrics;
+import com.alipay.sofa.jraft.core.Replicator;
 import com.alipay.sofa.jraft.entity.NodeId;
 import com.alipay.sofa.jraft.entity.PeerId;
 import com.alipay.sofa.jraft.entity.Task;
@@ -29,6 +30,7 @@ import com.alipay.sofa.jraft.error.LogIndexOutOfBoundsException;
 import com.alipay.sofa.jraft.error.LogNotFoundException;
 import com.alipay.sofa.jraft.option.NodeOptions;
 import com.alipay.sofa.jraft.option.RaftOptions;
+import com.alipay.sofa.jraft.util.Describer;
 
 /**
  * A raft replica node.
@@ -37,7 +39,7 @@ import com.alipay.sofa.jraft.option.RaftOptions;
  *
  * 2018-Apr-03 4:06:55 PM
  */
-public interface Node extends Lifecycle<NodeOptions> {
+public interface Node extends Lifecycle<NodeOptions>, Describer {
 
     /**
      * Get the leader peer id for redirect, null if absent.
@@ -225,4 +227,32 @@ public interface Node extends Lifecycle<NodeOptions> {
      * @throws LogIndexOutOfBoundsException  the special index is out of bounds.
      */
     UserLog readCommittedUserLog(final long index);
+
+    /**
+     * SOFAJRaft users can implement the ReplicatorStateListener interface by themselves.
+     * So users can do their own logical operator in this listener when replicator created, destroyed or had some errors.
+     *
+     * @param replicatorStateListener added ReplicatorStateListener which is implemented by users.
+     */
+    void addReplicatorStateListener(final Replicator.ReplicatorStateListener replicatorStateListener);
+
+    /**
+     * End User can remove their implement the ReplicatorStateListener interface by themselves.
+     *
+     * @param replicatorStateListener need to remove the ReplicatorStateListener which has been added by users.
+     */
+    void removeReplicatorStateListener(final Replicator.ReplicatorStateListener replicatorStateListener);
+
+    /**
+     * Remove all the ReplicatorStateListeners which have been added by users.
+     *
+     */
+    void clearReplicatorStateListeners();
+
+    /**
+     * Get the ReplicatorStateListeners which have been added by users.
+     *
+     * @return node's replicatorStatueListeners which have been added by users.
+     */
+    List<Replicator.ReplicatorStateListener> getReplicatorStatueListeners();
 }

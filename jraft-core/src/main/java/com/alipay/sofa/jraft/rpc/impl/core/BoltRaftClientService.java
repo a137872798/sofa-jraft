@@ -16,9 +16,13 @@
  */
 package com.alipay.sofa.jraft.rpc.impl.core;
 
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.Executor;
 import java.util.concurrent.Future;
 
 import com.alipay.remoting.ConnectionEventType;
+import com.alipay.remoting.InvokeContext;
 import com.alipay.remoting.rpc.RpcClient;
 import com.alipay.sofa.jraft.ReplicatorGroup;
 import com.alipay.sofa.jraft.option.NodeOptions;
@@ -39,6 +43,9 @@ import com.alipay.sofa.jraft.rpc.RpcRequests.TimeoutNowResponse;
 import com.alipay.sofa.jraft.rpc.RpcResponseClosure;
 import com.alipay.sofa.jraft.rpc.impl.AbstractBoltClientService;
 import com.alipay.sofa.jraft.util.Endpoint;
+import com.alipay.sofa.jraft.util.Utils;
+import com.alipay.sofa.jraft.util.concurrent.DefaultFixedThreadsExecutorGroupFactory;
+import com.alipay.sofa.jraft.util.concurrent.FixedThreadsExecutorGroup;
 import com.google.protobuf.Message;
 
 /**
@@ -50,68 +57,81 @@ import com.google.protobuf.Message;
  */
 public class BoltRaftClientService extends AbstractBoltClientService implements RaftClientService {
 
+    private static final FixedThreadsExecutorGroup  APPEND_ENTRIES_EXECUTORS = DefaultFixedThreadsExecutorGroupFactory.INSTANCE
+                                                                                 .newExecutorGroup(
+                                                                                     Utils.APPEND_ENTRIES_THREADS_SEND,
+                                                                                     "Append-Entries-Thread-Send",
+                                                                                     Utils.MAX_APPEND_ENTRIES_TASKS_PER_THREAD,
+                                                                                     true);
+
+    private final ConcurrentMap<Endpoint, Executor> appendEntriesExecutorMap = new ConcurrentHashMap<>();
+
     // cached node options
-    private NodeOptions           nodeOptions;
-    private final ReplicatorGroup rgGroup;
+    private NodeOptions                             nodeOptions;
+    private final ReplicatorGroup                   rgGroup;
 
     @Override
-    protected void configRpcClient(RpcClient rpcClient) {
+    protected void configRpcClient(final RpcClient rpcClient) {
         rpcClient.addConnectionEventProcessor(ConnectionEventType.CONNECT, new ClientServiceConnectionEventProcessor(
-            rgGroup));
+            this.rgGroup));
     }
 
-    public BoltRaftClientService(ReplicatorGroup rgGroup) {
+    public BoltRaftClientService(final ReplicatorGroup rgGroup) {
         this.rgGroup = rgGroup;
     }
 
     @Override
-    public synchronized boolean init(RpcOptions rpcOptions) {
+    public synchronized boolean init(final RpcOptions rpcOptions) {
         final boolean ret = super.init(rpcOptions);
         if (ret) {
-            nodeOptions = (NodeOptions) rpcOptions;
+            this.nodeOptions = (NodeOptions) rpcOptions;
         }
         return ret;
     }
 
     @Override
-    public Future<Message> preVote(Endpoint endpoint, RequestVoteRequest request,
-                                   RpcResponseClosure<RequestVoteResponse> done) {
-        return invokeWithDone(endpoint, request, done, nodeOptions.getElectionTimeoutMs());
+    public Future<Message> preVote(final Endpoint endpoint, final RequestVoteRequest request,
+                                   final RpcResponseClosure<RequestVoteResponse> done) {
+        return invokeWithDone(endpoint, request, done, this.nodeOptions.getElectionTimeoutMs());
     }
 
     @Override
-    public Future<Message> requestVote(Endpoint endpoint, RequestVoteRequest request,
-                                       RpcResponseClosure<RequestVoteResponse> done) {
-        return invokeWithDone(endpoint, request, done, nodeOptions.getElectionTimeoutMs());
+    public Future<Message> requestVote(final Endpoint endpoint, final RequestVoteRequest request,
+                                       final RpcResponseClosure<RequestVoteResponse> done) {
+        return invokeWithDone(endpoint, request, done, this.nodeOptions.getElectionTimeoutMs());
     }
 
     @Override
-    public Future<Message> appendEntries(Endpoint endpoint, AppendEntriesRequest request, int timeoutMs,
-                                         RpcResponseClosure<AppendEntriesResponse> done) {
+    public Future<Message> appendEntries(final Endpoint endpoint, final AppendEntriesRequest request,
+                                         final int timeoutMs, final RpcResponseClosure<AppendEntriesResponse> done) {
+        final Executor executor = this.appendEntriesExecutorMap.computeIfAbsent(endpoint, k -> APPEND_ENTRIES_EXECUTORS.next());
+        return invokeWithDone(endpoint, request, done, timeoutMs, executor);
+    }
+
+    @Override
+    public Future<Message> getFile(final Endpoint endpoint, final GetFileRequest request, final int timeoutMs,
+                                   final RpcResponseClosure<GetFileResponse> done) {
+        // open checksum
+        final InvokeContext ctx = new InvokeContext();
+        ctx.put(InvokeContext.BOLT_CRC_SWITCH, true);
+        return invokeWithDone(endpoint, request, ctx, done, timeoutMs);
+    }
+
+    @Override
+    public Future<Message> installSnapshot(final Endpoint endpoint, final InstallSnapshotRequest request,
+                                           final RpcResponseClosure<InstallSnapshotResponse> done) {
+        return invokeWithDone(endpoint, request, done, this.rpcOptions.getRpcInstallSnapshotTimeout());
+    }
+
+    @Override
+    public Future<Message> timeoutNow(final Endpoint endpoint, final TimeoutNowRequest request, final int timeoutMs,
+                                      final RpcResponseClosure<TimeoutNowResponse> done) {
         return invokeWithDone(endpoint, request, done, timeoutMs);
     }
 
     @Override
-    public Future<Message> getFile(Endpoint endpoint, GetFileRequest request, int timeoutMs,
-                                   RpcResponseClosure<GetFileResponse> done) {
-        return invokeWithDone(endpoint, request, done, timeoutMs);
-    }
-
-    @Override
-    public Future<Message> installSnapshot(Endpoint endpoint, InstallSnapshotRequest request,
-                                           RpcResponseClosure<InstallSnapshotResponse> done) {
-        return invokeWithDone(endpoint, request, done, rpcOptions.getRpcInstallSnapshotTimeout());
-    }
-
-    @Override
-    public Future<Message> timeoutNow(Endpoint endpoint, TimeoutNowRequest request, int timeoutMs,
-                                      RpcResponseClosure<TimeoutNowResponse> done) {
-        return invokeWithDone(endpoint, request, done, timeoutMs);
-    }
-
-    @Override
-    public Future<Message> readIndex(Endpoint endpoint, ReadIndexRequest request, int timeoutMs,
-                                     RpcResponseClosure<ReadIndexResponse> done) {
+    public Future<Message> readIndex(final Endpoint endpoint, final ReadIndexRequest request, final int timeoutMs,
+                                     final RpcResponseClosure<ReadIndexResponse> done) {
         return invokeWithDone(endpoint, request, done, timeoutMs);
     }
 }

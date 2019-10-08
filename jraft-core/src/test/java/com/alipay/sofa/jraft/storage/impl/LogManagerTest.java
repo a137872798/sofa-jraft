@@ -16,13 +16,6 @@
  */
 package com.alipay.sofa.jraft.storage.impl;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertNotSame;
-import static org.junit.Assert.assertNull;
-import static org.junit.Assert.assertSame;
-import static org.junit.Assert.assertTrue;
-
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
@@ -45,12 +38,20 @@ import com.alipay.sofa.jraft.entity.EnumOutter;
 import com.alipay.sofa.jraft.entity.LogEntry;
 import com.alipay.sofa.jraft.entity.LogId;
 import com.alipay.sofa.jraft.entity.RaftOutter;
+import com.alipay.sofa.jraft.entity.codec.v2.LogEntryV2CodecFactory;
 import com.alipay.sofa.jraft.option.LogManagerOptions;
 import com.alipay.sofa.jraft.option.RaftOptions;
 import com.alipay.sofa.jraft.storage.BaseStorageTest;
 import com.alipay.sofa.jraft.storage.LogManager;
 import com.alipay.sofa.jraft.storage.LogStorage;
 import com.alipay.sofa.jraft.test.TestUtils;
+
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotSame;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertSame;
+import static org.junit.Assert.assertTrue;
 
 @RunWith(value = MockitoJUnitRunner.class)
 public class LogManagerTest extends BaseStorageTest {
@@ -67,13 +68,14 @@ public class LogManagerTest extends BaseStorageTest {
         super.setup();
         this.confManager = new ConfigurationManager();
         final RaftOptions raftOptions = new RaftOptions();
-        this.logStorage = new RocksDBLogStorage(path, raftOptions);
+        this.logStorage = new RocksDBLogStorage(this.path, raftOptions);
         this.logManager = new LogManagerImpl();
         final LogManagerOptions opts = new LogManagerOptions();
-        opts.setConfigurationManager(confManager);
-        opts.setFsmCaller(fsmCaller);
+        opts.setConfigurationManager(this.confManager);
+        opts.setLogEntryCodecFactory(LogEntryV2CodecFactory.getInstance());
+        opts.setFsmCaller(this.fsmCaller);
         opts.setNodeMetrics(new NodeMetrics(false));
-        opts.setLogStorage(logStorage);
+        opts.setLogStorage(this.logStorage);
         opts.setRaftOptions(raftOptions);
         assertTrue(this.logManager.init(opts));
     }
@@ -88,14 +90,12 @@ public class LogManagerTest extends BaseStorageTest {
     @Test
     public void testEmptyState() {
         assertEquals(1, this.logManager.getFirstLogIndex());
-        assertEquals(0, logManager.getLastLogIndex());
+        assertEquals(0, this.logManager.getLastLogIndex());
         assertNull(this.logManager.getEntry(1));
-        assertEquals(0, logManager.getLastLogIndex(true));
+        assertEquals(0, this.logManager.getLastLogIndex(true));
         LogId lastLogId = this.logManager.getLastLogId(true);
         assertEquals(0, lastLogId.getIndex());
-        assertEquals(0, lastLogId.getIndex());
         lastLogId = this.logManager.getLastLogId(false);
-        assertEquals(0, lastLogId.getIndex());
         assertEquals(0, lastLogId.getIndex());
         assertTrue(this.logManager.checkConsistency().isOk());
     }
@@ -109,7 +109,7 @@ public class LogManagerTest extends BaseStorageTest {
         this.logManager.appendEntries(entries, new LogManager.StableClosure() {
 
             @Override
-            public void run(Status status) {
+            public void run(final Status status) {
                 assertTrue(status.isOk());
                 latch.countDown();
             }
@@ -117,39 +117,35 @@ public class LogManagerTest extends BaseStorageTest {
         latch.await();
 
         assertEquals(1, this.logManager.getFirstLogIndex());
-        assertEquals(1, logManager.getLastLogIndex());
+        assertEquals(1, this.logManager.getLastLogIndex());
         Assert.assertEquals(entry, this.logManager.getEntry(1));
-        assertEquals(1, logManager.getLastLogIndex(true));
+        assertEquals(1, this.logManager.getLastLogIndex(true));
         LogId lastLogId = this.logManager.getLastLogId(true);
         assertEquals(1, lastLogId.getIndex());
-        assertEquals(1, lastLogId.getIndex());
         lastLogId = this.logManager.getLastLogId(false);
-        assertEquals(1, lastLogId.getIndex());
         assertEquals(1, lastLogId.getIndex());
         assertTrue(this.logManager.checkConsistency().isOk());
     }
 
     @Test
     public void testAppendEntries() throws Exception {
-        final List<LogEntry> mockEntries = this.mockAddEntries();
+        final List<LogEntry> mockEntries = mockAddEntries();
 
         assertEquals(1, this.logManager.getFirstLogIndex());
-        assertEquals(10, logManager.getLastLogIndex());
+        assertEquals(10, this.logManager.getLastLogIndex());
         for (int i = 0; i < 10; i++) {
             Assert.assertEquals(mockEntries.get(i), this.logManager.getEntry(i + 1));
         }
-        assertEquals(10, logManager.getLastLogIndex(true));
+        assertEquals(10, this.logManager.getLastLogIndex(true));
         LogId lastLogId = this.logManager.getLastLogId(true);
         assertEquals(10, lastLogId.getIndex());
-        assertEquals(10, lastLogId.getIndex());
         lastLogId = this.logManager.getLastLogId(false);
-        assertEquals(10, lastLogId.getIndex());
         assertEquals(10, lastLogId.getIndex());
         assertTrue(this.logManager.checkConsistency().isOk());
     }
 
     @Test
-    public void testAppendEntiresConflicts() throws Exception {
+    public void testAppendEntresConflicts() throws Exception {
         //Append 0-10
         List<LogEntry> mockEntries = TestUtils.mockEntries(10);
         for (int i = 0; i < 10; i++) {
@@ -159,7 +155,7 @@ public class LogManagerTest extends BaseStorageTest {
         this.logManager.appendEntries(new ArrayList<>(mockEntries), new LogManager.StableClosure() {
 
             @Override
-            public void run(Status status) {
+            public void run(final Status status) {
                 assertTrue(status.isOk());
                 latch1.countDown();
             }
@@ -167,7 +163,7 @@ public class LogManagerTest extends BaseStorageTest {
         latch1.await();
 
         assertEquals(1, this.logManager.getFirstLogIndex());
-        assertEquals(10, logManager.getLastLogIndex());
+        assertEquals(10, this.logManager.getLastLogIndex());
 
         //Append 11-20
         final CountDownLatch latch2 = new CountDownLatch(1);
@@ -179,7 +175,7 @@ public class LogManagerTest extends BaseStorageTest {
         this.logManager.appendEntries(new ArrayList<>(mockEntries), new LogManager.StableClosure() {
 
             @Override
-            public void run(Status status) {
+            public void run(final Status status) {
                 assertTrue(status.isOk());
                 latch2.countDown();
             }
@@ -187,7 +183,7 @@ public class LogManagerTest extends BaseStorageTest {
         latch2.await();
 
         assertEquals(1, this.logManager.getFirstLogIndex());
-        assertEquals(20, logManager.getLastLogIndex());
+        assertEquals(20, this.logManager.getLastLogIndex());
 
         //Re-adds 11-30, but 15 has different term, it will truncate [14,lastIndex] logs
         mockEntries = TestUtils.mockEntries(20);
@@ -203,14 +199,14 @@ public class LogManagerTest extends BaseStorageTest {
         this.logManager.appendEntries(new ArrayList<>(mockEntries), new LogManager.StableClosure() {
 
             @Override
-            public void run(Status status) {
+            public void run(final Status status) {
                 assertTrue(status.isOk());
                 latch3.countDown();
             }
         });
         latch3.await();
         assertEquals(1, this.logManager.getFirstLogIndex());
-        assertEquals(30, logManager.getLastLogIndex());
+        assertEquals(30, this.logManager.getLastLogIndex());
 
         for (int i = 0; i < 30; i++) {
             final LogEntry entry = (this.logManager.getEntry(i + 1));
@@ -243,7 +239,7 @@ public class LogManagerTest extends BaseStorageTest {
         this.logManager.appendEntries(new ArrayList<>(entries), new LogManager.StableClosure() {
 
             @Override
-            public void run(Status status) {
+            public void run(final Status status) {
                 assertTrue(status.isOk());
                 latch.countDown();
             }
@@ -279,7 +275,7 @@ public class LogManagerTest extends BaseStorageTest {
         this.logManager.appendEntries(new ArrayList<>(mockEntries), new LogManager.StableClosure() {
 
             @Override
-            public void run(Status status) {
+            public void run(final Status status) {
                 assertTrue(status.isOk());
                 latch.countDown();
             }
@@ -290,7 +286,7 @@ public class LogManagerTest extends BaseStorageTest {
 
     @Test
     public void testSetSnapshot() throws Exception {
-        final List<LogEntry> entries = this.mockAddEntries();
+        final List<LogEntry> entries = mockAddEntries();
         RaftOutter.SnapshotMeta meta = RaftOutter.SnapshotMeta.newBuilder().setLastIncludedIndex(3)
             .setLastIncludedTerm(2).addPeers("localhost:8081").build();
         this.logManager.setSnapshot(meta);
@@ -316,21 +312,17 @@ public class LogManagerTest extends BaseStorageTest {
 
     @Test
     public void testWaiter() throws Exception {
-        this.mockAddEntries();
+        mockAddEntries();
         final Object theArg = new Object();
         final CountDownLatch latch = new CountDownLatch(1);
-        final long waitId = this.logManager.wait(10, new LogManager.onNewLogCallback() {
-
-            @Override
-            public boolean onNewLog(Object arg, int errorCode) {
-                assertSame(arg, theArg);
-                assertEquals(0, errorCode);
-                latch.countDown();
-                return true;
-            }
+        final long waitId = this.logManager.wait(10, (arg, errorCode) -> {
+            assertSame(arg, theArg);
+            assertEquals(0, errorCode);
+            latch.countDown();
+            return true;
         }, theArg);
         assertEquals(1, waitId);
-        this.mockAddEntries();
+        mockAddEntries();
         latch.await();
         assertFalse(this.logManager.removeWaiter(waitId));
     }
@@ -343,7 +335,7 @@ public class LogManagerTest extends BaseStorageTest {
         entry.setConf(JRaftUtils.getConfiguration("localhost:8081,localhost:8082"));
         assertSame(entry, this.logManager.checkAndSetConfiguration(entry));
 
-        this.testGetConfiguration();
+        testGetConfiguration();
         final ConfigurationEntry lastEntry = this.logManager.checkAndSetConfiguration(entry);
         assertNotSame(entry, lastEntry);
         assertEquals("localhost:8081,localhost:8082,localhost:8083", lastEntry.getConf().toString());
