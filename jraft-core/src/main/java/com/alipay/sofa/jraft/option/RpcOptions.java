@@ -18,6 +18,9 @@ package com.alipay.sofa.jraft.option;
 
 import com.codahale.metrics.MetricRegistry;
 
+/**
+ * 远程调用相关的选项信息
+ */
 public class RpcOptions {
 
     /**

@@ -26,7 +26,7 @@ import com.alipay.sofa.jraft.option.CliOptions;
 
 /**
  * Client command-line service
- *
+ * 代表接受命令行交互的 service 对象
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Apr-09 4:05:35 PM
@@ -36,7 +36,7 @@ public interface CliService extends Lifecycle<CliOptions> {
     /**
      * Add a new peer into the replicating group which consists of |conf|.
      * return OK status when success.
-     *
+     * 为raftGroup 增加一个新的 peer 节点
      * @param groupId the raft group id
      * @param conf    current configuration
      * @param peer    peer to add
@@ -47,7 +47,7 @@ public interface CliService extends Lifecycle<CliOptions> {
     /**
      * Remove a peer from the replicating group which consists of |conf|.
      * return OK status when success.
-     *
+     * 移除某个节点
      * @param groupId the raft group id
      * @param conf    current configuration
      * @param peer    peer to remove
@@ -57,7 +57,7 @@ public interface CliService extends Lifecycle<CliOptions> {
 
     /**
      * Gracefully change the peers of the replication group.
-     *
+     * 迁移节点 ???
      * @param groupId  the raft group id
      * @param conf     current configuration
      * @param newPeers new peers to change
@@ -67,7 +67,7 @@ public interface CliService extends Lifecycle<CliOptions> {
 
     /**
      * Reset the peer set of the target peer.
-     *
+     * 重置节点配置
      * @param groupId  the raft group id
      * @param peer     target peer
      * @param newPeers new peers to reset
@@ -77,7 +77,7 @@ public interface CliService extends Lifecycle<CliOptions> {
 
     /**
      * Transfer the leader of the replication group to the target peer
-     *
+     * 将leader 让给给定的 peer
      * @param groupId the raft group id
      * @param conf    current configuration
      * @param peer    target peer of new leader
@@ -87,7 +87,7 @@ public interface CliService extends Lifecycle<CliOptions> {
 
     /**
      * Ask the peer to dump a snapshot immediately.
-     *
+     * 生成快照对象
      * @param groupId the raft group id
      * @param peer    target peer
      * @return operation status
@@ -96,6 +96,7 @@ public interface CliService extends Lifecycle<CliOptions> {
 
     /**
      * Get the leader of the replication group.
+     * 获取给定组的 leader
      * @param groupId  the raft group id
      * @param conf     configuration
      * @param leaderId id of leader
@@ -105,7 +106,7 @@ public interface CliService extends Lifecycle<CliOptions> {
 
     /**
      * Ask all peers of the replication group.
-     *
+     * 获取该组下 所有节点
      * @param groupId the raft group id
      * @param conf    target peers configuration
      * @return all peers of the replication group
@@ -114,7 +115,7 @@ public interface CliService extends Lifecycle<CliOptions> {
 
     /**
      * Ask all alive peers of the replication group.
-     *
+     * 获取当前存活的节点
      * @param groupId the raft group id
      * @param conf    target peers configuration
      * @return all alive peers of the replication group

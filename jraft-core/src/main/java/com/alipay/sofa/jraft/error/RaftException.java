@@ -21,7 +21,7 @@ import com.alipay.sofa.jraft.entity.EnumOutter;
 
 /**
  * A raft exception.
- *
+ * 代表状态机运行过程中出现的异常
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Mar-14 10:41:21 AM

@@ -33,6 +33,7 @@ import com.alipay.sofa.jraft.util.Utils;
 
 /**
  * Raft nodes manager.
+ * 节点的管理对象 每个创建的节点对象都应该交由它来管理
  *
  * @author boyan (boyan@alibaba-inc.com)
  *
@@ -44,6 +45,9 @@ public class NodeManager {
 
     private final ConcurrentMap<NodeId, Node>       nodeMap  = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, List<Node>> groupMap = new ConcurrentHashMap<>();
+    /**
+     * 存放节点对象的容器
+     */
     private final ConcurrentHashSet<Endpoint>       addrSet  = new ConcurrentHashSet<>();
 
     public static NodeManager getInstance() {
@@ -69,6 +73,7 @@ public class NodeManager {
 
     /**
      * Adds a RPC service address.
+     * 通过节点的 地址信息保持节点
      */
     public void addAddress(final Endpoint addr) {
         this.addrSet.add(addr);

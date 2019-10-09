@@ -27,19 +27,23 @@ import com.alipay.sofa.jraft.util.Utils;
 
 /**
  * Node options.
- *
+ * 初始化node 对象需要的参数信息
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Apr-04 2:59:12 PM
  */
 public class NodeOptions extends RpcOptions implements Copiable<NodeOptions> {
 
+    /**
+     * 服务工厂对象 通过SPI 加载
+     */
     public static final JRaftServiceFactory defaultServiceFactory  = JRaftServiceLoader.load(JRaftServiceFactory.class) //
                                                                        .first();
 
     // A follower would become a candidate if it doesn't receive any message
     // from the leader in |election_timeout_ms| milliseconds
     // Default: 1000 (1s)
+    // 一个follower 如果在这么长的时间内没有收到 leader 的 任何消息(包含心跳) 那么该节点将会变成候选者
     private int                             electionTimeoutMs      = 1000;                                         // follower to candidate timeout
 
     // Leader lease time's ratio of electionTimeoutMs,
@@ -53,6 +57,7 @@ public class NodeOptions extends RpcOptions implements Copiable<NodeOptions> {
     // If |snapshot_interval_s| <= 0, the time based snapshot would be disabled.
     //
     // Default: 3600 (1 hour)
+    // 自动生成快照的时间 默认为1小时
     private int                             snapshotIntervalSecs   = 3600;
 
     // We will regard a adding peer as caught up if the margin between the
@@ -68,19 +73,24 @@ public class NodeOptions extends RpcOptions implements Copiable<NodeOptions> {
     // the existing environment.
     //
     // Default: A empty group
+    // 如果节点是从一个 空白环境初始化会使用该对象作为  初始的配置 否则会加载之前的数据 比如从快照或者某个存储中
     private Configuration                   initialConf            = new Configuration();
 
     // The specific StateMachine implemented your business logic, which must be
     // a valid instance.
+    // 本节点的状态机实例
     private StateMachine                    fsm;
 
     // Describe a specific LogStorage in format ${type}://${parameters}
+    // 代表raft 的日志存储地址  必填
     private String                          logUri;
 
     // Describe a specific RaftMetaStorage in format ${type}://${parameters}
+    // 元信息存储地址   必填
     private String                          raftMetaUri;
 
     // Describe a specific SnapshotStorage in format ${type}://${parameters}
+    // 快照存储地址   非必填
     private String                          snapshotUri;
 
     // If enable, we will filter duplicate files before copy remote snapshot,
@@ -95,10 +105,12 @@ public class NodeOptions extends RpcOptions implements Copiable<NodeOptions> {
 
     // If true, RPCs through raft_cli will be denied.
     // Default: false
+    // 是否关闭client  默认是false
     private boolean                         disableCli             = false;
 
     /**
      * Timer manager thread pool size
+     * 内部线程池大小
      */
     private int                             timerPoolSize          = Utils.cpus() * 3 > 20 ? 20 : Utils.cpus() * 3;
 
@@ -148,6 +160,7 @@ public class NodeOptions extends RpcOptions implements Copiable<NodeOptions> {
 
     /**
      * Raft options
+     * raft 配置信息
      */
     private RaftOptions raftOptions = new RaftOptions();
 

@@ -21,6 +21,7 @@ import java.util.Map;
 
 /**
  * Raft error code.
+ * 代表 raft 的错误码 0 是成功
  */
 public enum RaftError {
 

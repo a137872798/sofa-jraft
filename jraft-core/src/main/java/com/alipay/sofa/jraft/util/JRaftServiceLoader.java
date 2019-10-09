@@ -33,7 +33,7 @@ import java.util.ServiceConfigurationError;
 
 /**
  * A simple service-provider loading facility (SPI).
- *
+ * 简易的SPI 加载工具
  * @author jiachun.fjc
  */
 public final class JRaftServiceLoader<S> implements Iterable<S> {

@@ -31,7 +31,7 @@ import com.alipay.sofa.jraft.util.Utils;
 
 /**
  * A framework to implement a raft group service.
- *
+ * raft 组级别的服务
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Apr-08 7:53:03 PM
@@ -41,13 +41,18 @@ public class RaftGroupService {
     private static final Logger LOG     = LoggerFactory.getLogger(RaftGroupService.class);
 
     static {
+        // 协议工厂
         ProtobufMsgFactory.load();
     }
 
+    /**
+     * group 服务是否启动
+     */
     private volatile boolean    started = false;
 
     /**
      * This node serverId
+     * 该节点对应的 参与者id
      */
     private PeerId              serverId;
 
@@ -58,6 +63,7 @@ public class RaftGroupService {
 
     /**
      * The raft RPC server
+     * 通信服务对象
      */
     private RpcServer           rpcServer;
 
@@ -102,6 +108,7 @@ public class RaftGroupService {
 
     /**
      * Starts the raft group service, returns the raft node.
+     * 启动 raft 服务 并返回一个节点对象
      */
     public synchronized Node start() {
         return this.start(true);
@@ -109,10 +116,11 @@ public class RaftGroupService {
 
     /**
      * Starts the raft group service, returns the raft node.
-     *
+     * 启动一个raft 组服务 并返回一个节点对象
      * @param startRpcServer whether to start RPC server.
      */
     public synchronized Node start(final boolean startRpcServer) {
+        // 如果已经启动成功直接返回 node 对象
         if (this.started) {
             return this.node;
         }
@@ -124,10 +132,13 @@ public class RaftGroupService {
             throw new IllegalArgumentException("Blank group id" + this.groupId);
         }
         //Adds RPC server to Server.
+        //将地址注册到NodeManager中
         NodeManager.getInstance().addAddress(this.serverId.getEndpoint());
 
+        // 创建 node对象并执行init
         this.node = RaftServiceFactory.createAndInitRaftNode(this.groupId, this.serverId, this.nodeOptions);
         if (startRpcServer) {
+            // 启动服务对象 便于接受其他node 的请求
             this.rpcServer.start();
         } else {
             LOG.warn("RPC server is not started in RaftGroupService.");

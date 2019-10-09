@@ -34,7 +34,7 @@ import com.alipay.sofa.jraft.util.Describer;
 
 /**
  * A raft replica node.
- *
+ * 代表raft 中的节点  这里泛型执行了使用 NodeOptions 作为参数
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Apr-03 4:06:55 PM
@@ -43,42 +43,49 @@ public interface Node extends Lifecycle<NodeOptions>, Describer {
 
     /**
      * Get the leader peer id for redirect, null if absent.
+     * 获取本节点选举出来的 leader
      */
     PeerId getLeaderId();
 
     /**
      * Get current node id.
+     * 获取该 node 的唯一标识
      */
     NodeId getNodeId();
 
     /**
      * Get the node metrics, only valid when node option {@link NodeOptions#isEnableMetrics()} is true.
+     * 获取该节点的测量工具
      */
     NodeMetrics getNodeMetrics();
 
     /**
      * Get the raft group id.
+     * 获取该node 所在的组 同一个组 应该是选举 一个node 对象
      */
     String getGroupId();
 
     /**
      * Get the node options.
+     * 获取选项信息
      */
     NodeOptions getOptions();
 
     /**
      * Get the raft options
+     * 获取 raft 相关的选项
      */
     RaftOptions getRaftOptions();
 
     /**
      * Returns true when the node is leader.
+     * 判断本节点是否是 leader
      */
     boolean isLeader();
 
     /**
      * Shutdown local replica node.
-     *
+     * 关闭本节点并触发回调对象
      * @param done callback
      */
     void shutdown(final Closure done);
@@ -95,7 +102,8 @@ public interface Node extends Lifecycle<NodeOptions>, Describer {
      * [Thread-safe and wait-free]
      *
      * Apply task to the replicated-state-machine
-     *
+     * 线程安全的方法  将task 提交到本node 中 之后会通过状态机借由一个leader 对象发往同组下所有节点
+     * 该方法执行后 会通知该task 关联的 closure 对象
      * About the ownership:
      * |task.data|: for the performance consideration, we will take away the
      *               content. If you want keep the content, copy it before call
@@ -125,7 +133,7 @@ public interface Node extends Lifecycle<NodeOptions>, Describer {
 
     /**
      * List peers of this raft group, only leader returns.
-     *
+     * 获取本组下所有参与者 只有当本节点是 leader 是才会返回
      * [NOTE] <strong>when list_peers concurrency with {@link #addPeer(PeerId, Closure)}/{@link #removePeer(PeerId, Closure)},
      * maybe return peers is staled.  Because {@link #addPeer(PeerId, Closure)}/{@link #removePeer(PeerId, Closure)}
      * immediately modify configuration in memory</strong>
@@ -188,7 +196,7 @@ public interface Node extends Lifecycle<NodeOptions>, Describer {
     /**
      * Start a snapshot immediately if possible. done.run() would be invoked when
      * the snapshot finishes, describing the detailed result.
-     *
+     * 发起一次保存快照的操作 同时执行传入的回调对象
      * @param done callback
      */
     void snapshot(final Closure done);

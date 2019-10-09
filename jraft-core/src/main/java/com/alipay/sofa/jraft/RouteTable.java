@@ -39,7 +39,7 @@ import com.google.protobuf.Message;
 
 /**
  * Maintain routes to raft groups.
- *
+ * 路由表对象   维护到 raftGroup 的路由信息
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Apr-09 10:41:21 AM
@@ -59,9 +59,9 @@ public class RouteTable {
 
     /**
      * Update configuration of group in route table.
-     *
-     * @param groupId raft group id
-     * @param conf    configuration to update
+     * 更新路由表配置
+     * @param groupId raft group id  代表一个raft组id
+     * @param conf    configuration to update  代表一组 peerId 也可以理解为一组地址
      * @return true on success
      */
     public boolean updateConfiguration(final String groupId, final Configuration conf) {
@@ -218,7 +218,7 @@ public class RouteTable {
 
     /**
      * Blocking the thread until query_leader finishes.
-     *
+     * 刷新leader 信息  该方法一般是周期性调用
      * @param groupId   raft group id
      * @param timeoutMs timeout millis
      * @return operation status

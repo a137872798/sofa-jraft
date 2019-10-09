@@ -21,7 +21,7 @@ import java.net.InetSocketAddress;
 
 /**
  * A IP address with port.
- *
+ * 代表 jraft 中的一个地址 由 ip + port 组成
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Mar-12 3:29:12 PM
@@ -30,7 +30,13 @@ public class Endpoint implements Copiable<Endpoint>, Serializable {
 
     private static final long serialVersionUID = -7329681263115546100L;
 
+    /**
+     * ip 地址   默认为 0.0.0.0
+     */
     private String            ip               = Utils.IP_ANY;
+    /**
+     * 端口号
+     */
     private int               port;
     private String            str;
 
@@ -52,6 +58,10 @@ public class Endpoint implements Copiable<Endpoint>, Serializable {
         return this.port;
     }
 
+    /**
+     * 将 ip port 转换成 socketAddress 对象
+     * @return
+     */
     public InetSocketAddress toInetSocketAddress() {
         return new InetSocketAddress(this.ip, this.port);
     }
@@ -64,6 +74,10 @@ public class Endpoint implements Copiable<Endpoint>, Serializable {
         return str;
     }
 
+    /**
+     * 深拷贝也就是返回一个新对象
+     * @return
+     */
     @Override
     public Endpoint copy() {
         return new Endpoint(this.ip, this.port);

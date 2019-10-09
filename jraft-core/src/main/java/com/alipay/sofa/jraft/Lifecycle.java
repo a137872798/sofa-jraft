@@ -18,7 +18,7 @@ package com.alipay.sofa.jraft;
 
 /**
  * Service life cycle mark interface.
- *
+ * 生命周期接口
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Mar-12 3:47:04 PM
@@ -27,13 +27,14 @@ public interface Lifecycle<T> {
 
     /**
      * Initialize the service.
-     *
+     * 代表对象的初始化   T 代表optional 类型参数
      * @return true when successes.
      */
     boolean init(final T opts);
 
     /**
      * Dispose the resources for service.
+     * 终止该对象
      */
     void shutdown();
 }

@@ -19,11 +19,15 @@ package com.alipay.sofa.jraft.util;
 /**
  * Components that implement this interface need to be able to describe
  * their own state and output state information via the {@code describe} method.
- *
+ * 代表输出自身的描述信息
  * @author jiachun.fjc
  */
 public interface Describer {
 
+    /**
+     * 通过传入的输出流描述自身信息
+     * @param out
+     */
     void describe(final Printer out);
 
     interface Printer {

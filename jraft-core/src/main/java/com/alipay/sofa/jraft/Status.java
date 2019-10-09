@@ -32,6 +32,10 @@ import com.alipay.sofa.jraft.util.Copiable;
 //
 //Since failed status needs to allocate memory, you should be careful when
 //failed status is frequent.
+
+/**
+ * 代表结果的状态
+ */
 public class Status implements Copiable<Status> {
 
     /**
@@ -85,6 +89,9 @@ public class Status implements Copiable<Status> {
         }
     }
 
+    /**
+     * 代表状态的信息
+     */
     private State state;
 
     public Status() {
@@ -93,11 +100,16 @@ public class Status implements Copiable<Status> {
 
     /**
      * Creates a OK status instance.
+     * 静态方法 返回一个成功的状态
      */
     public static Status OK() {
         return new Status();
     }
 
+    /**
+     * 使用传入的 status 来进行初始化
+     * @param s
+     */
     public Status(Status s) {
         if (s.state != null) {
             this.state = new State(s.state.code, s.state.msg);
@@ -106,6 +118,12 @@ public class Status implements Copiable<Status> {
         }
     }
 
+    /**
+     * 通过错误信息来进行初始化
+     * @param raftError
+     * @param fmt
+     * @param args
+     */
     public Status(RaftError raftError, String fmt, Object... args) {
         this.state = new State(raftError.getNumber(), String.format(fmt, args));
     }
@@ -154,6 +172,7 @@ public class Status implements Copiable<Status> {
 
     /**
      * Returns true when status is in OK state.
+     * 未设置状态 或者 code == 0 代表正常
      */
     public boolean isOk() {
         return this.state == null || this.state.code == 0;

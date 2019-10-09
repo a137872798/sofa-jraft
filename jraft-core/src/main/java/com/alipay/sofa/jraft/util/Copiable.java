@@ -18,7 +18,7 @@ package com.alipay.sofa.jraft.util;
 
 /**
  * Copiable mark interface.
- *
+ * 代表可拷贝对象
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Apr-03 11:15:34 AM 
@@ -28,6 +28,7 @@ public interface Copiable<T> {
 
     /**
      * Copy current object(deep-clone).
+     * 深拷贝
      */
     T copy();
 }

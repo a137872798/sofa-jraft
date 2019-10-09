@@ -20,6 +20,7 @@ import com.alipay.sofa.jraft.Closure;
 
 /**
  * Closure for task applying.
+ * 代表当一个任务被提交到状态机时触发
  * @author dennis
  */
 public interface TaskClosure extends Closure {

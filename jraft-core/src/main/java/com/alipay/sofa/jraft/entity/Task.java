@@ -28,6 +28,7 @@ import com.alipay.sofa.jraft.Closure;
  * <li>done: task closure, called when the data is successfully committed to the raft group.</li>
  * <li>expectedTerm: Reject this task if expectedTerm doesn't match the current term of this Node if the value is not -1, default is -1.</li>
  * </ul>
+ * 用户的某个操作会被封装成Task 对象之后通过 leader 传播到其他follower上
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Mar-13 3:08:12 PM
@@ -36,11 +37,18 @@ public class Task implements Serializable {
 
     private static final long serialVersionUID = 2971309899898274575L;
 
-    /** Associated  task data*/
+    /** Associated  task data
+     *  数据可以存放在 buffer 中
+     * */
     private ByteBuffer        data;
-    /** task closure, called when the data is successfully committed to the raft group or failures happen.*/
+    /** task closure, called when the data is successfully committed to the raft group or failures happen.
+     *  用于通知结果的回调对象  客户在 task 中设置自定义的 done 对象 用以异步处理结果
+     * */
     private Closure           done;
-    /** Reject this task if expectedTerm doesn't match the current term of this Node if the value is not -1, default is -1.*/
+    /** Reject this task if expectedTerm doesn't match the current term of this Node if the value is not -1, default is -1.
+     *  代表预期接受的 term term在jraft 中代表在某轮选举过后所有的节点都会同一展示成一个 term
+     *  如果设置了预期值 那么在应用到状态机之前会检查节点的 term是否是预期值 不是的话会拒绝任务
+     * */
     private long              expectedTerm     = -1;
 
     public Task() {
@@ -49,6 +57,7 @@ public class Task implements Serializable {
 
     /**
      * Creates a task with data/done.
+     * 通过 存放任务数据的data 和 一个回调对象来进行初始化
      */
     public Task(ByteBuffer data, Closure done) {
         super();
@@ -58,6 +67,7 @@ public class Task implements Serializable {
 
     /**
      * Creates a task with data/done/expectedTerm.
+     * 相比上面增加一个 预期值
      */
     public Task(ByteBuffer data, Closure done, long expectedTerm) {
         super();

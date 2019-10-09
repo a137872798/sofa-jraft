@@ -24,7 +24,6 @@ import com.alipay.sofa.jraft.option.NodeOptions;
 
 /**
  * Service factory to create raft services, such as Node/CliService etc.
- *
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-May-03 11:06:02 AM
@@ -33,6 +32,9 @@ public final class RaftServiceFactory {
 
     /**
      * Create a raft node with group id and it's serverId.
+     * 快捷的创建一个node 节点
+     * @param groupId 代表本节点所属group
+     * @param serverId 代表本节点的peerId  (peerId 代表一个参与选举的节点的id)
      */
     public static Node createRaftNode(final String groupId, final PeerId serverId) {
         return new NodeImpl(groupId, serverId);
@@ -44,6 +46,7 @@ public final class RaftServiceFactory {
      */
     public static Node createAndInitRaftNode(final String groupId, final PeerId serverId, final NodeOptions opts) {
         final Node ret = createRaftNode(groupId, serverId);
+        // 创建节点的同时进行初始化
         if (!ret.init(opts)) {
             throw new IllegalStateException("Fail to init node, please see the logs to find the reason.");
         }

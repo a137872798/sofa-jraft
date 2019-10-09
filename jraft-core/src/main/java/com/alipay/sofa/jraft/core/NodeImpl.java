@@ -122,7 +122,7 @@ import com.lmax.disruptor.dsl.ProducerType;
 
 /**
  * The raft replica node implementation.
- *
+ * node节点的默认实现
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Apr-03 4:26:51 PM
@@ -447,15 +447,23 @@ public class NodeImpl implements Node, RaftServerService {
         this(null, null);
     }
 
+    /**
+     * 通过 groupid 和 serverId 进行初始化
+     * @param groupId
+     * @param serverId
+     */
     public NodeImpl(final String groupId, final PeerId serverId) {
         super();
         if (groupId != null) {
+            // 检验groupId
             Utils.verifyGroupId(groupId);
         }
         this.groupId = groupId;
         this.serverId = serverId != null ? serverId.copy() : null;
+        // 当前状态属于 未初始化
         this.state = State.STATE_UNINITIALIZED;
         this.currTerm = 0;
+        // 将当前时间作为最后更新leader的时间
         updateLastLeaderTimestamp(Utils.monotonicMs());
         this.confCtx = new ConfigurationCtx(this);
         this.wakingCandidate = null;
@@ -678,6 +686,11 @@ public class NodeImpl implements Node, RaftServerService {
         return ThreadLocalRandom.current().nextInt(timeoutMs, timeoutMs + this.raftOptions.getMaxElectionDelayMs());
     }
 
+    /**
+     * Node 接口本身继承了 Lifecycle接口 需要通过 init 才能正常使用
+     * @param opts 代表初始化需要的参数
+     * @return
+     */
     @Override
     public boolean init(final NodeOptions opts) {
         Requires.requireNonNull(opts, "Null node options");
@@ -1326,6 +1339,10 @@ public class NodeImpl implements Node, RaftServerService {
         }
     }
 
+    /**
+     * 将任务提交到节点 之后通过传给 状态机来执行 这里必须确保本节点是 leader 否则不接受任务
+     * @param task task to apply
+     */
     @Override
     public void apply(final Task task) {
         if (this.shutdownLatch != null) {
@@ -2073,6 +2090,10 @@ public class NodeImpl implements Node, RaftServerService {
         }
     }
 
+    /**
+     * 获取当前 推举为leader  的节点的 peerId
+     * @return
+     */
     @Override
     public PeerId getLeaderId() {
         this.readLock.lock();
@@ -2333,6 +2354,10 @@ public class NodeImpl implements Node, RaftServerService {
         }
     }
 
+    /**
+     * 停止该节点的工作
+     * @param done callback
+     */
     @Override
     public void shutdown(final Closure done) {
         List<RepeatedTimer> timers = null;
@@ -2436,6 +2461,10 @@ public class NodeImpl implements Node, RaftServerService {
         }
     }
 
+    /**
+     * 阻塞等待shutdown 结束
+     * @throws InterruptedException
+     */
     @Override
     public synchronized void join() throws InterruptedException {
         if (this.shutdownLatch != null) {
@@ -2623,6 +2652,10 @@ public class NodeImpl implements Node, RaftServerService {
         }
     }
 
+    /**
+     * 生成一次快照 并将结果通知到 closure
+     * @param done callback
+     */
     @Override
     public void snapshot(final Closure done) {
         doSnapshot(done);

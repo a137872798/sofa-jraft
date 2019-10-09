@@ -42,7 +42,7 @@ import com.alipay.sofa.jraft.util.Endpoint;
 
 /**
  * Raft RPC server factory.
- *
+ * 创建RPC 服务的工厂
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Apr-08 7:56:40 PM
@@ -53,7 +53,7 @@ public class RaftRpcServerFactory {
 
     /**
      * Creates a raft RPC server with default request executors.
-     *
+     * 通过传入一个 地址 生成绑定于该地址的 server 对象
      * @param endpoint server address to bind
      * @return a rpc server instance
      */
@@ -63,14 +63,15 @@ public class RaftRpcServerFactory {
 
     /**
      * Creates a raft RPC server with executors to handle requests.
-     *
-     * @param endpoint      server address to bind
-     * @param raftExecutor  executor to handle RAFT requests.
-     * @param cliExecutor   executor to handle CLI service requests.
+     * 创建用于通信的服务器对象 node节点就是基于该对象进行通信的
+     * @param endpoint      server address to bind   server 将绑定的地址
+     * @param raftExecutor  executor to handle RAFT requests.  处理Raft请求的处理器
+     * @param cliExecutor   executor to handle CLI service requests.  处理CLI请求的处理器
      * @return a rpc server instance
      */
     public static RpcServer createRaftRpcServer(Endpoint endpoint, Executor raftExecutor, Executor cliExecutor) {
         final RpcServer rpcServer = new RpcServer(endpoint.getPort(), true, true);
+        // 增加请求处理器
         addRaftRequestProcessors(rpcServer, raftExecutor, cliExecutor);
         return rpcServer;
     }

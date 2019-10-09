@@ -21,16 +21,19 @@ import java.nio.ByteBuffer;
 /**
  * Iterator over a batch of committed tasks.
  * @see StateMachine#onApply(Iterator)
- *
+ * raft 拓展的迭代器对象 实际上用户提交的一系列task 对象会堆积起来一并发送到 stateMachine 上
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Apr-03 3:20:15 PM
  */
 public interface Iterator extends java.util.Iterator<ByteBuffer> {
 
+    // 以下方法的调用一般是按照  iterator.next(), iterator.getData().....
+
     /**
      * Return the data whose content is the same as what was passed to
      * Node#apply(Task) in the leader node.
+     * 代表当前task 对应的数据
      */
     ByteBuffer getData();
 
@@ -41,11 +44,13 @@ public interface Iterator extends java.util.Iterator<ByteBuffer> {
      * - Monotonicity guarantees that for any index pair i, j (i < j), task
      *    at index |i| must be applied before task at index |j| in all the
      *    peers from the group.
+     *    当前对象对应的下标
      */
     long getIndex();
 
     /**
      * Returns the term of the leader which to task was applied to.
+     * 当前对象是被 term 为多少的 leader 来处理的
      */
     long getTerm();
 

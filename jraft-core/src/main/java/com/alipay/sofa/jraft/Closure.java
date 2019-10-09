@@ -18,7 +18,7 @@ package com.alipay.sofa.jraft;
 
 /**
  * Callback closure.
- *
+ * 代表关闭时触发的回调
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Apr-03 11:07:05 AM
@@ -27,8 +27,8 @@ public interface Closure {
 
     /**
      * Called when task is done.
-     *
-     * @param status the task status.
+     * 当任务完成时触发的回调对象
+     * @param status the task status. 当前任务的状态
      */
     void run(final Status status);
 }

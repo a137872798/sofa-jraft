@@ -23,7 +23,9 @@ import com.google.protobuf.Message;
 
 /**
  * Represents a state machine snapshot.
- *
+ * 代表状态机的快照 对象      快照对象为什么存在 (原本raft 会定期生成日志对象便于在重启时恢复到之前的状态， 但是日志过多的情况下重启会比较慢
+ * ， 如果日志很多的话 也会占用很多内存  如果新增一个节点要从leader 同步所有日志)
+ * 有了快照后 生成快照的同时 之前的 日志就可以全部删除了 启动时可以直接恢复到最新的快照状态 并配合部分的 日志进行恢复
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Apr-07 10:17:52 AM

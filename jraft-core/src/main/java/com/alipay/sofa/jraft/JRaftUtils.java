@@ -33,7 +33,7 @@ import com.alipay.sofa.jraft.util.ThreadPoolUtil;
 
 /**
  * Some helper methods for jraft usage.
- *
+ * jraft 工具类 可以直接通过 字符串构建 对应的 PeerId/Configuration 类等
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Apr-23 3:48:45 PM
@@ -46,8 +46,8 @@ public final class JRaftUtils {
     /**
      * Bootstrap a non-empty raft node.
      *
-     * @param opts options of bootstrap
-     * @return true if bootstrap success
+     * @param opts options of bootstrap 启动选项
+     * @return true if bootstrap success 是否启动成功
      */
     public static boolean bootstrap(final BootstrapOptions opts) throws InterruptedException {
         final NodeImpl node = new NodeImpl();
@@ -94,6 +94,7 @@ public final class JRaftUtils {
     /**
      * Create a configuration from a string in the form of "host1:port1[:idx],host2:port2[:idx]......",
      * returns a empty configuration when string is blank.
+     * 通过一个字符串直接生成conf对象
      */
     public static Configuration getConfiguration(final String s) {
         final Configuration conf = new Configuration();
@@ -109,6 +110,7 @@ public final class JRaftUtils {
     /**
      * Create a peer from a string in the form of "host:port[:idx]",
      * returns a empty peer when string is blank.
+     * 通过字符串 直接生成 peerId 对象
      */
     public static PeerId getPeerId(final String s) {
         final PeerId peer = new PeerId();
@@ -124,6 +126,7 @@ public final class JRaftUtils {
     /**
      * Create a Endpoint instance from  a string in the form of "host:port",
      * returns null when string is blank.
+     * 通过字符串直接生成 endpoint 对象
      */
     public static Endpoint getEndPoint(final String s) {
         if (StringUtils.isBlank(s)) {

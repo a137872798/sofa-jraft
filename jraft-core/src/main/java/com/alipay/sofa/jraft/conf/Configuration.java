@@ -31,17 +31,24 @@ import com.alipay.sofa.jraft.util.Copiable;
 /**
  * A configuration with a set of peers.
  * @author boyan (boyan@alibaba-inc.com)
- *
+ * 代表一组候选者 (即jraft中负责参与选举的节点)
  * 2018-Mar-15 11:00:26 AM
  */
 public class Configuration implements Iterable<PeerId>, Copiable<Configuration> {
 
+    /**
+     * 内部携带的一组 参与者
+     */
     private List<PeerId> peers = new ArrayList<>();
 
     public Configuration() {
         super();
     }
 
+    /**
+     * 初始化就是将 传入的参与者设置到peer中 注意这里使用了 深拷贝
+     * @param conf
+     */
     public Configuration(final Iterable<PeerId> conf) {
         for (final PeerId peer : conf) {
             this.peers.add(peer.copy());
@@ -53,10 +60,17 @@ public class Configuration implements Iterable<PeerId>, Copiable<Configuration> 
         return new Configuration(this.peers);
     }
 
+    /**
+     * 清除候选者
+     */
     public void reset() {
         this.peers.clear();
     }
 
+    /**
+     * 判断该对象的 候选者是否为空
+     * @return
+     */
     public boolean isEmpty() {
         return this.peers.isEmpty();
     }
@@ -148,6 +162,11 @@ public class Configuration implements Iterable<PeerId>, Copiable<Configuration> 
         return sb.toString();
     }
 
+    /**
+     * 根据 配置 str 生成 configuration 对象
+     * @param conf
+     * @return
+     */
     public boolean parse(final String conf) {
         if (conf == null) {
             return false;
@@ -167,6 +186,7 @@ public class Configuration implements Iterable<PeerId>, Copiable<Configuration> 
      *  Get the difference between |*this| and |rhs|
      *  |included| would be assigned to |*this| - |rhs|
      *  |excluded| would be assigned to |rhs| - |*this|
+     *  获取本对象与 rhs 的 差集  included 代表本对象 - rhs  excluded 代表 rhs - 本对象
      */
     public void diff(final Configuration rhs, final Configuration included, final Configuration excluded) {
         included.peers = new ArrayList<>(this.peers);
