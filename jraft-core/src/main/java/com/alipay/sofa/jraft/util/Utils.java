@@ -153,6 +153,7 @@ public class Utils {
 
     /**
      * Run a task in thread pool,returns the future object.
+     * 代表使用线程池执行一个异步任务
      */
     public static Future<?> runInThread(final Runnable runnable) {
         return CLOSURE_EXECUTOR.submit(runnable);

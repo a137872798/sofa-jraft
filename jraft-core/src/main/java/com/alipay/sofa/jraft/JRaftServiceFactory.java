@@ -25,6 +25,8 @@ import com.alipay.sofa.jraft.storage.SnapshotStorage;
 
 /**
  * Abstract factory to create services for SOFAJRaft.
+ * 日志相关的 service 全部通过该工厂进行创建 比如 logStorage 专门用于存储日志   SnapshotStorage 专门用于存储快照
+ * RaftMetaStorage 专门用于元数据存储  logEntryCodecFactory 日志编解码工厂
  * @author boyan(boyan@antfin.com)
  * @since  1.2.6
  */
@@ -32,6 +34,7 @@ public interface JRaftServiceFactory {
 
     /**
      * Creates a raft log storage.
+     * 通过节点存储路径 以及是否同步写入的方式创建 日志存储对象
      * @param uri  The log storage uri from {@link NodeOptions#getSnapshotUri()}
      * @param raftOptions  the raft options.
      * @return storage to store raft log entires.

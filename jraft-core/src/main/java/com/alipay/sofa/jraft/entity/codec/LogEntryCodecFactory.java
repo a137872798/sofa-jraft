@@ -18,19 +18,21 @@ package com.alipay.sofa.jraft.entity.codec;
 
 /**
  * Log entry codec factory to create encoder/decoder for LogEntry.
- *
+ * 日志对象的编解码器
  * @author boyan(boyan@antfin.com)
  * @since 1.2.6
  */
 public interface LogEntryCodecFactory {
     /**
      * Returns a log entry encoder.
+     * 获取编码器
      * @return encoder instance
      */
     LogEntryEncoder encoder();
 
     /**
      * Returns a log entry decoder.
+     * 获取解码器
      * @return encoder instance
      */
     LogEntryDecoder decoder();

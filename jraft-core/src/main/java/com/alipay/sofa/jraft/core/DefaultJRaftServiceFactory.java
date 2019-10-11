@@ -35,7 +35,7 @@ import com.alipay.sofa.jraft.util.SPI;
  * The default factory for JRaft services.
  * @author boyan(boyan@antfin.com)
  * @since 1.2.6
- *
+ * 默认工厂 基于SPI 实现
  */
 @SPI
 public class DefaultJRaftServiceFactory implements JRaftServiceFactory {
@@ -44,6 +44,12 @@ public class DefaultJRaftServiceFactory implements JRaftServiceFactory {
         return new DefaultJRaftServiceFactory();
     }
 
+    /**
+     * 默认就是创建 RocksDBLogStorage
+     * @param uri  The log storage uri from {@link NodeOptions#getSnapshotUri()}
+     * @param raftOptions  the raft options.
+     * @return
+     */
     @Override
     public LogStorage createLogStorage(final String uri, final RaftOptions raftOptions) {
         Requires.requireTrue(StringUtils.isNotBlank(uri), "Blank log storage uri.");
@@ -62,6 +68,10 @@ public class DefaultJRaftServiceFactory implements JRaftServiceFactory {
         return new LocalRaftMetaStorage(uri, raftOptions);
     }
 
+    /**
+     * 默认情况下返回V2 版本的编解码器
+     * @return
+     */
     @Override
     public LogEntryCodecFactory createLogEntryCodecFactory() {
         return LogEntryV2CodecFactory.getInstance();

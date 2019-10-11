@@ -30,7 +30,8 @@ import com.alipay.sofa.jraft.util.Describer;
 
 /**
  * Log manager.
- *
+ * 日志管理器 LogStorage 通过该对象来调用
+ * Describer 接口具备输出自身信息的能力
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Apr-04 3:02:42 PM
@@ -39,15 +40,24 @@ public interface LogManager extends Lifecycle<LogManagerOptions>, Describer {
 
     /**
      * Closure to to run in stable state.
-     *
+     * 什么叫稳定的回调对象 ???
      * @author boyan (boyan@alibaba-inc.com)
      *
      * 2018-Apr-04 4:35:29 PM
      */
     abstract class StableClosure implements Closure {
 
+        /**
+         * 第一个日志文件的偏移量
+         */
         protected long           firstLogIndex = 0;
+        /**
+         * 一组日志文件 实体
+         */
         protected List<LogEntry> entries;
+        /**
+         * 日志文件数量
+         */
         protected int            nEntries;
 
         public StableClosure() {
@@ -85,7 +95,7 @@ public interface LogManager extends Lifecycle<LogManagerOptions>, Describer {
     /**
      * Listen on last log index change event, but it's not reliable,
      * the user should not count on this listener to receive all changed events.
-     *
+     * 当log 文件的 尾下标发生改变时触发
      * @author dennis
      */
     interface LastLogIndexListener {
@@ -192,7 +202,7 @@ public interface LogManager extends Lifecycle<LogManagerOptions>, Describer {
 
     /**
      * New log notifier callback.
-     *
+     * 当传入一个新的 log时触发
      * @author boyan (boyan@alibaba-inc.com)
      *
      * 2018-Apr-04 4:40:04 PM

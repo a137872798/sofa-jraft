@@ -76,14 +76,16 @@ public final class StorageOptionsFactory {
     /**
      * Get a new default DBOptions or a copy of the exist DBOptions.
      * Users should call DBOptions#close() to release resources themselves.
-     *
+     * 获取db 相关配置
      * @param cls the key of DBOptions
      * @return new default DBOptions or a copy of the exist DBOptions
      */
     public static DBOptions getRocksDBOptions(final Class<?> cls) {
         Requires.requireNonNull(cls, "cls");
+        // 根据key 获取对应的 db选项 默认的name 为 RocksDBLogStorage全限定名
         DBOptions opts = rocksDBOptionsTable.get(cls.getName());
         if (opts == null) {
+            // 生成默认配置
             final DBOptions newOpts = getDefaultRocksDBOptions();
             opts = rocksDBOptionsTable.putIfAbsent(cls.getName(), newOpts);
             if (opts == null) {
@@ -97,6 +99,10 @@ public final class StorageOptionsFactory {
         return new DBOptions(checkInvalid(opts));
     }
 
+    /**
+     * 获取默认的 db 配置  这里使用的是 rocksDB 官方推荐的默认配置
+     * @return
+     */
     public static DBOptions getDefaultRocksDBOptions() {
         // Turn based on https://github.com/facebook/rocksdb/wiki/RocksDB-Tuning-Guide
         final DBOptions opts = new DBOptions();
@@ -151,6 +157,7 @@ public final class StorageOptionsFactory {
      * @param cls the key of ColumnFamilyOptions
      * @return new default ColumnFamilyOptions or a copy of the exist
      * ColumnFamilyOptions
+     * 获取列族配置
      */
     public static ColumnFamilyOptions getRocksDBColumnFamilyOptions(final Class<?> cls) {
         Requires.requireNonNull(cls, "cls");
@@ -170,6 +177,10 @@ public final class StorageOptionsFactory {
         return new ColumnFamilyOptions(checkInvalid(opts));
     }
 
+    /**
+     * 生成列族配置
+     * @return
+     */
     public static ColumnFamilyOptions getDefaultRocksDBColumnFamilyOptions() {
         final ColumnFamilyOptions opts = new ColumnFamilyOptions();
 

@@ -24,7 +24,7 @@ import com.alipay.sofa.jraft.util.CrcUtil;
 
 /**
  * Log identifier.
- *
+ * 日志的唯一标识
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Mar-12 3:12:29 PM
@@ -33,7 +33,13 @@ public class LogId implements Comparable<LogId>, Copiable<LogId>, Serializable, 
 
     private static final long serialVersionUID = -6680425579347357313L;
 
+    /**
+     * 代表该日志实体对应 LogStorage 的下标
+     */
     private long              index;
+    /**
+     * 代表当次 Leader 的任期
+     */
     private long              term;
 
     @Override

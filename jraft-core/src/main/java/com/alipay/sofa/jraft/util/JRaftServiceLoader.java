@@ -33,11 +33,14 @@ import java.util.ServiceConfigurationError;
 
 /**
  * A simple service-provider loading facility (SPI).
- * 简易的SPI 加载工具
+ * 简易的SPI 加载工具   实现迭代器接口
  * @author jiachun.fjc
  */
 public final class JRaftServiceLoader<S> implements Iterable<S> {
 
+    /**
+     * SPI 文件加载路径
+     */
     private static final String      PREFIX    = "META-INF/services/";
 
     // the class or interface representing the service being loaded
@@ -50,12 +53,26 @@ public final class JRaftServiceLoader<S> implements Iterable<S> {
     private LinkedHashMap<String, S> providers = new LinkedHashMap<>();
 
     // the current lazy-lookup iterator
+    // 惰性迭代器
     private LazyIterator             lookupIterator;
 
+    /**
+     * 使用SPI 机制 加载目标接口实现类
+     * @param service
+     * @param <S>
+     * @return
+     */
     public static <S> JRaftServiceLoader<S> load(final Class<S> service) {
         return JRaftServiceLoader.load(service, Thread.currentThread().getContextClassLoader());
     }
 
+    /**
+     * 每次 返回一个新对象
+     * @param service
+     * @param loader
+     * @param <S>
+     * @return
+     */
     public static <S> JRaftServiceLoader<S> load(final Class<S> service, final ClassLoader loader) {
         return new JRaftServiceLoader<>(service, loader);
     }
@@ -115,14 +132,26 @@ public final class JRaftServiceLoader<S> implements Iterable<S> {
         throw fail(this.service, "provider " + implName + " not found");
     }
 
+    /**
+     * 加载SPI 实现类
+     */
     public void reload() {
+        // 重新加载的话 要先清除旧的数据
         this.providers.clear();
+        // 初始化一个惰性查询迭代器
         this.lookupIterator = new LazyIterator(this.service, this.loader);
     }
 
+    /**
+     * 每次调用静态方法时 都会创建一个新对象
+     * @param service  代表服务接口
+     * @param loader  对应的加载器
+     */
     private JRaftServiceLoader(final Class<S> service, final ClassLoader loader) {
         this.service = Requires.requireNonNull(service, "service interface cannot be null");
         this.loader = (loader == null) ? ClassLoader.getSystemClassLoader() : loader;
+        // 开始加载  注意这里调用的是 "re"load 看来 某些情况下可以重新加载SPI 实现类 实现动态配置
+        // 这里返回了一个 惰性迭代器对象 也就是只有调用hasNext 时 才开始拉取数据
         reload();
     }
 
@@ -224,8 +253,17 @@ public final class JRaftServiceLoader<S> implements Iterable<S> {
         };
     }
 
+    /**
+     * 惰性迭代器对象
+     */
     private class LazyIterator implements Iterator<Class<S>> {
+        /**
+         * 目标接口
+         */
         Class<S>         service;
+        /**
+         * 类加载器
+         */
         ClassLoader      loader;
         Enumeration<URL> configs  = null;
         Iterator<String> pending  = null;

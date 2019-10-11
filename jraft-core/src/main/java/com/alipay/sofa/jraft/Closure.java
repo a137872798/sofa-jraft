@@ -28,7 +28,7 @@ public interface Closure {
     /**
      * Called when task is done.
      * 当任务完成时触发的回调对象
-     * @param status the task status. 当前任务的状态
+     * @param status the task status. 任务结果
      */
     void run(final Status status);
 }

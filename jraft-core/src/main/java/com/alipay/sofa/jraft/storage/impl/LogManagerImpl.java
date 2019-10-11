@@ -68,7 +68,7 @@ import com.lmax.disruptor.dsl.ProducerType;
 
 /**
  * LogManager implementation.
- *
+ * 日志管理实现类 该对象 用于协调和 控制 LogStorage 对象
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Apr-04 4:42:20 PM
@@ -79,15 +79,36 @@ public class LogManagerImpl implements LogManager {
     private static final Logger                              LOG                    = LoggerFactory
                                                                                         .getLogger(LogManagerImpl.class);
 
+    /**
+     * 日志存储 对象 实际上是基于 RocksDB 进行存储   (该对象是一款 key/value存储数据库)
+     */
     private LogStorage                                       logStorage;
+    /**
+     * 配置管理器 该对象可以从 LogStorage 中获取最新配置
+     */
     private ConfigurationManager                             configManager;
+    /**
+     * StatusMachine 的调用者
+     */
     private FSMCaller                                        fsmCaller;
+    /**
+     * 读写锁
+     */
     private final ReadWriteLock                              lock                   = new ReentrantReadWriteLock();
     private final Lock                                       writeLock              = this.lock.writeLock();
     private final Lock                                       readLock               = this.lock.readLock();
+    /**
+     * 是否已停止
+     */
     private volatile boolean                                 stopped;
+    /**
+     * 是否出现异常
+     */
     private volatile boolean                                 hasError;
     private long                                             nextWaitId;
+    /**
+     * 刷盘的id
+     */
     private LogId                                            diskId                 = new LogId(0, 0);
     private LogId                                            appliedId              = new LogId(0, 0);
     // TODO  use a lock-free concurrent list instead?
@@ -96,8 +117,17 @@ public class LogManagerImpl implements LogManager {
     private volatile long                                    lastLogIndex;
     private volatile LogId                                   lastSnapshotId         = new LogId(0, 0);
     private final Map<Long, WaitMeta>                        waitMap                = new HashMap<>();
+    /**
+     * 该对象是高性能并发队列中的类
+     */
     private Disruptor<StableClosureEvent>                    disruptor;
+    /**
+     * 高性能队列
+     */
     private RingBuffer<StableClosureEvent>                   diskQueue;
+    /**
+     * 选项信息
+     */
     private RaftOptions                                      raftOptions;
     private volatile CountDownLatch                          shutDownLatch;
     private NodeMetrics                                      nodeMetrics;
@@ -112,8 +142,17 @@ public class LogManagerImpl implements LogManager {
         LAST_LOG_ID // get last log id
     }
 
+    /**
+     * 稳定回调事件
+     */
     private static class StableClosureEvent {
+        /**
+         * 稳定回调对象
+         */
         StableClosure done;
+        /**
+         * 该回调对应的事件类型
+         */
         EventType     type;
 
         void reset() {
@@ -122,6 +161,9 @@ public class LogManagerImpl implements LogManager {
         }
     }
 
+    /**
+     * 稳定回调事件工厂 实现事件工厂  该工厂是disruptor 的接口
+     */
     private static class StableClosureEventFactory implements EventFactory<StableClosureEvent> {
 
         @Override
@@ -132,16 +174,17 @@ public class LogManagerImpl implements LogManager {
 
     /**
      * Waiter metadata
+     * 等待相关的元数据信息
      * @author boyan (boyan@alibaba-inc.com)
      *
      * 2018-Apr-04 5:05:04 PM
      */
     private static class WaitMeta {
-        /** callback when new log come in*/
+        /** callback when new log come in  当添加一个新的 日志对象时触发的回调*/
         NewLogCallback onNewLog;
-        /** callback error code*/
+        /** callback error code 错误码*/
         int            errorCode;
-        /** the waiter pass-in argument */
+        /** the waiter pass-in argument 处理使用参数*/
         Object         arg;
 
         public WaitMeta(final NewLogCallback onNewLog, final Object arg, final int errorCode) {
@@ -153,6 +196,10 @@ public class LogManagerImpl implements LogManager {
 
     }
 
+    /**
+     * 添加 监听器
+     * @param listener
+     */
     @Override
     public void addLastLogIndexListener(final LastLogIndexListener listener) {
         this.lastLogIndexListeners.add(listener);
@@ -164,33 +211,46 @@ public class LogManagerImpl implements LogManager {
         this.lastLogIndexListeners.remove(listener);
     }
 
+    /**
+     * 对应 LifeCycle的 函数  在NodeImpl 初始化后 会调用该方法 完成LogManager 的初始化 该类相当于一个Log模块的枢纽
+     * @param opts
+     * @return
+     */
     @Override
     public boolean init(final LogManagerOptions opts) {
         this.writeLock.lock();
         try {
+            // 日志存储对象必须被初始化
             if (opts.getLogStorage() == null) {
                 LOG.error("Fail to init log manager, log storage is null");
                 return false;
             }
+            // 使用相关的配置完成初始化
             this.raftOptions = opts.getRaftOptions();
             this.nodeMetrics = opts.getNodeMetrics();
             this.logStorage = opts.getLogStorage();
             this.configManager = opts.getConfigurationManager();
 
+            // 生成一个 日志存储配置对象 并使用该对象进行 LogStorage 的 初始化
             LogStorageOptions lsOpts = new LogStorageOptions();
             lsOpts.setConfigurationManager(this.configManager);
             lsOpts.setLogEntryCodecFactory(opts.getLogEntryCodecFactory());
 
+            // 就是 创建了 rocksDB 相关的 对象 并拉取一边数据 同时更新 firstLogIndex 和 配置
             if (!this.logStorage.init(lsOpts)) {
                 LOG.error("Fail to init logStorage");
                 return false;
             }
+            // 这时 偏移量已经得到更新了
             this.firstLogIndex = this.logStorage.getFirstLogIndex();
             this.lastLogIndex = this.logStorage.getLastLogIndex();
+            // 刷盘的id???
             this.diskId = new LogId(this.lastLogIndex, getTermFromLogStorage(this.lastLogIndex));
+            // 获取到状态机对象
             this.fsmCaller = opts.getFsmCaller();
+            // 生成高性能并发队列 并设置了一个线程工厂
             this.disruptor = DisruptorBuilder.<StableClosureEvent> newInstance() //
-                    .setEventFactory(new StableClosureEventFactory()) //
+                    .setEventFactory(new StableClosureEventFactory()) // 该工厂总是生成一个 稳定的回调对象
                     .setRingBufferSize(opts.getDisruptorBufferSize()) //
                     .setThreadFactory(new NamedThreadFactory("JRaft-LogManager-Disruptor-", true)) //
                     .setProducerType(ProducerType.MULTI) //
@@ -198,8 +258,9 @@ public class LogManagerImpl implements LogManager {
                      *  Use timeout strategy in log manager. If timeout happens, it will called reportError to halt the node.
                      */
                     .setWaitStrategy(new TimeoutBlockingWaitStrategy(
-                        this.raftOptions.getDisruptorPublishEventWaitTimeoutSecs(), TimeUnit.SECONDS)) //
+                        this.raftOptions.getDisruptorPublishEventWaitTimeoutSecs(), TimeUnit.SECONDS)) // 指定阻塞时长
                     .build();
+            // 设置处理事件对应的 handler
             this.disruptor.handleEventsWith(new StableClosureEventHandler());
             this.disruptor.setDefaultExceptionHandler(new LogExceptionHandler<Object>(this.getClass().getSimpleName(),
                     (event, ex) -> reportError(-1, "LogManager handle event error")));
@@ -412,25 +473,37 @@ public class LogManagerImpl implements LogManager {
         return true;
     }
 
+    /**
+     * 将一组日志对象写入到LogStorage 中
+     * @param toAppend
+     * @return
+     */
     private LogId appendToStorage(final List<LogEntry> toAppend) {
         LogId lastId = null;
+        // 如果未出现异常 将数据写入
         if (!this.hasError) {
             final long startMs = Utils.monotonicMs();
             final int entriesCount = toAppend.size();
+            // TODO 统计逻辑先忽略
             this.nodeMetrics.recordSize("append-logs-count", entriesCount);
             try {
                 int writtenSize = 0;
                 for (int i = 0; i < entriesCount; i++) {
                     final LogEntry entry = toAppend.get(i);
+                    // 累加 写入的长度
                     writtenSize += entry.getData() != null ? entry.getData().remaining() : 0;
                 }
                 this.nodeMetrics.recordSize("append-logs-bytes", writtenSize);
+                // 将数据存储到 storage 中
                 final int nAppent = this.logStorage.appendEntries(toAppend);
+                // 代表有部分数据写入失败了
                 if (nAppent != entriesCount) {
                     LOG.error("**Critical error**, fail to appendEntries, nAppent={}, toAppend={}", nAppent,
                         toAppend.size());
+                    // 打印异常信息  EIO 代表  ERROR IO
                     reportError(RaftError.EIO.getNumber(), "Fail to append log entries");
                 }
+                // 更新 最后的偏移量
                 if (nAppent > 0) {
                     lastId = toAppend.get(nAppent - 1).getId();
                 }
@@ -442,14 +515,41 @@ public class LogManagerImpl implements LogManager {
         return lastId;
     }
 
+    /**
+     * 批量追加对象
+     */
     private class AppendBatcher {
+        /**
+         * 一组待存储的数据
+         */
         List<StableClosure> storage;
+        /**
+         * 容量大小
+         */
         int                 cap;
+        /**
+         * 数据长度
+         */
         int                 size;
+        /**
+         * 代表缓冲区大小
+         */
         int                 bufferSize;
+        /**
+         * 一组待添加的数据
+         */
         List<LogEntry>      toAppend;
+        /**
+         * 推测是从该偏移量往后添加
+         */
         LogId               lastId;
 
+        /**
+         * @param storage
+         * @param cap  默认为256
+         * @param toAppend  默认为空list
+         * @param lastId
+         */
         public AppendBatcher(final List<StableClosure> storage, final int cap, final List<LogEntry> toAppend,
                              final LogId lastId) {
             super();
@@ -459,10 +559,16 @@ public class LogManagerImpl implements LogManager {
             this.lastId = lastId;
         }
 
+        /**
+         * 开始将数据写入到 LogStorage 中
+         * @return
+         */
         LogId flush() {
             if (this.size > 0) {
+                // 写入数据
                 this.lastId = appendToStorage(this.toAppend);
                 for (int i = 0; i < this.size; i++) {
+                    // storage 中每个元素都对应到toAppend 这里在处理完成时 根据状态触发回调
                     this.storage.get(i).getEntries().clear();
                     if (LogManagerImpl.this.hasError) {
                         this.storage.get(i).run(new Status(RaftError.EIO, "Corrupted LogStorage"));
@@ -478,12 +584,19 @@ public class LogManagerImpl implements LogManager {
             return this.lastId;
         }
 
+        /**
+         * 该方法是在某个专门处理回调事件的 handler 中触发的  将回调中携带的数据写入到 LogStorage 中
+         * @param done
+         */
         void append(final StableClosure done) {
+            // 如果当前数据已经达到容器大小 就必须先进行一次刷盘  在接收到StableClosure 的 Shutdown 事件时 也会将触发刷盘
             if (this.size == this.cap || this.bufferSize >= LogManagerImpl.this.raftOptions.getMaxAppendBufferSize()) {
                 flush();
             }
+            // 将数据写入到 storage 中
             this.storage.add(done);
             this.size++;
+            // 将数据转移到 toAppend中
             this.toAppend.addAll(done.getEntries());
             for (final LogEntry entry : done.getEntries()) {
                 this.bufferSize += entry.getData() != null ? entry.getData().remaining() : 0;
@@ -491,26 +604,52 @@ public class LogManagerImpl implements LogManager {
         }
     }
 
+    /**
+     * 稳定回调事件的 处理器  该接口是 diruptor 的接口
+     */
     private class StableClosureEventHandler implements EventHandler<StableClosureEvent> {
+        /**
+         * 刷盘id
+         */
         LogId               lastId  = LogManagerImpl.this.diskId;
+        /**
+         * 应该是 待存储的事件
+         */
         List<StableClosure> storage = new ArrayList<>(256);
+        /**
+         * 批量添加对象  推测是 将 storage 存储到 diskId 之后的位置   初始化时 storage 为空
+         */
         AppendBatcher       ab      = new AppendBatcher(this.storage, 256, new ArrayList<>(),
                                         LogManagerImpl.this.diskId);
 
+        /**
+         * 代表触发事件了 现在准备处理
+         * @param event
+         * @param sequence
+         * @param endOfBatch
+         * @throws Exception
+         */
         @Override
         public void onEvent(final StableClosureEvent event, final long sequence, final boolean endOfBatch)
                                                                                                           throws Exception {
+            // 如果是终止任务
             if (event.type == EventType.SHUTDOWN) {
+                // 将之前的数据 全部 刷入到 LogStorage 中 不过在这之前要保证storage 中有数据 否则没有数据可以写入
                 this.lastId = this.ab.flush();
+                // 更新当前要刷盘的起点(id 中携带了 index 和任期)
                 setDiskId(this.lastId);
+                // 唤醒阻塞的栅栏 又是常见套路阻塞 主线程实现同步刷盘
                 LogManagerImpl.this.shutDownLatch.countDown();
                 return;
             }
+            // 获取回调对象
             final StableClosure done = event.done;
 
+            // 如果回调对象中存在 要写入的数据 将实体写入到 ab 中
             if (done.getEntries() != null && !done.getEntries().isEmpty()) {
                 this.ab.append(done);
             } else {
+                // 看来其余情况都当作是刷盘了   会强制将 toAppend 的数据写入到 LogStorage 中 并触发所有回调
                 this.lastId = this.ab.flush();
                 boolean ret = true;
                 switch (event.type) {
@@ -567,10 +706,18 @@ public class LogManagerImpl implements LogManager {
 
     }
 
+    /**
+     * 打印异常信息
+     * @param code  错误code
+     * @param fmt  错误(格式化)信息
+     * @param args  参数
+     */
     private void reportError(final int code, final String fmt, final Object... args) {
+        // 代表出现了问题 这样就不会继续写入日志到 LogStorage 了
         this.hasError = true;
         final RaftException error = new RaftException(ErrorType.ERROR_TYPE_LOG);
         error.setStatus(new Status(code, fmt, args));
+        // 使用状态机处理异常
         this.fsmCaller.onError(error);
     }
 

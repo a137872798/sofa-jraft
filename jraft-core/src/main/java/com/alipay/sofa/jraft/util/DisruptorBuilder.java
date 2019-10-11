@@ -26,14 +26,30 @@ import com.lmax.disruptor.dsl.ProducerType;
 
 /**
  * A builder to build a disruptor instance.
+ * 用于组合 disruptor 对象
  * @author boyan(boyan@antfin.com)
  *
  */
 public class DisruptorBuilder<T> {
+    /**
+     * 事件工厂
+     */
     private EventFactory<T> eventFactory;
+    /**
+     * 环形缓冲区的大小
+     */
     private Integer         ringBufferSize;
+    /**
+     * 线程工厂
+     */
     private ThreadFactory   threadFactory = new NamedThreadFactory("Disruptor-", true);
+    /**
+     * 多生产者模型
+     */
     private ProducerType    producerType  = ProducerType.MULTI;
+    /**
+     * 使用阻塞等待策略
+     */
     private WaitStrategy    waitStrategy  = new BlockingWaitStrategy();
 
     private DisruptorBuilder() {

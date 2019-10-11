@@ -23,7 +23,7 @@ import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
 /**
- *
+ * SPI name 代表使用的实现类  priority 代表 优选哪个实现类
  * @author jiachun.fjc
  */
 @Documented

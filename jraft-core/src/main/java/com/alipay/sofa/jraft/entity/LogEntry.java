@@ -28,26 +28,26 @@ import com.alipay.sofa.jraft.util.CrcUtil;
 
 /**
  * A replica log entry.
- *
+ * jraft 中的日志实体 就是以该对象的形式存储日志的
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Mar-12 3:13:02 PM
  */
 public class LogEntry implements Checksum {
 
-    /** entry type */
+    /** entry type 代表是 配置信息 或者是 数据(也就是客户端传来的数据 会被当成日志写入到节点中)*/
     private EnumOutter.EntryType type;
-    /** log id with index/term */
+    /** log id with index/term 日志id 是由偏移量和 任期组合成的*/
     private LogId                id = new LogId(0, 0);
-    /** log entry current peers */
+    /** log entry current peers PeerId */
     private List<PeerId>         peers;
     /** log entry old peers */
     private List<PeerId>         oldPeers;
-    /** entry data */
+    /** entry data 数据实体存放在 byteBuffer中 */
     private ByteBuffer           data;
-    /** checksum for log entry*/
+    /** checksum for log entry 校验和*/
     private long                 checksum;
-    /** true when the log has checksum **/
+    /** true when the log has checksum 是否包含校验和 **/
     private boolean              hasChecksum;
 
     public LogEntry() {
@@ -59,6 +59,10 @@ public class LogEntry implements Checksum {
         this.type = type;
     }
 
+    /**
+     * 计算该对象的 校验和
+     * @return
+     */
     @Override
     public long checksum() {
         long c = this.checksum(this.type.getNumber(), this.id.checksum());

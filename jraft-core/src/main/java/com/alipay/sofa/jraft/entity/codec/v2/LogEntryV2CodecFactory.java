@@ -31,10 +31,13 @@ import com.alipay.sofa.jraft.entity.codec.LogEntryEncoder;
  *
  * @author boyan(boyan@antfin.com)
  * @since 1.2.6
- *
+ * 默认的 日志编码器
  */
 public class LogEntryV2CodecFactory implements LogEntryCodecFactory {
 
+    /**
+     * 单例模式
+     */
     private static final LogEntryV2CodecFactory INSTANCE = new LogEntryV2CodecFactory();
 
     public static LogEntryV2CodecFactory getInstance() {

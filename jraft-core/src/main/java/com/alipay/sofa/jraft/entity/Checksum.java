@@ -18,7 +18,7 @@ package com.alipay.sofa.jraft.entity;
 
 /**
  * Checksum for entity.
- *
+ * 校验和接口
  * @author boyan(boyan@antfin.com)
  * @since 1.2.6
  */

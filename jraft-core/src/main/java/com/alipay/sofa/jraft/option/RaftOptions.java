@@ -20,7 +20,7 @@ import com.alipay.sofa.jraft.util.Copiable;
 
 /**
  * Raft options.
- *
+ * raft 的相关配置
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Apr-03 4:38:40 PM
@@ -29,7 +29,7 @@ public class RaftOptions implements Copiable<RaftOptions> {
 
     /** Maximum of block size per RPC */
     private int            maxByteCountPerRpc                   = 128 * 1024;
-    /** File service check hole switch, default disable */
+    /** File service check hole switch, default disable 文件完整性检查 */
     private boolean        fileCheckHole                        = false;
     /** The maximum number of entries in AppendEntriesRequest */
     private int            maxEntriesSize                       = 1024;
