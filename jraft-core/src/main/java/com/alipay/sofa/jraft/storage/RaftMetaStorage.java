@@ -22,7 +22,7 @@ import com.alipay.sofa.jraft.option.RaftMetaStorageOptions;
 
 /**
  * Raft metadata storage service.
- *
+ * 元数据存储
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Mar-12 3:54:21 PM
@@ -31,26 +31,31 @@ public interface RaftMetaStorage extends Lifecycle<RaftMetaStorageOptions>, Stor
 
     /**
      * Set current term.
+     * 设置当前任期
      */
     boolean setTerm(final long term);
 
     /**
      * Get current term.
+     * 获取任期
      */
     long getTerm();
 
     /**
      * Set voted for information.
+     * 代表决定投给哪个节点
      */
     boolean setVotedFor(final PeerId peerId);
 
     /**
      * Get voted for information.
+     * 获取投票信息
      */
     PeerId getVotedFor();
 
     /**
      * Set term and voted for information.
+     * 设置投票的节点和对应的任期
      */
     boolean setTermAndVotedFor(final long term, final PeerId peerId);
 }

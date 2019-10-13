@@ -490,10 +490,18 @@ public class NodeImpl implements Node, RaftServerService {
         return this.snapshotExecutor.init(opts);
     }
 
+    /**
+     * 当Node 节点初始化时 初始化整个存储模块
+     * @return
+     */
     private boolean initLogStorage() {
+        // 确保状态机以及启动
         Requires.requireNonNull(this.fsmCaller, "Null fsm caller");
+        // 默认创建 基于RocksDB 的存储器
         this.logStorage = this.serviceFactory.createLogStorage(this.options.getLogUri(), this.raftOptions);
+        // 初始化日志管理器 外部通过该对象访问logStorage
         this.logManager = new LogManagerImpl();
+        // 需要的属性通过生成一个 选项对象来配置
         final LogManagerOptions opts = new LogManagerOptions();
         opts.setLogEntryCodecFactory(this.serviceFactory.createLogEntryCodecFactory());
         opts.setLogStorage(this.logStorage);

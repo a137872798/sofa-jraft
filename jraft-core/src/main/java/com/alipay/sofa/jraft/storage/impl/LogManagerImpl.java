@@ -110,11 +110,18 @@ public class LogManagerImpl implements LogManager {
      * 刷盘的id
      */
     private LogId                                            diskId                 = new LogId(0, 0);
+    /**
+     * 代表快照的偏移量
+     */
     private LogId                                            appliedId              = new LogId(0, 0);
     // TODO  use a lock-free concurrent list instead?
+    // 暂存日志的 内存队列
     private ArrayDeque<LogEntry>                             logsInMemory           = new ArrayDeque<>();
     private volatile long                                    firstLogIndex;
     private volatile long                                    lastLogIndex;
+    /**
+     * 快照id
+     */
     private volatile LogId                                   lastSnapshotId         = new LogId(0, 0);
     private final Map<Long, WaitMeta>                        waitMap                = new HashMap<>();
     /**
@@ -130,20 +137,47 @@ public class LogManagerImpl implements LogManager {
      */
     private RaftOptions                                      raftOptions;
     private volatile CountDownLatch                          shutDownLatch;
+    /**
+     * 统计对象先不看
+     */
     private NodeMetrics                                      nodeMetrics;
+    /**
+     * 日志偏移量监听者
+     */
     private final CopyOnWriteArrayList<LastLogIndexListener> lastLogIndexListeners  = new CopyOnWriteArrayList<>();
 
+    /**
+     * 代表触发的回调事件类型
+     */
     private enum EventType {
+        /**
+         * 其他类型
+         */
         OTHER, // other event type.
+        /**
+         * 重置类型
+         */
         RESET, // reset
+        /**
+         * 丢弃指定前缀的数据
+         */
         TRUNCATE_PREFIX, // truncate log from prefix
+        /**
+         * 丢弃指定后缀的数据
+         */
         TRUNCATE_SUFFIX, // truncate log from suffix
+        /**
+         * 终止
+         */
         SHUTDOWN, //
+        /**
+         * 获取 最后的 LogEntry 的 id
+         */
         LAST_LOG_ID // get last log id
     }
 
     /**
-     * 稳定回调事件
+     * 稳定回调事件  高性能队列就是存放该事件
      */
     private static class StableClosureEvent {
         /**
@@ -180,7 +214,7 @@ public class LogManagerImpl implements LogManager {
      * 2018-Apr-04 5:05:04 PM
      */
     private static class WaitMeta {
-        /** callback when new log come in  当添加一个新的 日志对象时触发的回调*/
+        /** callback when new log come in  当添加一个新的 LogEntry时触发的回调*/
         NewLogCallback onNewLog;
         /** callback error code 错误码*/
         int            errorCode;
@@ -197,7 +231,7 @@ public class LogManagerImpl implements LogManager {
     }
 
     /**
-     * 添加 监听器
+     * 添加 监听器  该监听器 会在lastIndex 发生变化时触发
      * @param listener
      */
     @Override
@@ -225,7 +259,7 @@ public class LogManagerImpl implements LogManager {
                 LOG.error("Fail to init log manager, log storage is null");
                 return false;
             }
-            // 使用相关的配置完成初始化
+            // 获取必要的组件
             this.raftOptions = opts.getRaftOptions();
             this.nodeMetrics = opts.getNodeMetrics();
             this.logStorage = opts.getLogStorage();
@@ -236,7 +270,7 @@ public class LogManagerImpl implements LogManager {
             lsOpts.setConfigurationManager(this.configManager);
             lsOpts.setLogEntryCodecFactory(opts.getLogEntryCodecFactory());
 
-            // 就是 创建了 rocksDB 相关的 对象 并拉取一边数据 同时更新 firstLogIndex 和 配置
+            // 就是 创建了 rocksDB 相关的 对象 并拉取残存的数据 同时更新 firstLogIndex 和 配置
             if (!this.logStorage.init(lsOpts)) {
                 LOG.error("Fail to init logStorage");
                 return false;
@@ -244,7 +278,7 @@ public class LogManagerImpl implements LogManager {
             // 这时 偏移量已经得到更新了
             this.firstLogIndex = this.logStorage.getFirstLogIndex();
             this.lastLogIndex = this.logStorage.getLastLogIndex();
-            // 刷盘的id???
+            // 代表刷盘的起始偏移量
             this.diskId = new LogId(this.lastLogIndex, getTermFromLogStorage(this.lastLogIndex));
             // 获取到状态机对象
             this.fsmCaller = opts.getFsmCaller();
@@ -260,10 +294,12 @@ public class LogManagerImpl implements LogManager {
                     .setWaitStrategy(new TimeoutBlockingWaitStrategy(
                         this.raftOptions.getDisruptorPublishEventWaitTimeoutSecs(), TimeUnit.SECONDS)) // 指定阻塞时长
                     .build();
-            // 设置处理事件对应的 handler
+            // 设置处理事件对应的 handler  该对象就是将生成的事件 写入到 rocksDB 中  什么时候会往队列中插入事件呢???
             this.disruptor.handleEventsWith(new StableClosureEventHandler());
+            // 设置异常处理器  异常时 打印日志 且委托给状态机
             this.disruptor.setDefaultExceptionHandler(new LogExceptionHandler<Object>(this.getClass().getSimpleName(),
                     (event, ex) -> reportError(-1, "LogManager handle event error")));
+            // 启动同步队列
             this.diskQueue = this.disruptor.start();
             if(this.nodeMetrics.getMetricRegistry() != null) {
                 this.nodeMetrics.getMetricRegistry().register("jraft-log-manager-disruptor", new DisruptorMetricSet(this.diskQueue));
@@ -274,8 +310,12 @@ public class LogManagerImpl implements LogManager {
         return true;
     }
 
+    /**
+     * 停止刷盘线程   看来该方法是配合 join() 执行的 join 代表等待 stop 完成 否则是异步关闭
+     */
     private void stopDiskThread() {
         this.shutDownLatch = new CountDownLatch(1);
+        // 发布一个 reset 事件
         this.diskQueue.publishEvent((event, sequence) -> {
             event.reset();
             event.type = EventType.SHUTDOWN;
@@ -287,6 +327,7 @@ public class LogManagerImpl implements LogManager {
         if (this.shutDownLatch == null) {
             return;
         }
+        // 当 ab.flush 完成时 会释放该锁
         this.shutDownLatch.await();
         this.disruptor.shutdown();
     }
@@ -301,6 +342,7 @@ public class LogManagerImpl implements LogManager {
             }
             this.stopped = true;
             doUnlock = false;
+            // 触发所有等待者的 回调方法  看来 并没有直接触发 而是存放到一个map 中 推测有一个额外线程专门处理wait 的回调方法  当shutdown 时 就将缓存的wait全部触发
             wakeupAllWaiter(this.writeLock);
         } finally {
             if (doUnlock) {
@@ -310,6 +352,10 @@ public class LogManagerImpl implements LogManager {
         stopDiskThread();
     }
 
+    /**
+     * 将 指定id 前的 log 全部移除
+     * @param id
+     */
     private void clearMemoryLogs(final LogId id) {
         this.writeLock.lock();
         try {
@@ -328,12 +374,18 @@ public class LogManagerImpl implements LogManager {
         }
     }
 
+    /**
+     * 代表获取最后 日志id 的回调对象
+     */
     private static class LastLogIdClosure extends StableClosure {
 
         public LastLogIdClosure() {
             super(null);
         }
 
+        /**
+         * 获取到的最后日志id
+         */
         private LogId lastLogId;
 
         void setLastLogId(final LogId logId) {
@@ -354,9 +406,15 @@ public class LogManagerImpl implements LogManager {
 
     }
 
+    /**
+     * 操控 logManager  将一组LogEntry 通过该对象存储到 LogStorage (当然对外该对象是不可见的)
+     * @param entries log entries
+     * @param done    callback
+     */
     @Override
     public void appendEntries(final List<LogEntry> entries, final StableClosure done) {
         Requires.requireNonNull(done, "done");
+        // 如果当前  LogManager 处于不可用的状态 使用异常status 来触发回调
         if (this.hasError) {
             entries.clear();
             Utils.runClosureInThread(done, new Status(RaftError.EIO, "Corrupted LogStorage"));
@@ -365,6 +423,7 @@ public class LogManagerImpl implements LogManager {
         boolean doUnlock = true;
         this.writeLock.lock();
         try {
+            // 发现要写入的数据异常
             if (!entries.isEmpty() && !checkAndResolveConflict(entries, done)) {
                 entries.clear();
                 Utils.runClosureInThread(done, new Status(RaftError.EINTERNAL, "Fail to checkAndResolveConflict."));
@@ -376,11 +435,13 @@ public class LogManagerImpl implements LogManager {
                 if (this.raftOptions.isEnableLogEntryChecksum()) {
                     entry.setChecksum(entry.checksum());
                 }
+                // TODO 如果是配置数据  配置数据 好像有 old 和 new 的概念 先不细看
                 if (entry.getType() == EntryType.ENTRY_TYPE_CONFIGURATION) {
                     Configuration oldConf = new Configuration();
                     if (entry.getOldPeers() != null) {
                         oldConf = new Configuration(entry.getOldPeers());
                     }
+                    // 同时存放旧配置 和 新配置
                     final ConfigurationEntry conf = new ConfigurationEntry(entry.getId(),
                         new Configuration(entry.getPeers()), oldConf);
                     this.configManager.add(conf);
@@ -388,8 +449,10 @@ public class LogManagerImpl implements LogManager {
             }
             if (!entries.isEmpty()) {
                 done.setFirstLogIndex(entries.get(0).getId().getIndex());
+                // 这应该是个一级缓存 而且是 通过 先写缓存后写DB 的方式解决双写一致性的  也就是允许读到错误的数据 (可能脑裂写入了旧Leader 的数据 可以却能对外展示)
                 this.logsInMemory.addAll(entries);
             }
+            // 将检查冲突完后的数据设置到 done 中
             done.setEntries(entries);
 
             int retryTimes = 0;
@@ -399,6 +462,7 @@ public class LogManagerImpl implements LogManager {
                 event.done = done;
             };
             while (true) {
+                // 尝试写入到队列中
                 if (tryOfferEvent(done, translator)) {
                     break;
                 } else {
@@ -407,11 +471,14 @@ public class LogManagerImpl implements LogManager {
                         reportError(RaftError.EBUSY.getNumber(), "LogManager is busy, disk queue overload.");
                         return;
                     }
+                    // 自旋
                     ThreadHelper.onSpinWait();
                 }
             }
             doUnlock = false;
+            // 触发回调对象
             if (!wakeupAllWaiter(this.writeLock)) {
+                // 如果没有设置 newLog 的 回调对象 才选择触发该监听器
                 notifyLastLogIndexListeners();
             }
         } finally {
@@ -421,6 +488,11 @@ public class LogManagerImpl implements LogManager {
         }
     }
 
+    /**
+     * 任务入队列
+     * @param done
+     * @param type
+     */
     private void offerEvent(final StableClosure done, final EventType type) {
         if (this.stopped) {
             Utils.runClosureInThread(done, new Status(RaftError.ESTOP, "Log manager is stopped."));
@@ -433,6 +505,12 @@ public class LogManagerImpl implements LogManager {
         });
     }
 
+    /**
+     * 尝试将数据写入到队列中
+     * @param done
+     * @param translator
+     * @return
+     */
     private boolean tryOfferEvent(final StableClosure done, final EventTranslator<StableClosureEvent> translator) {
         if (this.stopped) {
             Utils.runClosureInThread(done, new Status(RaftError.ESTOP, "Log manager is stopped."));
@@ -454,14 +532,22 @@ public class LogManagerImpl implements LogManager {
         }
     }
 
+    /**
+     * 触发回调
+     * @param lock
+     * @return
+     */
     private boolean wakeupAllWaiter(final Lock lock) {
+        // 如果map 中无数据 直接返回
         if (this.waitMap.isEmpty()) {
             lock.unlock();
             return false;
         }
         final List<WaitMeta> wms = new ArrayList<>(this.waitMap.values());
+        // 停止代表由于该对象被关闭 无法正常写入数据  success 代表该对象对应的 logEntry 已经正常写入
         final int errCode = this.stopped ? RaftError.ESTOP.getNumber() : RaftError.SUCCESS.getNumber();
         this.waitMap.clear();
+        // 一旦清空该容器就 唤醒锁 是为了 将耗时操作放到锁外
         lock.unlock();
 
         final int waiterCount = wms.size();
@@ -520,7 +606,7 @@ public class LogManagerImpl implements LogManager {
      */
     private class AppendBatcher {
         /**
-         * 一组待存储的数据
+         * 存放 事件的队列 每个 事件中包含一组数据(一个LogEntry 列表)
          */
         List<StableClosure> storage;
         /**
@@ -585,7 +671,7 @@ public class LogManagerImpl implements LogManager {
         }
 
         /**
-         * 该方法是在某个专门处理回调事件的 handler 中触发的  将回调中携带的数据写入到 LogStorage 中
+         * 将事件中的数据 转移到 该对象中
          * @param done
          */
         void append(final StableClosure done) {
@@ -605,7 +691,7 @@ public class LogManagerImpl implements LogManager {
     }
 
     /**
-     * 稳定回调事件的 处理器  该接口是 diruptor 的接口
+     * 处理 Disruptor 队列中存放的任务
      */
     private class StableClosureEventHandler implements EventHandler<StableClosureEvent> {
         /**
@@ -613,7 +699,7 @@ public class LogManagerImpl implements LogManager {
          */
         LogId               lastId  = LogManagerImpl.this.diskId;
         /**
-         * 应该是 待存储的事件
+         * 可以理解为一个快捷引用 实际上跟 appendBatcher 内的 存储列表指向同一对象 内部存放的 StableClosure 会在任务处理完成后触发回调
          */
         List<StableClosure> storage = new ArrayList<>(256);
         /**
@@ -623,10 +709,10 @@ public class LogManagerImpl implements LogManager {
                                         LogManagerImpl.this.diskId);
 
         /**
-         * 代表触发事件了 现在准备处理
+         * 触发事件  从AppendBatch 中可以看出 数据每次都写入  这样避免频繁访问 rocksDB
          * @param event
          * @param sequence
-         * @param endOfBatch
+         * @param endOfBatch  通过传入该标识 可以做到 event 没有携带数据的时候也进行刷盘
          * @throws Exception
          */
         @Override
@@ -638,7 +724,7 @@ public class LogManagerImpl implements LogManager {
                 this.lastId = this.ab.flush();
                 // 更新当前要刷盘的起点(id 中携带了 index 和任期)
                 setDiskId(this.lastId);
-                // 唤醒阻塞的栅栏 又是常见套路阻塞 主线程实现同步刷盘
+                // 该栅栏是配合 join() 的 只有刷盘完成 stop才算完成
                 LogManagerImpl.this.shutDownLatch.countDown();
                 return;
             }
@@ -649,18 +735,23 @@ public class LogManagerImpl implements LogManager {
             if (done.getEntries() != null && !done.getEntries().isEmpty()) {
                 this.ab.append(done);
             } else {
-                // 看来其余情况都当作是刷盘了   会强制将 toAppend 的数据写入到 LogStorage 中 并触发所有回调
+                // 如果回调事件中携带数据 就存放到appendBatch 中 等积累到一定量才存储
+                // 如果没有携带数据 就代表是某种指令
                 this.lastId = this.ab.flush();
                 boolean ret = true;
                 switch (event.type) {
+                    // 指令内容为获取最后的 logId
                     case LAST_LOG_ID:
+                        // 这里设置到回调对象中
                         ((LastLogIdClosure) done).setLastLogId(this.lastId.copy());
                         break;
+                    // 截断 前缀
                     case TRUNCATE_PREFIX:
                         long startMs = Utils.monotonicMs();
                         try {
                             final TruncatePrefixClosure tpc = (TruncatePrefixClosure) done;
                             LOG.debug("Truncating storage to firstIndexKept={}", tpc.firstIndexKept);
+                            // 截断数据
                             ret = LogManagerImpl.this.logStorage.truncatePrefix(tpc.firstIndexKept);
                         } finally {
                             LogManagerImpl.this.nodeMetrics.recordLatency("truncate-log-prefix", Utils.monotonicMs()
@@ -674,6 +765,7 @@ public class LogManagerImpl implements LogManager {
                             LOG.warn("Truncating storage to lastIndexKept={}", tsc.lastIndexKept);
                             ret = LogManagerImpl.this.logStorage.truncateSuffix(tsc.lastIndexKept);
                             if (ret) {
+                                // 更新 末尾
                                 this.lastId.setIndex(tsc.lastIndexKept);
                                 this.lastId.setTerm(tsc.lastTermKept);
                                 Requires.requireTrue(this.lastId.getIndex() == 0 || this.lastId.getTerm() != 0);
@@ -686,6 +778,7 @@ public class LogManagerImpl implements LogManager {
                     case RESET:
                         final ResetClosure rc = (ResetClosure) done;
                         LOG.info("Reseting storage to nextLogIndex={}", rc.nextLogIndex);
+                        // 重启 rocks DB 并将偏移量对象的 LogEntry 加载到 logManager 中
                         ret = LogManagerImpl.this.logStorage.reset(rc.nextLogIndex);
                         break;
                     default:
@@ -721,6 +814,10 @@ public class LogManagerImpl implements LogManager {
         this.fsmCaller.onError(error);
     }
 
+    /**
+     * 更新刷盘id
+     * @param id
+     */
     private void setDiskId(final LogId id) {
         if (id == null) {
             return;
@@ -741,20 +838,27 @@ public class LogManagerImpl implements LogManager {
         }
     }
 
+    /**
+     * 设置快照
+     * @param meta snapshot metadata
+     */
     @Override
     public void setSnapshot(final SnapshotMeta meta) {
         LOG.debug("set snapshot: {}", meta);
         this.writeLock.lock();
         try {
+            // 代表不需要写入
             if (meta.getLastIncludedIndex() <= this.lastSnapshotId.getIndex()) {
                 return;
             }
+            // 在 jraft中 conf 代表一组 peerId   这里是将meta 的数据转换成 conf
             final Configuration conf = new Configuration();
             for (int i = 0; i < meta.getPeersCount(); i++) {
                 final PeerId peer = new PeerId();
                 peer.parse(meta.getPeers(i));
                 conf.addPeer(peer);
             }
+            // 将旧配置相关的数据 转换成oldConf
             final Configuration oldConf = new Configuration();
             for (int i = 0; i < meta.getOldPeersCount(); i++) {
                 final PeerId peer = new PeerId();
@@ -762,8 +866,10 @@ public class LogManagerImpl implements LogManager {
                 oldConf.addPeer(peer);
             }
 
+            // 生成配置实体
             final ConfigurationEntry entry = new ConfigurationEntry(new LogId(meta.getLastIncludedIndex(),
                 meta.getLastIncludedTerm()), conf, oldConf);
+            // 设置配置快照
             this.configManager.setSnapshot(entry);
             final long term = unsafeGetTerm(meta.getLastIncludedIndex());
             final long savedLastSnapshotIndex = this.lastSnapshotId.getIndex();
@@ -771,10 +877,12 @@ public class LogManagerImpl implements LogManager {
             this.lastSnapshotId.setIndex(meta.getLastIncludedIndex());
             this.lastSnapshotId.setTerm(meta.getLastIncludedTerm());
 
+            // appliedId代表快照的偏移量
             if (this.lastSnapshotId.compareTo(this.appliedId) > 0) {
                 this.appliedId = this.lastSnapshotId.copy();
             }
 
+            // 因为生成快照了 所以 LogStorage 中 早些的数据可以去掉了
             if (term == 0) {
                 // last_included_index is larger than last_index
                 // FIXME: what if last_included_index is less than first_index?
@@ -811,6 +919,10 @@ public class LogManagerImpl implements LogManager {
         }
     }
 
+    /**
+     * 生成一级缓存的描述信息
+     * @return
+     */
     private String descLogsInMemory() {
         final StringBuilder sb = new StringBuilder();
         boolean wasFirst = true;
@@ -826,6 +938,11 @@ public class LogManagerImpl implements LogManager {
         return sb.toString();
     }
 
+    /**
+     * 从一级缓存中获取
+     * @param index
+     * @return
+     */
     protected LogEntry getEntryFromMemory(final long index) {
         LogEntry entry = null;
         if (!this.logsInMemory.isEmpty()) {
@@ -886,6 +1003,7 @@ public class LogManagerImpl implements LogManager {
             if (index == this.lastSnapshotId.getIndex()) {
                 return this.lastSnapshotId.getTerm();
             }
+            // 先尝试从一级缓存获取
             final LogEntry entry = getEntryFromMemory(index);
             if (entry != null) {
                 return entry.getId().getTerm();
@@ -893,12 +1011,19 @@ public class LogManagerImpl implements LogManager {
         } finally {
             this.readLock.unlock();
         }
+        // 从LogStorage 中获取
         return getTermFromLogStorage(index);
     }
 
+    /**
+     * 从下标中获取任期  就是通过rocksdb 获取logentry (该对象内部封装了任期)
+     * @param index
+     * @return
+     */
     private long getTermFromLogStorage(final long index) {
         LogEntry entry = this.logStorage.getEntry(index);
         if (entry != null) {
+            // 是否开启了校验和 且 代表校验失败
             if (this.raftOptions.isEnableLogEntryChecksum() && entry.isCorrupted()) {
                 // Report error to node and throw exception.
                 String msg = String.format(
@@ -1001,7 +1126,13 @@ public class LogManagerImpl implements LogManager {
         return c.lastLogId;
     }
 
+    /**
+     * 代表截断前缀的 事件
+     */
     private static class TruncatePrefixClosure extends StableClosure {
+        /**
+         * 截断的偏移量
+         */
         long firstIndexKept;
 
         public TruncatePrefixClosure(final long firstIndexKept) {
@@ -1009,6 +1140,10 @@ public class LogManagerImpl implements LogManager {
             this.firstIndexKept = firstIndexKept;
         }
 
+        /**
+         * 回调没有处理
+         * @param status the task status. 任务结果
+         */
         @Override
         public void run(final Status status) {
 
@@ -1047,8 +1182,14 @@ public class LogManagerImpl implements LogManager {
         }
     }
 
+    /**
+     * 清除前缀数据
+     * @param firstIndexKept
+     * @return
+     */
     private boolean truncatePrefix(final long firstIndexKept) {
         int index = 0;
+        // 先清除一级缓存
         for (final int size = this.logsInMemory.size(); index < size; index++) {
             final LogEntry entry = this.logsInMemory.get(index);
             if (entry.getId().getIndex() >= firstIndexKept) {
@@ -1068,8 +1209,11 @@ public class LogManagerImpl implements LogManager {
             // The entry log is dropped
             this.lastLogIndex = firstIndexKept - 1;
         }
+
         LOG.debug("Truncate prefix, firstIndexKept is :{}", firstIndexKept);
+        // 将旧的配置也删除
         this.configManager.truncatePrefix(firstIndexKept);
+        // 添加写入任务
         final TruncatePrefixClosure c = new TruncatePrefixClosure(firstIndexKept);
         offerEvent(c, EventType.TRUNCATE_PREFIX);
         return true;
@@ -1091,6 +1235,10 @@ public class LogManagerImpl implements LogManager {
         }
     }
 
+    /**
+     * 丢弃部分数据  一级缓存也要修改
+     * @param lastIndexKept
+     */
     private void unsafeTruncateSuffix(final long lastIndexKept) {
         if (lastIndexKept < this.appliedId.getIndex()) {
             LOG.error("FATAL ERROR: Can't truncate logs before appliedId={}, lastIndexKept={}", this.appliedId,
@@ -1106,22 +1254,34 @@ public class LogManagerImpl implements LogManager {
             }
         }
         this.lastLogIndex = lastIndexKept;
+        // 获取对应的任期
         final long lastTermKept = unsafeGetTerm(lastIndexKept);
         Requires.requireTrue(this.lastLogIndex == 0 || lastTermKept != 0);
         LOG.debug("Truncate suffix :{}", lastIndexKept);
+        // 丢弃过期的配置
         this.configManager.truncateSuffix(lastIndexKept);
         final TruncateSuffixClosure c = new TruncateSuffixClosure(lastIndexKept, lastTermKept);
+        // 将事件设置到 队列中
         offerEvent(c, EventType.TRUNCATE_SUFFIX);
     }
 
+    /**
+     * 检查 和解决冲突    这里传入一个list 就代表日志不是一条条写入的 而是收集后批量写入
+     * @param entries  一组待写入的 Log对象 在jraft 中client的任何请求都会被封装成LogEntry对象并保存在节点中
+     * @param done
+     * @return
+     */
     @SuppressWarnings("NonAtomicOperationOnVolatileField")
     private boolean checkAndResolveConflict(final List<LogEntry> entries, final StableClosure done) {
+        // 等同于 entries.get(0)
         final LogEntry firstLogEntry = ArrayDeque.peekFirst(entries);
+        // 如果 index ==0 代表无法知晓当前合适的偏移量 这时用之前维护的 lastLogIndex 来设置
         if (firstLogEntry.getId().getIndex() == 0) {
             // Node is currently the leader and |entries| are from the user who
             // don't know the correct indexes the logs should assign to. So we have
             // to assign indexes to the appending entries
             for (int i = 0; i < entries.size(); i++) {
+                // 注意这里的 ++
                 entries.get(i).getId().setIndex(++this.lastLogIndex);
             }
             return true;
@@ -1129,20 +1289,25 @@ public class LogManagerImpl implements LogManager {
             // Node is currently a follower and |entries| are from the leader. We
             // should check and resolve the conflicts between the local logs and
             // |entries|
+            // 代表偏移量超过了预期值 无法写入
             if (firstLogEntry.getId().getIndex() > this.lastLogIndex + 1) {
                 Utils.runClosureInThread(done, new Status(RaftError.EINVAL,
                     "There's gap between first_index=%d and last_log_index=%d", firstLogEntry.getId().getIndex(),
                     this.lastLogIndex));
                 return false;
             }
+            // 获取快照偏移量
             final long appliedIndex = this.appliedId.getIndex();
+            // 获取最后一个元素
             final LogEntry lastLogEntry = ArrayDeque.peekLast(entries);
+            // 如果写入的数据 还在快照的前面 就不需要写入了
             if (lastLogEntry.getId().getIndex() <= appliedIndex) {
                 LOG.warn(
                     "Received entries of which the lastLog={} is not greater than appliedIndex={}, return immediately with nothing changed.",
                     lastLogEntry.getId().getIndex(), appliedIndex);
                 return false;
             }
+            // 代表可以正常写入  这里直接更新了偏移量但是数据还没写入 推测是将它作为一个 event 存放到队列中
             if (firstLogEntry.getId().getIndex() == this.lastLogIndex + 1) {
                 // fast path
                 this.lastLogIndex = lastLogEntry.getId().getIndex();
@@ -1150,14 +1315,20 @@ public class LogManagerImpl implements LogManager {
                 // Appending entries overlap the local ones. We should find if there
                 // is a conflicting index from which we should truncate the local
                 // ones.
+                // 代表有部分数据是重复的
                 int conflictingIndex = 0;
                 for (; conflictingIndex < entries.size(); conflictingIndex++) {
-                    if (unsafeGetTerm(entries.get(conflictingIndex).getId().getIndex()) != entries
+                    // 这里先检查 任期是在哪里出现了出入  因为数据发生重复 很可能是在某个时期出现了脑裂 导致收到不同任期相同下标的数据
+                    // conflictingIndex 代表发现冲突的起点  而在0～conflictingindex 之间的数据都是重复数据
+                    if (unsafeGetTerm(entries.get(conflictingIndex).getId().getIndex()) != entries  //
                         .get(conflictingIndex).getId().getTerm()) {
                         break;
                     }
                 }
+                // 该index在 LogStorage 查找到的 LogEntry 的任期 与当前要写入的 list 中某个entey 对应的任期不一致
+                // 如果 conflictingIndex == entries.size() 代表 遍历完了所有数据且没有出现冲突
                 if (conflictingIndex != entries.size()) {
+                    // 代表需要截取部分 Logstorage 的数据 那些数据是因为脑裂导致旧的leader 还能写入的 无效数据
                     if (entries.get(conflictingIndex).getId().getIndex() <= this.lastLogIndex) {
                         // Truncate all the conflicting entries to make local logs
                         // consensus with the leader.
@@ -1175,6 +1346,11 @@ public class LogManagerImpl implements LogManager {
         }
     }
 
+    /**
+     * 获取对应的配置实体
+     * @param index
+     * @return
+     */
     @Override
     public ConfigurationEntry getConfiguration(final long index) {
         this.readLock.lock();
@@ -1185,6 +1361,11 @@ public class LogManagerImpl implements LogManager {
         }
     }
 
+    /**
+     * 检验当前conf 与 保存的最后一个 配置是否相同 TODO 这里只是判断id 是否相同 应该有特殊含义
+     * @param current
+     * @return
+     */
     @Override
     public ConfigurationEntry checkAndSetConfiguration(final ConfigurationEntry current) {
         if (current == null) {
@@ -1202,12 +1383,25 @@ public class LogManagerImpl implements LogManager {
         return current;
     }
 
+    /**
+     * 生成 检测新log 写入的回调对象
+     * @param expectedLastLogIndex  expected last index of log
+     * @param cb                    callback
+     * @param arg                   the waiter pass-in argument
+     * @return
+     */
     @Override
     public long wait(final long expectedLastLogIndex, final NewLogCallback cb, final Object arg) {
         final WaitMeta wm = new WaitMeta(cb, arg, 0);
         return notifyOnNewLog(expectedLastLogIndex, wm);
     }
 
+    /**
+     * 将回调对象设置到map中
+     * @param expectedLastLogIndex  代表预期触发的下标 如果当前不是该下标 直接触发回调
+     * @param wm
+     * @return
+     */
     private long notifyOnNewLog(final long expectedLastLogIndex, final WaitMeta wm) {
         this.writeLock.lock();
         try {
@@ -1259,12 +1453,17 @@ public class LogManagerImpl implements LogManager {
         wm.onNewLog.onNewLog(wm.arg, wm.errorCode);
     }
 
+    /**
+     * 检查一致性
+     * @return
+     */
     @Override
     public Status checkConsistency() {
         this.readLock.lock();
         try {
             Requires.requireTrue(this.firstLogIndex > 0);
             Requires.requireTrue(this.lastLogIndex >= 0);
+            // 如果快照是0的化 firstLogIndex必须是1  firstLogIndex 可能就是 快照的尾部
             if (this.lastSnapshotId.equals(new LogId(0, 0))) {
                 if (this.firstLogIndex == 1) {
                     return Status.OK();

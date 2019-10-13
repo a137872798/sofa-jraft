@@ -67,6 +67,9 @@ public final class ThreadHelper {
     private ThreadHelper() {
     }
 
+    /**
+     * 协助自旋的 对象 避免自旋时间间隔过短
+     */
     public static abstract class Spinner {
 
         public abstract void onSpinWait();

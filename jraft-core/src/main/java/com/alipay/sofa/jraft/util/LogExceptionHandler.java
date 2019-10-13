@@ -23,7 +23,7 @@ import com.lmax.disruptor.ExceptionHandler;
 
 /**
  * Disruptor exception handler.
- *
+ * 同步队列的异常处理器
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Apr-05 9:31:28 PM

@@ -21,6 +21,7 @@ import com.alipay.sofa.jraft.entity.codec.LogEntryCodecFactory;
 
 /**
  * Log storage initialize options
+ * 在 jraft 中一个常见的套路就是 每个对象的init 是传入一个options 对象 而 该对象存放了启动必备的相关类
  * @author boyan(boyan@antfin.com)
  *
  */

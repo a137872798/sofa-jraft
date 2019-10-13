@@ -38,7 +38,7 @@ import com.google.protobuf.Message;
  * <li>msg data</li>
  * </ul>
  * @author boyan (boyan@alibaba-inc.com)
- *
+ * 按照特定格式存储数据的文件
  * 2018-Mar-12 8:56:23 PM
  */
 public class ProtoBufFile {
@@ -47,7 +47,7 @@ public class ProtoBufFile {
         ProtobufMsgFactory.load();
     }
 
-    /** file path */
+    /** file path 文件路径*/
     private final String path;
 
     public ProtoBufFile(final String path) {
@@ -64,9 +64,11 @@ public class ProtoBufFile {
             return null;
         }
 
+        // 先申请 标明长度用的数组
         final byte[] lenBytes = new byte[4];
         try (final FileInputStream fin = new FileInputStream(file);
                 final BufferedInputStream input = new BufferedInputStream(fin)) {
+            // 读取长度
             readBytes(lenBytes, input);
             final int len = Bits.getInt(lenBytes, 0);
             if (len <= 0) {
@@ -93,12 +95,13 @@ public class ProtoBufFile {
     /**
      * Save a protobuf message to file.
      *
-     * @param msg  protobuf message
-     * @param sync if sync flush data to disk
+     * @param msg  protobuf message  准备写入的数据
+     * @param sync if sync flush data to disk  是否同步写入
      * @return true if save success
      */
     public boolean save(final Message msg, final boolean sync) throws IOException {
         // Write message into temp file
+        // 生成临时文件
         final File file = new File(this.path + ".tmp");
         try (final FileOutputStream fOut = new FileOutputStream(file);
                 final BufferedOutputStream output = new BufferedOutputStream(fOut)) {
@@ -107,8 +110,10 @@ public class ProtoBufFile {
             // name len + name
             final String fullName = msg.getDescriptorForType().getFullName();
             final int nameLen = fullName.length();
+            // 写入长度
             Bits.putInt(lenBytes, 0, nameLen);
             output.write(lenBytes);
+            // 写入数据
             output.write(fullName.getBytes());
             // msg len + msg
             final int msgLen = msg.getSerializedSize();
@@ -116,10 +121,12 @@ public class ProtoBufFile {
             output.write(lenBytes);
             msg.writeTo(output);
             if (sync) {
+                // 确保写入到物理介质中才会返回 看来写入文件实际上操作系统都是按照异步方式写入的
                 fOut.getFD().sync();
             }
         }
 
+        // 将 tmp 文件的内容复制到  特殊后缀文件中
         return Utils.atomicMoveFile(file, new File(this.path));
     }
 }

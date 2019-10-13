@@ -46,7 +46,7 @@ import com.alipay.sofa.jraft.util.Utils;
 
 /**
  * Snapshot storage based on local file storage.
- *
+ * 快照存储 同样是基于本地文件
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Mar-13 2:11:30 PM

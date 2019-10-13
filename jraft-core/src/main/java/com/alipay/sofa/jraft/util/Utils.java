@@ -161,6 +161,7 @@ public class Utils {
 
     /**
      * Run closure with status in thread pool.
+     * 在线程池中执行任务
      */
     public static Future<?> runClosureInThread(final Closure done, final Status status) {
         if (done == null) {

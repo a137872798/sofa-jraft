@@ -39,7 +39,7 @@ import com.alipay.sofa.jraft.util.Utils;
 
 /**
  * Raft meta storage,it's not thread-safe.
- *
+ * 本地存储元数据
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Mar-26 7:30:36 PM
@@ -49,13 +49,25 @@ public class LocalRaftMetaStorage implements RaftMetaStorage {
     private static final Logger LOG       = LoggerFactory.getLogger(LocalRaftMetaStorage.class);
     private static final String RAFT_META = "raft_meta";
 
+    /**
+     * 是否初始化完毕
+     */
     private boolean             isInited;
+    /**
+     * 存储路径  看来是基于本地文件存储
+     */
     private final String        path;
+    /**
+     * 当前任期
+     */
     private long                term;
-    /** blank votedFor information*/
+    /** blank votedFor information 默认情况下没有投票目标*/
     private PeerId              votedFor  = PeerId.emptyPeer();
     private final RaftOptions   raftOptions;
     private NodeMetrics         nodeMetrics;
+    /**
+     * node
+     */
     private NodeImpl            node;
 
     public LocalRaftMetaStorage(final String path, final RaftOptions raftOptions) {
@@ -64,6 +76,11 @@ public class LocalRaftMetaStorage implements RaftMetaStorage {
         this.raftOptions = raftOptions;
     }
 
+    /**
+     * 初始化  jraft的套路是通过一个options 进行初始化 该对象内部维护了init 需要的其他属性
+     * @param opts
+     * @return
+     */
     @Override
     public boolean init(final RaftMetaStorageOptions opts) {
         if (this.isInited) {
@@ -73,11 +90,13 @@ public class LocalRaftMetaStorage implements RaftMetaStorage {
         this.node = opts.getNode();
         this.nodeMetrics = this.node.getNodeMetrics();
         try {
+            // 创建文件
             FileUtils.forceMkdir(new File(this.path));
         } catch (final IOException e) {
             LOG.error("Fail to mkdir {}", this.path);
             return false;
         }
+        // 针对文件已经存在的情况下 将数据加载到内存来(相当于一级缓存)
         if (load()) {
             this.isInited = true;
             return true;
@@ -86,9 +105,14 @@ public class LocalRaftMetaStorage implements RaftMetaStorage {
         }
     }
 
+    /**
+     * 从文件中加载数据
+     * @return
+     */
     private boolean load() {
         final ProtoBufFile pbFile = newPbFile();
         try {
+            // 尝试加载 this.path + File.separator + RAFT_META 路径下文件的数据
             final StablePBMeta meta = pbFile.load();
             if (meta != null) {
                 this.term = meta.getTerm();
@@ -96,6 +120,7 @@ public class LocalRaftMetaStorage implements RaftMetaStorage {
             }
             return true;
         } catch (final FileNotFoundException e) {
+            // 可能特殊文件还未生成
             return true;
         } catch (final IOException e) {
             LOG.error("Fail to load raft meta storage", e);
@@ -104,9 +129,14 @@ public class LocalRaftMetaStorage implements RaftMetaStorage {
     }
 
     private ProtoBufFile newPbFile() {
+        // 该对象内部封装了按照特殊格式读取文件的逻辑
         return new ProtoBufFile(this.path + File.separator + RAFT_META);
     }
 
+    /**
+     * 存储数据
+     * @return
+     */
     private boolean save() {
         final long start = Utils.monotonicMs();
         final StablePBMeta meta = StablePBMeta.newBuilder() //
@@ -115,6 +145,7 @@ public class LocalRaftMetaStorage implements RaftMetaStorage {
             .build();
         final ProtoBufFile pbFile = newPbFile();
         try {
+            // 将数据保存到 特殊文件中
             if (!pbFile.save(meta, this.raftOptions.isSyncMeta())) {
                 reportIOError();
                 return false;
@@ -144,6 +175,7 @@ public class LocalRaftMetaStorage implements RaftMetaStorage {
         if (!this.isInited) {
             return;
         }
+        // 关闭时先保存数据
         save();
         this.isInited = false;
     }

@@ -35,7 +35,7 @@ import com.alipay.sofa.jraft.util.SPI;
  * The default factory for JRaft services.
  * @author boyan(boyan@antfin.com)
  * @since 1.2.6
- * 默认工厂 基于SPI 实现
+ * 默认工厂 子类可以拓展核心方法 修改LogStorage 实现类
  */
 @SPI
 public class DefaultJRaftServiceFactory implements JRaftServiceFactory {
@@ -56,12 +56,24 @@ public class DefaultJRaftServiceFactory implements JRaftServiceFactory {
         return new RocksDBLogStorage(uri, raftOptions);
     }
 
+    /**
+     * 快照存储对象
+     * @param uri  The snapshot storage uri from {@link NodeOptions#getSnapshotUri()}
+     * @param raftOptions  the raft options.
+     * @return
+     */
     @Override
     public SnapshotStorage createSnapshotStorage(final String uri, final RaftOptions raftOptions) {
         Requires.requireTrue(!StringUtils.isBlank(uri), "Blank snapshot storage uri.");
         return new LocalSnapshotStorage(uri, raftOptions);
     }
 
+    /**
+     * 设置元数据存储 基于本地文件实现
+     * @param uri  The meta storage uri from {@link NodeOptions#getRaftMetaUri()}  在LocalRaftMetaStorage中作为文件路径
+     * @param raftOptions  the raft options.
+     * @return
+     */
     @Override
     public RaftMetaStorage createRaftMetaStorage(final String uri, final RaftOptions raftOptions) {
         Requires.requireTrue(!StringUtils.isBlank(uri), "Blank raft meta storage uri.");
