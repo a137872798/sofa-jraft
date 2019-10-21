@@ -23,18 +23,25 @@ import com.alipay.sofa.jraft.rpc.RpcResponseFactory;
 
 /**
  * Ping request processor.
- *
+ * 同步处理对象  这套模板应该跟 RocketMq 一样 一种请求类型对应一个Processor
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Apr-08 7:33:30 PM
  */
 public class PingRequestProcessor extends SyncUserProcessor<PingRequest> {
 
+    /**
+     * 对应心跳总是返回OK
+     */
     @Override
     public Object handleRequest(BizContext bizCtx, PingRequest request) throws Exception {
         return RpcResponseFactory.newResponse(0, "OK");
     }
 
+    /**
+     * 用于处理 PingRequest 请求
+     * @return
+     */
     @Override
     public String interest() {
         return PingRequest.class.getName();

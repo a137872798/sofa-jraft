@@ -22,6 +22,7 @@ import com.alipay.sofa.jraft.rpc.RpcRequests.ReadIndexRequest;
 
 /**
  * ReadIndex requests statuses.
+ * 内部维护一组state
  * @author dennis
  *
  */

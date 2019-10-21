@@ -25,7 +25,7 @@ import com.google.protobuf.Message;
 
 /**
  * Snapshot writer.
- *
+ * 写入快照的对象
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Mar-12 4:52:10 PM
@@ -34,7 +34,7 @@ public abstract class SnapshotWriter extends Snapshot implements Closeable, Life
 
     /**
      * Save a snapshot metadata.
-     *
+     * 保存快照元数据
      * @param meta snapshot metadata
      * @return true on success
      */
@@ -42,7 +42,7 @@ public abstract class SnapshotWriter extends Snapshot implements Closeable, Life
 
     /**
      * Adds a snapshot file without metadata.
-     *
+     * 新增一个快照文件
      * @param fileName file name
      * @return true on success
      */
@@ -52,7 +52,7 @@ public abstract class SnapshotWriter extends Snapshot implements Closeable, Life
 
     /**
      * Adds a snapshot file with metadata.
-     *
+     * 添加一个快照文件 同时保存文件的元数据
      * @param fileName file name
      * @param fileMeta file metadata
      * @return true on success
@@ -61,7 +61,7 @@ public abstract class SnapshotWriter extends Snapshot implements Closeable, Life
 
     /**
      * Remove a snapshot file.
-     *
+     * 删除指定快照文件
      * @param fileName file name
      * @return true on success
      */
@@ -69,8 +69,8 @@ public abstract class SnapshotWriter extends Snapshot implements Closeable, Life
 
     /**
      * Close the writer.
-     *
-     * @param keepDataOnError whether to keep data when error happens.
+     * 关闭快照写入流
+     * @param keepDataOnError whether to keep data when error happens. 当出现异常时 是否停止删除
      * @throws IOException if occurred an IO error
      */
     public abstract void close(final boolean keepDataOnError) throws IOException;

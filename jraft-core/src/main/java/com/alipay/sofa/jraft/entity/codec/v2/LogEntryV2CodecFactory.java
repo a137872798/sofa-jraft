@@ -44,13 +44,19 @@ public class LogEntryV2CodecFactory implements LogEntryCodecFactory {
         return INSTANCE;
     }
 
-    // BB-8 and R2D2 are good friends.
+    // BB-8 and R2D2 are good friends.   魔数
     public static final byte[] MAGIC_BYTES = new byte[] { (byte) 0xBB, (byte) 0xD2 };
     // Codec version
     public static final byte   VERSION     = 1;
 
+    /**
+     * 保留3字节
+     */
     public static final byte[] RESERVED    = new byte[3];
 
+    /**
+     * 头部6字节长度
+     */
     public static final int    HEADER_SIZE = MAGIC_BYTES.length + 1 + RESERVED.length;
 
     @Override

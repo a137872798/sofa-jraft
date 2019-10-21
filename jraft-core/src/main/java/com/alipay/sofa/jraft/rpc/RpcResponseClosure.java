@@ -21,7 +21,7 @@ import com.google.protobuf.Message;
 
 /**
  * RPC response closure.
- *
+ * 基于响应结果的对象对象
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Apr-08 5:55:01 PM 
@@ -31,7 +31,7 @@ public interface RpcResponseClosure<T extends Message> extends Closure {
 
     /**
      * Called by request handler to set response.
-     *
+     * 当设置完响应结果后触发
      * @param resp rpc response
      */
     void setResponse(T resp);

@@ -19,6 +19,9 @@
 
 package com.alipay.sofa.jraft.entity;
 
+/**
+ * 基于PB 先不细看
+ */
 public final class LocalStorageOutter {
     private LocalStorageOutter() {
     }

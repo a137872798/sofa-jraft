@@ -39,7 +39,7 @@ import com.alipay.sofa.jraft.util.Requires;
 /**
  * Ballot box for voting.
  * @author boyan (boyan@alibaba-inc.com)
- *
+ * 投票箱
  * 2018-Apr-04 2:32:10 PM
  */
 @ThreadSafe

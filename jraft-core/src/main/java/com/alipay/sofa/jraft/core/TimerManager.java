@@ -26,7 +26,7 @@ import com.alipay.sofa.jraft.util.NamedThreadFactory;
 
 /**
  * The global timer manager.
- *
+ * 全局定时器管理者  为什么需要这样一个对象 基本都是委托给 executor
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Mar-30 3:24:34 PM

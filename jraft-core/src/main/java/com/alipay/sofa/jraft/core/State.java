@@ -23,7 +23,13 @@ package com.alipay.sofa.jraft.core;
  * 2018-Apr-08 5:41:54 PM
  */
 public enum State {
+    /**
+     * 当前节点就是leader
+     */
     STATE_LEADER, // It's a leader
+    /**
+     * 代表本节点作为 leader 并向其他节点传播该消息
+     */
     STATE_TRANSFERRING, // It's transferring leadership
     STATE_CANDIDATE, //  It's a candidate
     STATE_FOLLOWER, // It's a follower

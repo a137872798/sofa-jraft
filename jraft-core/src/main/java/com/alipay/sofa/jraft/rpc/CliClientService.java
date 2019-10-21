@@ -32,7 +32,7 @@ public interface CliClientService extends ClientService {
 
     /**
      * Adds a peer.
-     *
+     * 为 group 添加一个同级节点
      * @param endpoint  server address
      * @param request   request data
      * @param done      callback
@@ -43,7 +43,7 @@ public interface CliClientService extends ClientService {
 
     /**
      * Removes a peer.
-     *
+     * 移除 group 中的某个节点
      * @param endpoint  server address
      * @param request   request data
      * @param done      callback
@@ -54,10 +54,10 @@ public interface CliClientService extends ClientService {
 
     /**
      * Reset a peer.
-     *
-     * @param endpoint  server address
-     * @param request   request data
-     * @param done      callback
+     * 重置某个节点
+     * @param endpoint  server address  服务器地址
+     * @param request   request data   请求对象
+     * @param done      callback    处理后的回调对象
      * @return a future with result
      */
     Future<Message> resetPeer(Endpoint endpoint, CliRequests.ResetPeerRequest request,
@@ -65,7 +65,7 @@ public interface CliClientService extends ClientService {
 
     /**
      * Do a snapshot.
-     *
+     * 快照不都是 服务器 发往客户端吗 为什么这里有个方法???
      * @param endpoint  server address
      * @param request   request data
      * @param done      callback
@@ -76,7 +76,7 @@ public interface CliClientService extends ClientService {
 
     /**
      * Change peers.
-     *
+     * 修改某个节点信息
      * @param endpoint  server address
      * @param request   request data
      * @param done      callback
@@ -87,7 +87,7 @@ public interface CliClientService extends ClientService {
 
     /**
      * Get the group leader.
-     *
+     * 获取集群中的leader 信息
      * @param endpoint  server address
      * @param request   request data
      * @param done      callback
@@ -98,7 +98,7 @@ public interface CliClientService extends ClientService {
 
     /**
      * Transfer leadership to other peer.
-     *
+     * 更换leader
      * @param endpoint  server address
      * @param request   request data
      * @param done      callback
@@ -109,7 +109,7 @@ public interface CliClientService extends ClientService {
 
     /**
      * Get all peers of the replication group.
-     *
+     * 获取该组中所有节点
      * @param endpoint  server address
      * @param request   request data
      * @param done      callback

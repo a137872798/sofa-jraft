@@ -25,13 +25,22 @@ import com.alipay.sofa.jraft.entity.PeerId;
 /**
  * A configuration entry with current peers and old peers.
  * @author boyan (boyan@alibaba-inc.com)
- *
+ * 配置实体 内部维护了旧的集群节点 和新的集群节点  在重新发起选举时起作用 不让old节点参与新一轮的投票
  * 2018-Apr-04 2:25:06 PM
  */
 public class ConfigurationEntry {
 
+    /**
+     * 这个值有什么用 ???
+     */
     private LogId         id      = new LogId(0, 0);
+    /**
+     * 当前集群节点
+     */
     private Configuration conf    = new Configuration();
+    /**
+     * 旧集群节点
+     */
     private Configuration oldConf = new Configuration();
 
     public LogId getId() {
@@ -69,6 +78,10 @@ public class ConfigurationEntry {
         this.oldConf = oldConf;
     }
 
+    /**
+     * 是否稳定 如果 不存在旧的集群 代表集群本身没有变化过
+     * @return
+     */
     public boolean isStable() {
         return this.oldConf.isEmpty();
     }
@@ -77,6 +90,10 @@ public class ConfigurationEntry {
         return this.conf.isEmpty();
     }
 
+    /**
+     * 返回所有 peer
+     * @return
+     */
     public Set<PeerId> listPeers() {
         final Set<PeerId> ret = new HashSet<>(this.conf.listPeers());
         ret.addAll(this.oldConf.listPeers());

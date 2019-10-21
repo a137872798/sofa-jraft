@@ -26,13 +26,14 @@ public interface Checksum {
 
     /**
      * Caculate a checksum value for this entity.
+     * 根据当前数据实体 计算校验和
      * @return checksum value
      */
     long checksum();
 
     /**
      * Returns the checksum value of two long values.
-     *
+     * 检查校验和是否正确   咋不直接用 == 呢
      * @param v1 first long value
      * @param v2 second long value
      * @return checksum value

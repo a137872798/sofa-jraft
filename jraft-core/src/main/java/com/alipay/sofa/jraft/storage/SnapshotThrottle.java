@@ -18,7 +18,7 @@ package com.alipay.sofa.jraft.storage;
 
 /**
  * Snapshot throttling during heavy disk reading/writing
- *
+ * 读写时 做一个限制处理
  * @author dennis
  */
 public interface SnapshotThrottle {

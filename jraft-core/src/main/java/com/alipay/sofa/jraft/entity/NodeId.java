@@ -20,7 +20,7 @@ import java.io.Serializable;
 
 /**
  * A raft node identifier.
- *
+ * 在PeerId 的基础上增加了 group 的概念
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Apr-03 4:08:14 PM

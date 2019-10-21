@@ -30,6 +30,7 @@ import com.alipay.sofa.jraft.util.Bits;
 
 /**
  * V1 log entry decoder
+ * V1版本的解码器
  * @author boyan(boyan@antfin.com)
  *
  */
@@ -45,26 +46,37 @@ public final class V1Decoder implements LogEntryDecoder {
         if (content == null || content.length == 0) {
             return null;
         }
+        // 如果首字节不是魔数 无法解析
         if (content[0] != LogEntryV1CodecFactory.MAGIC) {
             // Corrupted log
             return null;
         }
+        // 创建一个 LogEntry (该对象是写入 leader/follow 的最小单位)
         LogEntry log = new LogEntry();
+        // 将数据填充到log中
         decode(log, content);
 
         return log;
     }
 
+    /**
+     * 将 content 的数据 填充到log 中
+     * @param log
+     * @param content
+     */
     public void decode(final LogEntry log, final byte[] content) {
         // 1-5 type
+        // 以1 为起点 解析4个字节 并转换成int类型 该值代表长度
         final int iType = Bits.getInt(content, 1);
+        // 获取数据体类型
         log.setType(EnumOutter.EntryType.forNumber(iType));
         // 5-13 index
         // 13-21 term
         final long index = Bits.getLong(content, 5);
         final long term = Bits.getLong(content, 13);
+        // 将抽取出来的数据转换成 LogId
         log.setId(new LogId(index, term));
-        // 21-25 peer count
+        // 21-25 peer count  当前总节点数???  还是除该节点外其他节点???  之后的数据会根据该数值进行循环解析
         int peerCount = Bits.getInt(content, 21);
         // peers
         int pos = 25;
@@ -73,6 +85,7 @@ public final class V1Decoder implements LogEntryDecoder {
             while (peerCount-- > 0) {
                 final short len = Bits.getShort(content, pos);
                 final byte[] bs = new byte[len];
+                // 2 代表short的长度
                 System.arraycopy(content, pos + 2, bs, 0, len);
                 // peer len (short in 2 bytes)
                 // peer str
@@ -83,7 +96,7 @@ public final class V1Decoder implements LogEntryDecoder {
             }
             log.setPeers(peers);
         }
-        // old peers
+        // old peers  尝试解析老节点
         int oldPeerCount = Bits.getInt(content, pos);
         pos += 4;
         if (oldPeerCount > 0) {
@@ -102,12 +115,15 @@ public final class V1Decoder implements LogEntryDecoder {
             log.setOldPeers(oldPeers);
         }
 
-        // data
+        // data  代表还有内容 判定是 数据体 那么为什么不直接按照 type 来解析呢
         if (content.length > pos) {
             final int len = content.length - pos;
+            // 分配指定大小
             ByteBuffer data = ByteBuffer.allocate(len);
+            // 写模式
             data.put(content, pos, len);
             data.flip();
+            // 读模式
             log.setData(data);
         }
     }

@@ -71,7 +71,7 @@ public class RaftRpcServerFactory {
      */
     public static RpcServer createRaftRpcServer(Endpoint endpoint, Executor raftExecutor, Executor cliExecutor) {
         final RpcServer rpcServer = new RpcServer(endpoint.getPort(), true, true);
-        // 增加请求处理器
+        // 增加请求处理器 这里指定的线程池对象
         addRaftRequestProcessors(rpcServer, raftExecutor, cliExecutor);
         return rpcServer;
     }
@@ -89,11 +89,12 @@ public class RaftRpcServerFactory {
      * Adds RAFT and CLI service request processors
      *
      * @param rpcServer     rpc server instance
-     * @param raftExecutor  executor to handle RAFT requests.
-     * @param cliExecutor   executor to handle CLI service requests.
+     * @param raftExecutor  executor to handle RAFT requests.  使用指定的线程池 处理RAFT 请求
+     * @param cliExecutor   executor to handle CLI service requests.   使用指定的线程池 处理CLI 请求
      */
     public static void addRaftRequestProcessors(RpcServer rpcServer, Executor raftExecutor, Executor cliExecutor) {
         // raft core processors
+        // raft 的核心处理器 追加Entry 请求处理器
         final AppendEntriesRequestProcessor appendEntriesRequestProcessor = new AppendEntriesRequestProcessor(
             raftExecutor);
         rpcServer.addConnectionEventProcessor(ConnectionEventType.CLOSE, appendEntriesRequestProcessor);

@@ -651,7 +651,7 @@ public class LogManagerImpl implements LogManager {
          */
         LogId flush() {
             if (this.size > 0) {
-                // 写入数据
+                // 写入数据 并返回最后一个写入成功的数据的 LogId （每个要写入的数据一开始就确定了LogId ）
                 this.lastId = appendToStorage(this.toAppend);
                 for (int i = 0; i < this.size; i++) {
                     // storage 中每个元素都对应到toAppend 这里在处理完成时 根据状态触发回调
@@ -839,7 +839,7 @@ public class LogManagerImpl implements LogManager {
     }
 
     /**
-     * 设置快照
+     * 设置快照元数据
      * @param meta snapshot metadata
      */
     @Override
@@ -1097,11 +1097,17 @@ public class LogManagerImpl implements LogManager {
         return getTermFromLogStorage(index);
     }
 
+    /**
+     * 获取当前node 写入的最后logId  注意写入的不一定生效 可能leader只是将数据写入少数节点中 而该节点就是少数节点 实际上数据是不作数的
+     * @param isFlush whether to flush all pending task.
+     * @return
+     */
     @Override
     public LogId getLastLogId(final boolean isFlush) {
         LastLogIdClosure c;
         this.readLock.lock();
         try {
+            // 非刷盘情况 这里就直接返回LogId 了 看来有个 异步线程在执行刷盘逻辑
             if (!isFlush) {
                 if (this.lastLogIndex >= this.firstLogIndex) {
                     return new LogId(this.lastLogIndex, unsafeGetTerm(this.lastLogIndex));
@@ -1111,6 +1117,7 @@ public class LogManagerImpl implements LogManager {
                 if (this.lastLogIndex == this.lastSnapshotId.getIndex()) {
                     return this.lastSnapshotId;
                 }
+                // 发布获取LastLogId 的事件  eventHandler 在处理不包含数据的 event时都会刷盘
                 c = new LastLogIdClosure();
                 offerEvent(c, EventType.LAST_LOG_ID);
             }
@@ -1118,11 +1125,13 @@ public class LogManagerImpl implements LogManager {
             this.readLock.unlock();
         }
         try {
+            // 等待回调被触发
             c.await();
         } catch (final InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IllegalStateException(e);
         }
+        // 获取最新的logId
         return c.lastLogId;
     }
 
@@ -1362,7 +1371,8 @@ public class LogManagerImpl implements LogManager {
     }
 
     /**
-     * 检验当前conf 与 保存的最后一个 配置是否相同 TODO 这里只是判断id 是否相同 应该有特殊含义
+     * 检验当前conf 与 保存的最后一个 配置是否相同
+     * 一般调用该方法的时机是 从快照文件拉取数据后  看来快照的数据优先级会比 LogManager本身收到的写入数据高 是因为快照必然是准确的数据么
      * @param current
      * @return
      */
@@ -1463,7 +1473,7 @@ public class LogManagerImpl implements LogManager {
         try {
             Requires.requireTrue(this.firstLogIndex > 0);
             Requires.requireTrue(this.lastLogIndex >= 0);
-            // 如果快照是0的化 firstLogIndex必须是1  firstLogIndex 可能就是 快照的尾部
+            // 如果快照是0 firstLogIndex必须是1  firstLogIndex 可能就是 快照的尾部
             if (this.lastSnapshotId.equals(new LogId(0, 0))) {
                 if (this.firstLogIndex == 1) {
                     return Status.OK();

@@ -23,7 +23,7 @@ import com.google.protobuf.Message;
 
 /**
  * Raft client RPC service.
- *
+ * 在基础的client 上增加了 jraft 的 特有命令
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Apr-08 5:59:52 PM
@@ -32,7 +32,7 @@ public interface RaftClientService extends ClientService {
 
     /**
      * Sends a pre-vote request and handle the response with done.
-     *
+     * 预投票
      * @param endpoint  destination address (ip, port)
      * @param request   request data
      * @param done      callback
@@ -43,7 +43,7 @@ public interface RaftClientService extends ClientService {
 
     /**
      * Sends a request-vote request and handle the response with done.
-     *
+     * 发起投票
      * @param endpoint  destination address (ip, port)
      * @param request   request data
      * @param done      callback
@@ -54,7 +54,7 @@ public interface RaftClientService extends ClientService {
 
     /**
      * Sends a append-entries request and handle the response with done.
-     *
+     * 发送一个 增加数据的请求
      * @param endpoint  destination address (ip, port)
      * @param request   request data
      * @param done      callback
@@ -65,7 +65,7 @@ public interface RaftClientService extends ClientService {
 
     /**
      * Sends a install-snapshot request and handle the response with done.
-     *
+     * 作为leader 时 向其他节点发送快照
      * @param endpoint  destination address (ip, port)
      * @param request   request data
      * @param done      callback
@@ -76,7 +76,7 @@ public interface RaftClientService extends ClientService {
 
     /**
      * Get a piece of file data by GetFileRequest, and handle the response with done.
-     *
+     * 发送一个获取文件的请求
      * @param endpoint  destination address (ip, port)
      * @param request   request data
      * @param timeoutMs timeout millis
@@ -88,7 +88,7 @@ public interface RaftClientService extends ClientService {
 
     /**
      * Send a timeout-now request and handle the response with done.
-     *
+     * 发送一个超时的请求
      * @param endpoint  destination address (ip, port)
      * @param request   request data
      * @param timeoutMs timeout millis
@@ -100,7 +100,7 @@ public interface RaftClientService extends ClientService {
 
     /**
      * Send a read-index request and handle the response with done.
-     *
+     * 发送一个读取下标的请求
      * @param endpoint  destination address (ip, port)
      * @param request   request data
      * @param timeoutMs timeout millis

@@ -23,7 +23,7 @@ import com.alipay.sofa.jraft.entity.RaftOutter.SnapshotMeta;
 
 /**
  * Snapshot reader.
- *
+ * 快照对象读取器
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Mar-12 4:53:40 PM
@@ -32,12 +32,14 @@ public abstract class SnapshotReader extends Snapshot implements Closeable, Life
 
     /**
      * Load the snapshot metadata.
+     * 读取快照元数据
      */
     public abstract SnapshotMeta load();
 
     /**
      * Generate uri for other peers to copy this snapshot.
      * Return an empty string if some error has occur.
+     * 将本快照文件的路径 返回 (用于其他节点拷贝)
      */
     public abstract String generateURIForCopy();
 }

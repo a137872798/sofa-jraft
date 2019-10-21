@@ -65,7 +65,7 @@ import java.util.concurrent.locks.ReentrantLock;
 /**
  * Simple {@link Future} implementation, which uses {@link ReentrantLock} to
  * synchronize during the lifecycle.
- * 
+ * 一个简易的future 实现类
  * @see Future
  * @see ReentrantLock
  * 
@@ -75,10 +75,16 @@ public class FutureImpl<R> implements Future<R> {
 
     protected final ReentrantLock lock;
 
+    /**
+     * 代表正常完成
+     */
     protected boolean             isDone;
 
     protected CountDownLatch      latch;
 
+    /**
+     * 代表被关闭
+     */
     protected boolean             isCancelled;
     protected Throwable           failure;
 
@@ -95,7 +101,7 @@ public class FutureImpl<R> implements Future<R> {
 
     /**
      * Get current result value without any blocking.
-     * 
+     * 原来的future 会阻塞当前线程 而该方法 不会阻塞
      * @return current result value without any blocking.
      */
     public R getResult() {
@@ -107,6 +113,10 @@ public class FutureImpl<R> implements Future<R> {
         }
     }
 
+    /**
+     * 获取异常结果
+     * @return
+     */
     public Throwable getFailure() {
         try {
             lock.lock();
@@ -118,7 +128,7 @@ public class FutureImpl<R> implements Future<R> {
 
     /**
      * Set the result value and notify about operation completion.
-     * 
+     * 设置结果并唤醒阻塞线程
      * @param result
      *            the result value
      */
@@ -178,6 +188,7 @@ public class FutureImpl<R> implements Future<R> {
      */
     @Override
     public R get() throws InterruptedException, ExecutionException {
+        // 使用闭锁 阻塞  当设置结果或者关闭的时候 会解除闭锁
         latch.await();
 
         try {
@@ -199,9 +210,11 @@ public class FutureImpl<R> implements Future<R> {
      */
     @Override
     public R get(long timeout, TimeUnit unit) throws InterruptedException, ExecutionException, TimeoutException {
+        // 返回是否是超时
         final boolean isTimeOut = !latch.await(timeout, unit);
         try {
             lock.lock();
+            // 非超时情况获取结果
             if (!isTimeOut) {
                 if (isCancelled) {
                     throw new CancellationException();
@@ -211,6 +224,7 @@ public class FutureImpl<R> implements Future<R> {
 
                 return result;
             } else {
+                // 返回超时异常
                 throw new TimeoutException();
             }
         } finally {
@@ -234,6 +248,7 @@ public class FutureImpl<R> implements Future<R> {
 
     /**
      * Notify blocked listeners threads about operation completion.
+     * 唤醒闭锁
      */
     protected void notifyHaveResult() {
         isDone = true;

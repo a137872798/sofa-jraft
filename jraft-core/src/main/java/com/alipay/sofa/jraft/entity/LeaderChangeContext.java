@@ -25,14 +25,24 @@ import com.alipay.sofa.jraft.Status;
  * <li>term: the leader term.</li>
  * <li>Status: context status.</li>
  * </ul>
+ * 当leader 发生变化时  记录上下文信息
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Mar-13 3:23:48 PM
  */
 public class LeaderChangeContext {
 
+    /**
+     * 记录 leader 的 id
+     */
     private PeerId leaderId;
+    /**
+     * 当前任期
+     */
     private long   term;
+    /**
+     * 代表结果
+     */
     private Status status;
 
     public LeaderChangeContext(PeerId leaderId, long term, Status status) {

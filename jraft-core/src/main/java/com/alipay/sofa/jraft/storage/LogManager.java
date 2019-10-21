@@ -137,7 +137,7 @@ public interface LogManager extends Lifecycle<LogManagerOptions>, Describer {
     /**
      * Notify the log manager about the latest snapshot, which indicates the
      * logs which can be safely truncated.
-     *
+     * 设置快照元数据
      * @param meta snapshot metadata
      */
     void setSnapshot(final SnapshotMeta meta);
@@ -191,6 +191,7 @@ public interface LogManager extends Lifecycle<LogManagerOptions>, Describer {
 
     /**
      * Get the configuration at index.
+     * 获取指定下标前(包含)的最后一个配置对象
      */
     ConfigurationEntry getConfiguration(final long index);
 

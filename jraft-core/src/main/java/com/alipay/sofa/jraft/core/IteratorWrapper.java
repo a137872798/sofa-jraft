@@ -24,6 +24,9 @@ import com.alipay.sofa.jraft.Status;
 import com.alipay.sofa.jraft.entity.EnumOutter;
 import com.alipay.sofa.jraft.entity.LogEntry;
 
+/**
+ * 迭代器包装对象
+ */
 public class IteratorWrapper implements Iterator {
 
     private final IteratorImpl impl;

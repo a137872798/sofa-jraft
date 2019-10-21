@@ -22,17 +22,19 @@ import com.alipay.sofa.jraft.entity.codec.LogEntryEncoder;
 
 /**
  *  Old V1 log entry codec implementation.
+ *  V1 版本的 编解码器
  * @author boyan(boyan@antfin.com)
  *
  */
 public class LogEntryV1CodecFactory implements LogEntryCodecFactory {
 
-    //"Beeep boop beep beep boop beeeeeep" -BB8
+    //"Beeep boop beep beep boop beeeeeep" -BB8   魔数  校验用
     public static final byte MAGIC = (byte) 0xB8;
 
     private LogEntryV1CodecFactory() {
     }
 
+    // 单例
     private static LogEntryV1CodecFactory INSTANCE = new LogEntryV1CodecFactory();
 
     /**

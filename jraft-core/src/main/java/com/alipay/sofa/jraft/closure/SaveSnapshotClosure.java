@@ -22,7 +22,7 @@ import com.alipay.sofa.jraft.storage.snapshot.SnapshotWriter;
 
 /**
  * Save snapshot closure
- *
+ * 保存快照的 回调对象
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Apr-04 2:21:30 PM
@@ -31,7 +31,7 @@ public interface SaveSnapshotClosure extends Closure {
 
     /**
      * Starts to save snapshot, returns the writer.
-     *
+     * 开始保存快照 并返回一个writer 对象
      * @param meta metadata of snapshot.
      * @return returns snapshot writer.
      */

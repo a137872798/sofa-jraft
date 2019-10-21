@@ -26,7 +26,7 @@ import com.alipay.sofa.jraft.Status;
  *
  * Note that any element contained in the implementation of this interface must
  * implement the {@link Serializable} interface.
- *
+ * 当状态机应用时触发  该接口是对用户开放的
  * @author jiachun.fjc
  */
 public interface NodeExecutor extends Serializable {

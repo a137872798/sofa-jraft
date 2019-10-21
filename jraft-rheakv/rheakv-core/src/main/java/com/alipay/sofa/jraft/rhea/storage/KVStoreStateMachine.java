@@ -53,7 +53,7 @@ import static com.alipay.sofa.jraft.rhea.metrics.KVMetricNames.STATE_MACHINE_BAT
 
 /**
  * Rhea KV store state machine
- *
+ * 基于 Rhea KV 存储
  * @author jiachun.fjc
  */
 public class KVStoreStateMachine extends StateMachineAdapter {

@@ -49,19 +49,20 @@ public interface FSMCaller extends Lifecycle<FSMCallerOptions>, Describer {
 
     /**
      * Adds a LastAppliedLogIndexListener.
+     * 增加一个当 lastAppliedLogIndex 发生变化时的监听器
      */
     void addLastAppliedLogIndexListener(final LastAppliedLogIndexListener listener);
 
     /**
      * Called when log entry committed
-     *
+     * 当logEntry 在本地提交时
      * @param committedIndex committed log indexx
      */
     boolean onCommitted(final long committedIndex);
 
     /**
      * Called after loading snapshot.
-     *
+     * 当开始下载快照数据时触发
      * @param done callback
      */
     boolean onSnapshotLoad(final LoadSnapshotClosure done);

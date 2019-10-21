@@ -12,7 +12,7 @@ With SOFAJRaft you can focus on your business area. SOFAJRaft handles all RAFT-r
 - Leader election
 - Log replication and recovery
 - Snapshot and log compaction
-- Cluster membership management, adding nodes, removing nodes, replacing nodes, etc.
+- Cluster membership management, adding s, removing nodes, replacing nodes, etc.
 - Mechanism of transfer leader for reboot, load balance scene, etc.
 - Symmetric network partition tolerance
 - Asymmetric network partition tolerance

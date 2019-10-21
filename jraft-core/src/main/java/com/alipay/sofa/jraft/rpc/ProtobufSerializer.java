@@ -30,17 +30,28 @@ import com.google.protobuf.Message;
  * RPC custom serializer based on protobuf
  * @author boyan (boyan@alibaba-inc.com)
  *
+ * CustomSerializer 为 remoting模块的 自定义序列化工具
  * 2018-Mar-26 4:43:21 PM
  */
 public class ProtobufSerializer implements CustomSerializer {
 
     public static final ProtobufSerializer INSTANCE = new ProtobufSerializer();
 
+    /**
+     * 对请求头进行序列化
+     * @param request
+     * @param invokeContext
+     * @param <T>
+     * @return
+     * @throws SerializationException
+     */
     @Override
     public <T extends RequestCommand> boolean serializeHeader(T request, InvokeContext invokeContext)
                                                                                                      throws SerializationException {
 
+        // 该request 对象 包含请求体 请求头等信息
         final RpcRequestCommand cmd = (RpcRequestCommand) request;
+        // 获取请求体
         final Message msg = (Message) cmd.getRequestObject();
         if (msg instanceof RpcRequests.AppendEntriesRequest) {
             final RpcRequests.AppendEntriesRequest req = (RpcRequests.AppendEntriesRequest) msg;
@@ -56,6 +67,13 @@ public class ProtobufSerializer implements CustomSerializer {
         return false;
     }
 
+    /**
+     * 响应结果不需要序列化 头部
+     * @param response
+     * @param <T>
+     * @return
+     * @throws SerializationException
+     */
     @Override
     public <T extends ResponseCommand> boolean serializeHeader(T response) throws SerializationException {
         return false;

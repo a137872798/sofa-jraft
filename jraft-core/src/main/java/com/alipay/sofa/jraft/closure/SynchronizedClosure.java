@@ -23,17 +23,21 @@ import com.alipay.sofa.jraft.Status;
 
 /**
  * A special Closure which provides synchronization primitives.
- *
+ * 同步回调对象
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Mar-16 2:45:34 PM
  */
 public class SynchronizedClosure implements Closure {
 
+    /**
+     * 闭锁
+     */
     private CountDownLatch  latch;
     private volatile Status status;
     /**
      * Latch count to reset
+     * 记录该值是为了方便reset 重新生成 CountDownLatch
      */
     private int             count;
 
@@ -63,7 +67,7 @@ public class SynchronizedClosure implements Closure {
 
     /**
      * Wait for closure run
-     *
+     * 阻塞线程 直到  run 被执行
      * @return status
      * @throws InterruptedException if the current thread is interrupted
      *                              while waiting

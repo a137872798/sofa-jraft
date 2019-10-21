@@ -31,23 +31,28 @@ public final class EnumOutter {
     }
 
     /**
+     * 代表 PB 会输出的数据类型枚举
      * Protobuf enum {@code jraft.EntryType}
      */
     public enum EntryType implements com.google.protobuf.ProtocolMessageEnum {
         /**
          * <code>ENTRY_TYPE_UNKNOWN = 0;</code>
+         * 未知类型
          */
         ENTRY_TYPE_UNKNOWN(0),
         /**
          * <code>ENTRY_TYPE_NO_OP = 1;</code>
+         * NOOP
          */
         ENTRY_TYPE_NO_OP(1),
         /**
          * <code>ENTRY_TYPE_DATA = 2;</code>
+         * 数据类型
          */
         ENTRY_TYPE_DATA(2),
         /**
          * <code>ENTRY_TYPE_CONFIGURATION = 3;</code>
+         * 配置类型
          */
         ENTRY_TYPE_CONFIGURATION(3), ;
 
@@ -80,15 +85,24 @@ public final class EnumOutter {
             return forNumber(value);
         }
 
+        /**
+         * 解析content 后 根据int 值来判断LogEntry 的数据内容
+         * @param value
+         * @return
+         */
         public static EntryType forNumber(int value) {
             switch (value) {
                 case 0:
+                    // 未知
                     return ENTRY_TYPE_UNKNOWN;
                 case 1:
+                    // 心跳???
                     return ENTRY_TYPE_NO_OP;
                 case 2:
+                    // 存放有效数据的LogEntry  代表往leader 中写入数据并期待它将数据传播到follow上
                     return ENTRY_TYPE_DATA;
                 case 3:
+                    // 代表配置信息 也就是集群前后节点
                     return ENTRY_TYPE_CONFIGURATION;
                 default:
                     return null;

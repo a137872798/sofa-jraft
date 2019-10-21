@@ -17,7 +17,7 @@
 package com.alipay.sofa.jraft.util;
 
 /**
- *
+ * 代表可重复利用的接口 一般用于修饰创建和销毁资源消耗较大的对象
  * @author jiachun.fjc
  */
 public interface Recyclable {

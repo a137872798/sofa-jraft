@@ -26,11 +26,13 @@ import com.alipay.remoting.util.StringUtils;
 import com.alipay.sofa.jraft.util.Requires;
 
 /**
+ * 地址解析器
  * @author jiachun.fjc
  */
 public class JRaftRpcAddressParser extends RpcAddressParser {
 
     /**
+     * 解析字符串 生成地址  不细看
      * @see com.alipay.remoting.RemotingAddressParser#parse(java.lang.String)
      */
     @Override
@@ -38,6 +40,7 @@ public class JRaftRpcAddressParser extends RpcAddressParser {
         if (StringUtils.isBlank(url)) {
             throw new IllegalArgumentException("Illegal format address string [" + url + "], should not be blank! ");
         }
+        // 尝试从缓存中获取
         Url parsedUrl = tryGet(url);
         if (parsedUrl != null) {
             return parsedUrl;
@@ -49,6 +52,7 @@ public class JRaftRpcAddressParser extends RpcAddressParser {
         final int size = url.length();
         int pos = 0;
         for (int i = 0; i < size; ++i) {
+            // 找出协议部分
             if (COLON == url.charAt(i)) {
                 ip = url.substring(pos, i);
                 pos = i;
@@ -67,6 +71,7 @@ public class JRaftRpcAddressParser extends RpcAddressParser {
         }
 
         for (int i = pos; i < size; ++i) {
+            // 找出 ? 前面的部分
             if (QUES == url.charAt(i)) {
                 port = url.substring(pos + 1, i);
                 pos = i;
@@ -79,6 +84,7 @@ public class JRaftRpcAddressParser extends RpcAddressParser {
             }
             // end without a QUES
             if (i == size - 1) {
+                // 截取 : 到  ?的部分
                 port = url.substring(pos + 1, i + 1);
                 pos = size;
             }
@@ -140,6 +146,7 @@ public class JRaftRpcAddressParser extends RpcAddressParser {
 
     /**
      * try get from cache
+     * 尝试从缓存中获取
      */
     private Url tryGet(final String url) {
         final SoftReference<Url> softRef = Url.parsedUrls.get(url);

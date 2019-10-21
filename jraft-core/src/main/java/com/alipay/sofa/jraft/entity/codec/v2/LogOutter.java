@@ -19,6 +19,9 @@
 
 package com.alipay.sofa.jraft.entity.codec.v2;
 
+/**
+ * 基于PB 的编解码 不细看
+ */
 public final class LogOutter {
     private LogOutter() {
     }

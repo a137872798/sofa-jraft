@@ -26,7 +26,7 @@ import com.google.protobuf.Message;
 
 /**
  * Raft RPC service in server.
- *
+ * 代表 Raft 中的 server
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Apr-03 4:25:09 PM
@@ -35,7 +35,7 @@ public interface RaftServerService {
 
     /**
      * Handle pre-vote request.
-     *
+     * 处理投票请求
      * @param request   data of the pre vote
      * @return the response message
      */

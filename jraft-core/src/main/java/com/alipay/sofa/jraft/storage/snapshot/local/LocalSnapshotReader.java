@@ -36,7 +36,7 @@ import com.google.protobuf.Message;
 
 /**
  * Snapshot reader on local file system.
- *
+ * 读取基于文件系统的 快照对象
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Apr-08 11:10:34 AM
@@ -45,21 +45,40 @@ public class LocalSnapshotReader extends SnapshotReader {
 
     private static final Logger          LOG = LoggerFactory.getLogger(LocalSnapshotReader.class);
 
-    /** Generated reader id*/
+    /** Generated reader id 当初始化时 该值为0 */
     private long                         readerId;
     /** remote peer addr */
     private final Endpoint               addr;
+    /**
+     * 存放本地快照元数据的 table
+     */
     private final LocalSnapshotMetaTable metaTable;
     private final String                 path;
     private final LocalSnapshotStorage   snapshotStorage;
+    /**
+     * 一个限制对象
+     */
     private final SnapshotThrottle       snapshotThrottle;
 
+    /**
+     * 关闭对象就是减少引用计数
+     * @throws IOException
+     */
     @Override
     public void close() throws IOException {
         snapshotStorage.unref(this.getSnapshotIndex());
+        // 关闭reader
         this.destroyReaderInFileService();
     }
 
+    /**
+     * 初始化reader 对象
+     * @param snapshotStorage
+     * @param snapshotThrottle
+     * @param addr
+     * @param raftOptions
+     * @param path
+     */
     public LocalSnapshotReader(LocalSnapshotStorage snapshotStorage, SnapshotThrottle snapshotThrottle, Endpoint addr,
                                RaftOptions raftOptions, String path) {
         super();
@@ -68,6 +87,7 @@ public class LocalSnapshotReader extends SnapshotReader {
         this.addr = addr;
         this.path = path;
         this.readerId = 0;
+        // 生成快照元数据
         this.metaTable = new LocalSnapshotMetaTable(raftOptions);
     }
 
@@ -76,16 +96,24 @@ public class LocalSnapshotReader extends SnapshotReader {
         return this.readerId;
     }
 
+    /**
+     * 初始化reader 对象
+     * @param v
+     * @return
+     */
     @Override
     public boolean init(final Void v) {
+        // 这里的 path 就是 storage 的 快照文件路径
         final File dir = new File(this.path);
         if (!dir.exists()) {
             LOG.error("No such path %s for snapshot reader.", this.path);
             setError(RaftError.ENOENT, "No such path %s for snapshot reader", this.path);
             return false;
         }
+        // 拼接成一个新的文件路径
         final String metaPath = this.path + File.separator + JRAFT_SNAPSHOT_META_FILE;
         try {
+            // 通过 MetaTable 对象加载数据
             return this.metaTable.loadFromFile(metaPath);
         } catch (final IOException e) {
             LOG.error("Fail to load snapshot meta {}.", metaPath);
@@ -108,6 +136,10 @@ public class LocalSnapshotReader extends SnapshotReader {
         Utils.closeQuietly(this);
     }
 
+    /**
+     * 加载 快照元数据
+     * @return
+     */
     @Override
     public SnapshotMeta load() {
         if (this.metaTable.hasMeta()) {
@@ -139,6 +171,9 @@ public class LocalSnapshotReader extends SnapshotReader {
         return String.format(REMOTE_SNAPSHOT_URI_SCHEME + "%s/%d", this.addr.toString(), this.readerId);
     }
 
+    /**
+     * 关闭 reader 对象
+     */
     private void destroyReaderInFileService() {
         if (this.readerId > 0) {
             FileService.getInstance().removeReader(this.readerId);

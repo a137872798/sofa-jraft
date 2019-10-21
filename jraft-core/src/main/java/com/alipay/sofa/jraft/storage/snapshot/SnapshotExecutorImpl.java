@@ -53,7 +53,7 @@ import com.alipay.sofa.jraft.util.Utils;
 
 /**
  * Snapshot executor implementation.
- *
+ * 快照相关的执行器
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Mar-22 5:38:56 PM
@@ -63,12 +63,24 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
     private static final Logger                        LOG                 = LoggerFactory
                                                                                .getLogger(SnapshotExecutorImpl.class);
 
+    /**
+     * JVM 锁
+     */
     private final Lock                                 lock                = new ReentrantLock();
 
+    /**
+     * 最后一次快照的任期
+     */
     private long                                       lastSnapshotTerm;
+    /**
+     * 最后快照的下标
+     */
     private long                                       lastSnapshotIndex;
     private long                                       term;
     private volatile boolean                           savingSnapshot;
+    /**
+     * 正在加载快照
+     */
     private volatile boolean                           loadingSnapshot;
     private volatile boolean                           stopped;
     private SnapshotStorage                            snapshotStorage;
@@ -82,13 +94,19 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
 
     /**
      * Downloading snapshot job.
-     *
+     * 代表正在下载快照的任务
      * @author boyan (boyan@alibaba-inc.com)
      *
      * 2018-Apr-08 3:07:19 PM
      */
     static class DownloadingSnapshot {
+        /**
+         * 安装快照请求
+         */
         InstallSnapshotRequest          request;
+        /**
+         * 安装快照响应构建器
+         */
         InstallSnapshotResponse.Builder responseBuilder;
         RpcRequestClosure               done;
 
@@ -120,12 +138,16 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
 
     /**
      * Save snapshot done closure
+     * 用于保存快照的回调对象
      * @author boyan (boyan@alibaba-inc.com)
      *
      * 2018-Apr-08 3:07:52 PM
      */
     private class SaveSnapshotDone implements SaveSnapshotClosure {
 
+        /**
+         * 写快照对象
+         */
         SnapshotWriter writer;
         Closure        done;
         SnapshotMeta   meta;
@@ -152,6 +174,11 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
             }
         }
 
+        /**
+         * 设置 meta 属性 并返回 writer 对象
+         * @param meta metadata of snapshot.
+         * @return
+         */
         @Override
         public SnapshotWriter start(final SnapshotMeta meta) {
             this.meta = meta;
@@ -191,25 +218,44 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
     /**
      * Load snapshot at first time closure
      * @author boyan (boyan@alibaba-inc.com)
-     *
+     * 当首次开始加载快照时触发
      * 2018-Apr-16 2:57:46 PM
      */
     private class FirstSnapshotLoadDone implements LoadSnapshotClosure {
 
+        /**
+         * 用于读取快照的reader 对象
+         */
         SnapshotReader reader;
+        /**
+         * 栅栏
+         */
         CountDownLatch eventLatch;
+        /**
+         * 描述结果的对象 内含code 和 msg
+         */
         Status         status;
 
+        /**
+         * 通过一个 reader 对象进行初始化
+         * @param reader
+         */
         public FirstSnapshotLoadDone(final SnapshotReader reader) {
             super();
             this.reader = reader;
             this.eventLatch = new CountDownLatch(1);
         }
 
+        /**
+         * 当任务完成时 触发
+         * @param status the task status. 任务结果
+         */
         @Override
         public void run(final Status status) {
             this.status = status;
+            // 设置加载结果
             onSnapshotLoadDone(this.status);
+            // 这个就是配合 wait 等待加载结束
             this.eventLatch.countDown();
         }
 
@@ -224,6 +270,11 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
 
     }
 
+    /**
+     * 使用指定的 opts 来初始化 executor对象
+     * @param opts
+     * @return
+     */
     @Override
     public boolean init(final SnapshotExecutorOptions opts) {
         if (StringUtils.isBlank(opts.getUri())) {
@@ -234,6 +285,7 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
         this.fsmCaller = opts.getFsmCaller();
         this.node = opts.getNode();
         this.term = opts.getInitTerm();
+        // 创建快照存储对象
         this.snapshotStorage = this.node.getServiceFactory().createSnapshotStorage(opts.getUri(),
             this.node.getRaftOptions());
         if (opts.isFilterBeforeCopyRemote()) {
@@ -242,6 +294,7 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
         if (opts.getSnapshotThrottle() != null) {
             this.snapshotStorage.setSnapshotThrottle(opts.getSnapshotThrottle());
         }
+        // 初始化 storage 对象 就是删除多余的快照文件 并给最后一个 快照文件引用数 + 1
         if (!this.snapshotStorage.init(null)) {
             LOG.error("Fail to init snapshot storage.");
             return false;
@@ -250,21 +303,28 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
         if (tmp != null && !tmp.hasServerAddr()) {
             tmp.setServerAddr(opts.getAddr());
         }
+        // 开启快照读取对象  open 方法同时会初始化reader  如果当前没有快照文件 reader 就是null 代表提前退出初始化
         final SnapshotReader reader = this.snapshotStorage.open();
         if (reader == null) {
             return true;
         }
+        // 有快照文件却没有元数据抛出异常
         this.loadingSnapshotMeta = reader.load();
         if (this.loadingSnapshotMeta == null) {
             LOG.error("Fail to load meta from {}.", opts.getUri());
             Utils.closeQuietly(reader);
             return false;
         }
+        // 设置成正在加载快照
         this.loadingSnapshot = true;
+        // 增加当前正在执行的任务数量
         this.runningJobs.incrementAndGet();
+        // 使用reader 对象创建 一个 当首次加载快照完成时触发的回调对象
         final FirstSnapshotLoadDone done = new FirstSnapshotLoadDone(reader);
+        // 使用状态机执行下载快照的任务
         Requires.requireTrue(this.fsmCaller.onSnapshotLoad(done));
         try {
+            // 阻塞直到快照加载完成
             done.waitForRun();
         } catch (final InterruptedException e) {
             LOG.warn("Wait for FirstSnapshotLoadDone run is interrupted.");
@@ -411,18 +471,26 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
         }
     }
 
+    /**
+     * 当加载快照完成时触发  整体上来说 就是将LogStorage 中的 数据向 快照对齐
+     * @param st  代表本次结果
+     */
     private void onSnapshotLoadDone(final Status st) {
         DownloadingSnapshot m;
         boolean doUnlock = true;
         this.lock.lock();
         try {
+            // 必须要在 正在加载快照的状态下才能继续
             Requires.requireTrue(this.loadingSnapshot, "Not loading snapshot");
+            // 默认情况下该值应该是null
             m = this.downloadingSnapshot.get();
+            // 代表reader  load数据成功
             if (st.isOk()) {
                 this.lastSnapshotIndex = this.loadingSnapshotMeta.getLastIncludedIndex();
                 this.lastSnapshotTerm = this.loadingSnapshotMeta.getLastIncludedTerm();
                 doUnlock = false;
                 this.lock.unlock();
+                // 设置快照数据
                 this.logManager.setSnapshot(this.loadingSnapshotMeta); //should be out of lock
                 doUnlock = true;
                 this.lock.lock();
@@ -436,6 +504,7 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
             doUnlock = false;
             this.lock.unlock();
             if (this.node != null) {
+                // 更新配置
                 this.node.updateConfigurationAfterInstallingSnapshot();
             }
             doUnlock = true;
@@ -448,6 +517,7 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
                 this.lock.unlock();
             }
         }
+        // 如果正在下载快照中  TODO 这里还需要再梳理一下
         if (m != null) {
             // Respond RPC
             if (!st.isOk()) {
@@ -457,6 +527,7 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
                 m.done.sendResponse(m.responseBuilder.build());
             }
         }
+        // 减少当前执行的任务数量
         this.runningJobs.countDown();
     }
 

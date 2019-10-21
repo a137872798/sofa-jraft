@@ -50,6 +50,7 @@ public abstract class Snapshot extends Status {
 
     /**
      * List all the existing files in the Snapshot currently
+     * 获取当前所有快照文件
      */
     public abstract Set<String> listFiles();
 

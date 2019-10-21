@@ -28,7 +28,7 @@ import com.alipay.sofa.jraft.util.Endpoint;
  * A physical node in the cluster, embedded in an app java process,
  * store corresponds to a local file based rocksDB, a store contains
  * multiple regions, all regions share a rocksDB.
- *
+ * 代表一个嵌入在 java进程的节点 基于rocksDB 来存储数据  一个 store 由多个regions 组成 他们共用一个 rocksDB
  * @author jiachun.fjc
  */
 public class Store implements Copiable<Store>, Serializable {
@@ -36,9 +36,21 @@ public class Store implements Copiable<Store>, Serializable {
     private static final long serialVersionUID = 8566110829366373797L;
 
     private long              id;                                     // store id
+    /**
+     * store 也对应一个节点 所以由地址信息
+     */
     private Endpoint          endpoint;                               // address
+    /**
+     * 代表当前store 的状态
+     */
     private StoreState        state;                                  // store's state
+    /**
+     * 内部包含的一组region
+     */
     private List<Region>      regions;                                // list of included regions
+    /**
+     * 存放一组标签
+     */
     private List<StoreLabel>  labels;                                 // key/value label
 
     public Store() {

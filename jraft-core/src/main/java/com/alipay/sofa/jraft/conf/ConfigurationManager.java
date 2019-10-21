@@ -26,7 +26,7 @@ import com.alipay.sofa.jraft.util.Requires;
 
 /**
  * Configuration manager
- *
+ * 配置管理器   配置 其实就是 新集群/老集群
  * @author boyan (boyan@alibaba-inc.com)
  * <p>
  * 2018-Apr-04 2:24:54 PM
@@ -35,11 +35,18 @@ public class ConfigurationManager {
 
     private static final Logger                  LOG            = LoggerFactory.getLogger(ConfigurationManager.class);
 
+    /**
+     * 内部以链表形式维护 老集群/新集群
+     */
     private final LinkedList<ConfigurationEntry> configurations = new LinkedList<>();
+    /**
+     * 快照对象  该对象是针对链表中某个ConfEntry 的快照 还是???
+     */
     private ConfigurationEntry                   snapshot       = new ConfigurationEntry();
 
     /**
      * Adds a new conf entry.
+     * 为manager 增加 配置Entry 对象   新增的对象 index 必须大于最后一个 conf  在jraft中 数据有新旧的概念 只有新数据可以覆盖
      */
     public boolean add(final ConfigurationEntry entry) {
         if (!this.configurations.isEmpty()) {
@@ -48,11 +55,13 @@ public class ConfigurationManager {
                 return false;
             }
         }
+        // 往链表中插入数据
         return this.configurations.add(entry);
     }
 
     /**
      * [1, first_index_kept) are being discarded
+     * 删除指定index 前的数据 很可能就是 leader 写入的数据没有提交 之后更换了leader 将旧leader 写入失败的数据清除
      */
     public void truncatePrefix(final long firstIndexKept) {
         while (!this.configurations.isEmpty() && this.configurations.peekFirst().getId().getIndex() < firstIndexKept) {
@@ -62,6 +71,7 @@ public class ConfigurationManager {
 
     /**
      * (last_index_kept, infinity) are being discarded
+     * 删除指定偏移量后的数据
      */
     public void truncateSuffix(final long lastIndexKept) {
         while (!this.configurations.isEmpty() && this.configurations.peekLast().getId().getIndex() > lastIndexKept) {
@@ -73,10 +83,18 @@ public class ConfigurationManager {
         return this.snapshot;
     }
 
+    /**
+     * 设置快照  该快照是针对哪个对象的呢???
+     * @param snapshot
+     */
     public void setSnapshot(final ConfigurationEntry snapshot) {
         this.snapshot = snapshot;
     }
 
+    /**
+     * 获取最后一个配置  优先从链表中获取 如果链表不存在就返回快照对象
+     * @return
+     */
     public ConfigurationEntry getLastConfiguration() {
         if (this.configurations.isEmpty()) {
             return snapshot;
@@ -85,6 +103,11 @@ public class ConfigurationManager {
         }
     }
 
+    /**
+     * 获取指定偏移量的 confEntry 对象
+     * @param lastIncludedIndex
+     * @return
+     */
     public ConfigurationEntry get(final long lastIncludedIndex) {
         if (this.configurations.isEmpty()) {
             Requires.requireTrue(lastIncludedIndex >= this.snapshot.getId().getIndex(),
@@ -95,10 +118,12 @@ public class ConfigurationManager {
         ListIterator<ConfigurationEntry> it = this.configurations.listIterator();
         while (it.hasNext()) {
             if (it.next().getId().getIndex() > lastIncludedIndex) {
-                it.previous();
+                // 此时的  confEntry 应该是      start                     |------   lastIncludedIndex  ------|
+                it.previous();                                //         start                              end
                 break;
             }
         }
+        // 多往前数了一个 啥意思???
         if (it.hasPrevious()) {
             // find the first position that is less than or equal to lastIncludedIndex.
             return it.previous();

@@ -24,15 +24,24 @@ import com.google.protobuf.Message;
 
 /**
  * RPC request Closure encapsulates the RPC contexts.
- *
+ * 该RPC 回调对象内部封装了 RPCContext
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Mar-28 4:55:24 PM
  */
 public class RpcRequestClosure implements Closure {
 
+    /**
+     * 存放双端通信的上下文 比如 client ip:port server ip:port
+     */
     private final BizContext   bizContext;
+    /**
+     * 异步调用上下文
+     */
     private final AsyncContext asyncContext;
+    /**
+     * 是否已经响应
+     */
     private boolean            respond;
 
     public RpcRequestClosure(BizContext bizContext, AsyncContext asyncContext) {
@@ -54,10 +63,15 @@ public class RpcRequestClosure implements Closure {
         if (this.respond) {
             return;
         }
+        // 通过异步上下文对象发送响应结果
         this.asyncContext.sendResponse(msg);
         this.respond = true;
     }
 
+    /**
+     * 当处理完任务后 触发的回调方法  将结果发送回去 应该是代表 已经确认服务端发送的结果了
+     * @param status the task status. 任务结果
+     */
     @Override
     public void run(Status status) {
         sendResponse(RpcResponseFactory.newResponse(status));

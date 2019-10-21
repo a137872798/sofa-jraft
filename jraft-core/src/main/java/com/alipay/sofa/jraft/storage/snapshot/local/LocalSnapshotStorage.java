@@ -56,13 +56,28 @@ public class LocalSnapshotStorage implements SnapshotStorage {
     private static final Logger                      LOG       = LoggerFactory.getLogger(LocalSnapshotStorage.class);
 
     private static final String                      TEMP_PATH = "temp";
+    /**
+     * 应该是一级缓存
+     */
     private final ConcurrentMap<Long, AtomicInteger> refMap    = new ConcurrentHashMap<>();
+    /**
+     * 存储路径
+     */
     private final String                             path;
+    /**
+     * 节点的地址 被抽象成一个 Endpoint 对象
+     */
     private Endpoint                                 addr;
     private boolean                                  filterBeforeCopyRemote;
+    /**
+     * 代表快照文件的 下标 而不是某个 偏移量
+     */
     private long                                     lastSnapshotIndex;
     private final Lock                               lock;
     private final RaftOptions                        raftOptions;
+    /**
+     * 快照阀门???  推测是配合 filterBeforeCopyRemote 起作用
+     */
     private SnapshotThrottle                         snapshotThrottle;
 
     @Override
@@ -95,8 +110,14 @@ public class LocalSnapshotStorage implements SnapshotStorage {
         }
     }
 
+    /**
+     * 初始化
+     * @param v
+     * @return
+     */
     @Override
     public boolean init(final Void v) {
+        // 创建存储快照的文件夹
         final File dir = new File(this.path);
 
         try {
@@ -112,6 +133,7 @@ public class LocalSnapshotStorage implements SnapshotStorage {
             final File tempFile = new File(tempSnapshotPath);
             if (tempFile.exists()) {
                 try {
+                    // 删除临时文件
                     FileUtils.forceDelete(tempFile);
                 } catch (final IOException e) {
                     LOG.error("Fail to delete temp snapshot path {}.", tempSnapshotPath);
@@ -128,6 +150,7 @@ public class LocalSnapshotStorage implements SnapshotStorage {
                 if (!name.startsWith(Snapshot.JRAFT_SNAPSHOT_PREFIX)) {
                     continue;
                 }
+                // index 代表是第几个快照文件
                 final long index = Long.parseLong(name.substring(Snapshot.JRAFT_SNAPSHOT_PREFIX.length()));
                 snapshots.add(index);
             }
@@ -143,17 +166,24 @@ public class LocalSnapshotStorage implements SnapshotStorage {
             for (int i = 0; i < snapshotCount - 1; i++) {
                 final long index = snapshots.get(i);
                 final String snapshotPath = getSnapshotPath(index);
+                // 删除最后个之前的其余文件
                 if (!destroySnapshot(snapshotPath)) {
                     return false;
                 }
             }
             this.lastSnapshotIndex = snapshots.get(snapshotCount - 1);
+            // 增加引用计数
             ref(this.lastSnapshotIndex);
         }
 
         return true;
     }
 
+    /**
+     * 看来 设置的path 只是文件名的前缀  在真正做存储的时候会加上 PREFIX + 第几个文件
+     * @param index
+     * @return
+     */
     private String getSnapshotPath(final long index) {
         return this.path + File.separator + Snapshot.JRAFT_SNAPSHOT_PREFIX + index;
     }
@@ -163,6 +193,11 @@ public class LocalSnapshotStorage implements SnapshotStorage {
         refs.incrementAndGet();
     }
 
+    /**
+     * 删除对应文件
+     * @param path
+     * @return
+     */
     private boolean destroySnapshot(final String path) {
         LOG.info("Deleting snapshot {}.", path);
         final File file = new File(path);
@@ -175,6 +210,10 @@ public class LocalSnapshotStorage implements SnapshotStorage {
         }
     }
 
+    /**
+     * 释放引用计数
+     * @param index
+     */
     void unref(final long index) {
         final AtomicInteger refs = getRefs(index);
         if (refs.decrementAndGet() == 0) {
@@ -196,6 +235,12 @@ public class LocalSnapshotStorage implements SnapshotStorage {
         return refs;
     }
 
+    /**
+     * 必须确保 引用数为0 才能关闭文件
+     * @param writer
+     * @param keepDataOnError
+     * @throws IOException
+     */
     void close(final LocalSnapshotWriter writer, final boolean keepDataOnError) throws IOException {
         int ret = writer.getCode();
         // noinspection ConstantConditions
@@ -290,11 +335,16 @@ public class LocalSnapshotStorage implements SnapshotStorage {
         return writer;
     }
 
+    /**
+     * 获取一个专门用于读取快照文件的对象  如果快照文件不存在 会返回null
+     * @return
+     */
     @Override
     public SnapshotReader open() {
         long lsIndex = 0;
         this.lock.lock();
         try {
+            // lastSnapshotIndex 代表快照文件的下标而不是偏移量 这样就代表 又有一处在引用该映射文件 (应该是指代reader 在引用该文件)
             if (this.lastSnapshotIndex != 0) {
                 lsIndex = this.lastSnapshotIndex;
                 ref(lsIndex);
@@ -306,9 +356,12 @@ public class LocalSnapshotStorage implements SnapshotStorage {
             LOG.warn("No data for snapshot reader {}.", this.path);
             return null;
         }
+        // 生成快照文件名
         final String snapshotPath = getSnapshotPath(lsIndex);
+        // 初始化 reader 对象并返回
         final SnapshotReader reader = new LocalSnapshotReader(this, this.snapshotThrottle, this.addr, this.raftOptions,
             snapshotPath);
+        // 初始化
         if (!reader.init(null)) {
             LOG.error("Fail to init reader for path {}.", snapshotPath);
             unref(lsIndex);

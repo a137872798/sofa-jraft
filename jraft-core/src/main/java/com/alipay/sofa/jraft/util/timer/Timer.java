@@ -23,7 +23,7 @@ import java.util.concurrent.TimeUnit;
 /**
  * Schedules {@link TimerTask}s for one-time future execution in a background
  * thread.
- *
+ * 一次性定时器接口
  * Forked from <a href="https://github.com/netty/netty">Netty</a>.
  */
 public interface Timer {
@@ -31,7 +31,7 @@ public interface Timer {
     /**
      * Schedules the specified {@link TimerTask} for one-time execution after
      * the specified delay.
-     *
+     * 创建一个一次性的定时任务
      * @return a handle which is associated with the specified task
      *
      * @throws IllegalStateException       if this timer has been {@linkplain #stop() stopped} already
@@ -43,7 +43,7 @@ public interface Timer {
     /**
      * Releases all resources acquired by this {@link Timer} and cancels all
      * tasks which were scheduled but not executed yet.
-     *
+     * 停止定时器并返回还未执行的任务
      * @return the handles associated with the tasks which were canceled by
      *         this method
      */

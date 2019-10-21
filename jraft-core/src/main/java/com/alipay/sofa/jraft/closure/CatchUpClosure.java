@@ -25,16 +25,31 @@ import com.alipay.sofa.jraft.Status;
  * A catchup closure for peer to catch up.
  *
  * @author boyan (boyan@alibaba-inc.com)
- *
+ * 追赶上的回调???   该对象只是设置了简单的get/set 方法
  * 2018-Apr-04 2:15:05 PM
  */
 public abstract class CatchUpClosure implements Closure {
 
+    /**
+     * 最大边缘
+     */
     private long               maxMargin;
+    /**
+     * 定时器对象
+     */
     private ScheduledFuture<?> timer;
+    /**
+     * 是否包含定时器
+     */
     private boolean            hasTimer;
+    /**
+     * 是否设置了异常
+     */
     private boolean            errorWasSet;
 
+    /**
+     * 默认状态为OK
+     */
     private final Status       status = Status.OK();
 
     public Status getStatus() {

@@ -1423,6 +1423,7 @@ public final class RaftOutter {
 
     /**
      * Protobuf type {@code jraft.SnapshotMeta}
+     * 快照元数据 满足特殊条件的 byte[] 对象 可能这样存储是为了提高效率
      */
     public static final class SnapshotMeta extends com.google.protobuf.GeneratedMessageV3 implements
     // @@protoc_insertion_point(message_implements:jraft.SnapshotMeta)

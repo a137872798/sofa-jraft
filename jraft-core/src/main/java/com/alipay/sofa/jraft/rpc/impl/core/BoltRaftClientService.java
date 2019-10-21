@@ -50,7 +50,7 @@ import com.google.protobuf.Message;
 
 /**
  * Raft rpc service based bolt.
- *
+ * 基于投票的RPC service 对象
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Mar-28 6:07:05 PM

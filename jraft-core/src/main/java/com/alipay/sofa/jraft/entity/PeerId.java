@@ -30,7 +30,7 @@ import com.alipay.sofa.jraft.util.Utils;
 
 /**
  * Represent a participant in a replicating group.
- * 代表 一个参与者对象
+ * 代表一个复制组中的 一个参与者对象   同属一个组下的所有 follower 和 一个 leader 应该就是复制组的概念 leader 会将写入的日志同步到所有 follower上
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Mar-12 3:27:37 PM
@@ -51,6 +51,9 @@ public class PeerId implements Copiable<PeerId>, Serializable, Checksum {
     /** cached toString result*/
     private String              str;
 
+    /**
+     * 这个静态变量啥意思
+     */
     public static final PeerId  ANY_PEER         = new PeerId();
 
     private long                checksum;

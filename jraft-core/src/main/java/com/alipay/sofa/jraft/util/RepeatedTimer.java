@@ -30,7 +30,7 @@ import com.alipay.sofa.jraft.util.timer.TimerTask;
 
 /**
  * Repeatable timer based on java.util.Timer.
- *
+ * 可重复定时器  基于 netty的 hash轮 实现
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Mar-30 3:45:37 PM
@@ -41,8 +41,12 @@ public abstract class RepeatedTimer implements Describer {
 
     private final Lock         lock = new ReentrantLock();
     private final Timer        timer;
+    /**
+     * 该接口风格很像netty   包含任务结果相关信息
+     */
     private Timeout            timeout;
     private boolean            stopped;
+    // running 和 timeoutMs 都是敏感的
     private volatile boolean   running;
     private boolean            destroyed;
     private boolean            invoking;
@@ -67,6 +71,7 @@ public abstract class RepeatedTimer implements Describer {
 
     /**
      * Subclasses should implement this method for timer trigger.
+     * 代表任务逻辑
      */
     protected abstract void onTrigger();
 
@@ -80,6 +85,9 @@ public abstract class RepeatedTimer implements Describer {
         return timeoutMs;
     }
 
+    /**
+     * 定时任务执行的逻辑
+     */
     public void run() {
         this.lock.lock();
         try {
@@ -95,17 +103,20 @@ public abstract class RepeatedTimer implements Describer {
         boolean invokeDestroyed = false;
         this.lock.lock();
         try {
+            // 代表业务逻辑已经执行完了
             this.invoking = false;
             if (this.stopped) {
                 this.running = false;
                 invokeDestroyed = this.destroyed;
             } else {
+                // 开始重复下次任务
                 this.timeout = null;
                 schedule();
             }
         } finally {
             this.lock.unlock();
         }
+        // 如果定时器本身被关闭了
         if (invokeDestroyed) {
             onDestroy();
         }
@@ -117,6 +128,7 @@ public abstract class RepeatedTimer implements Describer {
     public void runOnceNow() {
         this.lock.lock();
         try {
+            // 关闭任务并执行
             if (this.timeout != null && this.timeout.cancel()) {
                 this.timeout = null;
                 run();
@@ -135,17 +147,21 @@ public abstract class RepeatedTimer implements Describer {
 
     /**
      * Start the timer.
+     * 开启定时器
      */
     public void start() {
         this.lock.lock();
         try {
+            // 代表已经销毁
             if (this.destroyed) {
                 return;
             }
+            // 代表已经启动
             if (!this.stopped) {
                 return;
             }
             this.stopped = false;
+            // 正在执行
             if (this.running) {
                 return;
             }
@@ -156,7 +172,11 @@ public abstract class RepeatedTimer implements Describer {
         }
     }
 
+    /**
+     * 执行定时逻辑
+     */
     private void schedule() {
+        // 被 cancel 的任务不会执行了   应该是代表一次只能执行一个任务
         if(this.timeout != null) {
             this.timeout.cancel();
         }
@@ -167,6 +187,7 @@ public abstract class RepeatedTimer implements Describer {
                 LOG.error("Run timer task failed, taskName={}.", RepeatedTimer.this.name, t);
             }
         };
+        // adjustTimeout 是对用户开放的钩子 用于调整 时间间隔
         this.timeout = this.timer.newTimeout(timerTask, adjustTimeout(this.timeoutMs), TimeUnit.MILLISECONDS);
     }
 

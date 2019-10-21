@@ -25,7 +25,7 @@ import com.google.protobuf.Message;
 
 /**
  * RPC client service
- *
+ * RPC 中的客户端
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Apr-09 3:21:56 PM
@@ -34,7 +34,7 @@ public interface ClientService extends Lifecycle<RpcOptions> {
 
     /**
      * Connect to endpoint, returns true when success.
-     *
+     * 连接到某个节点
      * @param endpoint server address
      * @return true on connect success
      */
@@ -42,7 +42,7 @@ public interface ClientService extends Lifecycle<RpcOptions> {
 
     /**
      * Disconnect from endpoint.
-     *
+     * 断开与某个服务的连接
      * @param endpoint server address
      * @return true on disconnect success
      */
@@ -50,7 +50,7 @@ public interface ClientService extends Lifecycle<RpcOptions> {
 
     /**
      * Returns true when the endpoint's connection is active.
-     *
+     * 判断当前连接是否存活
      * @param endpoint server address
      * @return true on connection is active
      */
@@ -58,7 +58,7 @@ public interface ClientService extends Lifecycle<RpcOptions> {
 
     /**
      * Send a requests and waits for response with callback, returns the request future.
-     *
+     * 发送请求并返回一个  可阻塞等待响应结果的future 对象
      * @param endpoint  server address
      * @param request   request data
      * @param done      callback

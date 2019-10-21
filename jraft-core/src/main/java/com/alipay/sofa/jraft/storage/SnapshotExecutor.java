@@ -27,7 +27,8 @@ import com.alipay.sofa.jraft.util.Describer;
 
 /**
  * Executing Snapshot related stuff.
- *
+ * 生成自身的快照
+ * Describer 代表该对象具备生成自己的描述信息
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Mar-22 2:27:02 PM
@@ -36,13 +37,14 @@ public interface SnapshotExecutor extends Lifecycle<SnapshotExecutorOptions>, De
 
     /**
      * Return the owner NodeImpl
+     * 获取本节点
      */
     NodeImpl getNode();
 
     /**
      * Start to snapshot StateMachine, and |done| is called after the
      * execution finishes or fails.
-     *
+     * 创建快照 并触发回调
      * @param done snapshot callback
      */
     void doSnapshot(final Closure done);
@@ -58,6 +60,7 @@ public interface SnapshotExecutor extends Lifecycle<SnapshotExecutorOptions>, De
      *  - Interrupted: happens when interrupt_downloading_snapshot is called or
      *    a new RPC with the same or newer snapshot arrives
      * - Busy: the state machine is saving or loading snapshot
+     * 将快照设置到其他节点
      */
     void installSnapshot(final InstallSnapshotRequest request, final InstallSnapshotResponse.Builder response,
                          final RpcRequestClosure done);
@@ -75,6 +78,7 @@ public interface SnapshotExecutor extends Lifecycle<SnapshotExecutorOptions>, De
      * 
      * NOTE: we can't interrupt the snapshot installing which has finished
      *  downloading and is reseting the State Machine.
+     *  当leader 改变时 停止从其他节点下载快照
      *
      * @param newTerm new term num
      */
@@ -83,16 +87,19 @@ public interface SnapshotExecutor extends Lifecycle<SnapshotExecutorOptions>, De
     /**
      * Returns true if this is currently installing a snapshot, either
      * downloading or loading.
+     * 是否正在安装快照
      */
     boolean isInstallingSnapshot();
 
     /**
      * Returns the backing snapshot storage
+     * 获取保存快照的存储对象
      */
     SnapshotStorage getSnapshotStorage();
 
     /**
      * Block the current thread until all the running job finishes (including failure)
+     * 阻塞当前线程 直到所有任务结束
      */
     void join() throws InterruptedException;
 }

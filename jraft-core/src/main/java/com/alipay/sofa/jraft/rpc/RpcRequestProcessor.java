@@ -28,7 +28,7 @@ import com.google.protobuf.Message;
 
 /**
  * Abstract AsyncUserProcessor for RPC processors.
- *
+ * 继承异步处理器
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Apr-08 5:55:39 PM
@@ -38,8 +38,17 @@ public abstract class RpcRequestProcessor<T extends Message> extends AsyncUserPr
 
     protected static final Logger LOG = LoggerFactory.getLogger(RpcRequestProcessor.class);
 
+    /**
+     * 使用的线程池对象 请求在这里处理 对端通过阻塞方式实现同步 或者使用回调对象+非阻塞
+     */
     private final Executor        executor;
 
+    /**
+     * 处理请求 返回结果 并触发回调
+     * @param request
+     * @param done
+     * @return
+     */
     public abstract Message processRequest(T request, RpcRequestClosure done);
 
     public RpcRequestProcessor(Executor executor) {
@@ -47,11 +56,18 @@ public abstract class RpcRequestProcessor<T extends Message> extends AsyncUserPr
         this.executor = executor;
     }
 
+    /**
+     * 处理请求
+     * @param bizCtx  存放双端信息
+     * @param asyncCtx
+     * @param request
+     */
     @Override
     public void handleRequest(BizContext bizCtx, AsyncContext asyncCtx, T request) {
         try {
             final Message msg = this.processRequest(request, new RpcRequestClosure(bizCtx, asyncCtx));
             if (msg != null) {
+                // 发送响应结果
                 asyncCtx.sendResponse(msg);
             }
         } catch (final Throwable t) {

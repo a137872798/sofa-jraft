@@ -22,7 +22,7 @@ import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * CountDown event.
- *
+ * 可阻塞等待执行的 event 对象
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Apr-17 1:36:36 PM

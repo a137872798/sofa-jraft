@@ -22,7 +22,7 @@ import com.alipay.sofa.jraft.Status;
 
 /**
  * Read index closure
- *
+ * 读下标回调???
  * @author dennis
  */
 public abstract class ReadIndexClosure implements Closure {
@@ -46,7 +46,7 @@ public abstract class ReadIndexClosure implements Closure {
 
     /**
      * Set callback result, called by jraft.
-     *
+     * 设置回调结果 由 jraft 触发 而不是用户
      * @param index  the committed index.
      * @param reqCtx the request context passed by {@link Node#readIndex(byte[], ReadIndexClosure)}.
      */
@@ -73,6 +73,10 @@ public abstract class ReadIndexClosure implements Closure {
         return requestContext;
     }
 
+    /**
+     * 实际的执行逻辑由子类实现
+     * @param status the task status. 任务结果
+     */
     @Override
     public void run(final Status status) {
         run(status, this.index, this.requestContext);

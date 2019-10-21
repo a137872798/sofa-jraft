@@ -22,11 +22,15 @@ import com.alipay.sofa.jraft.rhea.util.concurrent.DistributedLock;
 /**
  * The default batch write implementation, without any optimization,
  * subclasses need to override and optimize.
- *
+ * 批量写入实现
  * @author jiachun.fjc
  */
 public abstract class BatchRawKVStore<T> extends BaseRawKVStore<T> {
 
+    /**
+     * 存入一组数据
+     * @param kvStates
+     */
     public void batchPut(final KVStateOutputList kvStates) {
         for (int i = 0, l = kvStates.size(); i < l; i++) {
             final KVState kvState = kvStates.get(i);

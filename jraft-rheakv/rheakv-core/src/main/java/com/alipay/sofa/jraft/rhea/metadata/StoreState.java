@@ -21,5 +21,9 @@ package com.alipay.sofa.jraft.rhea.metadata;
  * @author jiachun.fjc
  */
 public enum StoreState {
-    UP, OFFLINE, TOMBSTONE
+    UP, OFFLINE,
+    /**
+     * 坟墓??? 应该是完全不可用的状态
+     */
+    TOMBSTONE
 }

@@ -20,7 +20,7 @@ import com.google.protobuf.Message;
 
 /**
  * RpcResponseClosure adapter holds the response.
- *
+ * 内部多维护了一个 响应结果
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Mar-29 2:30:35 PM 

@@ -23,6 +23,7 @@ import com.alipay.sofa.jraft.entity.codec.v2.V2Decoder;
 
 /**
  * Decoder that supports both v1 and v2 log entry codec protocol.
+ * 同时支持V1/V2的解码器 内部会根据魔数判断应该用哪种解码方式
  * @author boyan(boyan@antfin.com)
  *
  */

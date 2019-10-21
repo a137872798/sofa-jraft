@@ -28,7 +28,7 @@ import com.alipay.sofa.jraft.util.CrcUtil;
 
 /**
  * A replica log entry.
- * jraft 中的日志实体 就是以该对象的形式存储日志的
+ * jraft 中的日志实体 就是以该对象的形式存储日志的  该对象还记录了集群的快照 (peers oldPeers)
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Mar-12 3:13:02 PM
@@ -39,9 +39,9 @@ public class LogEntry implements Checksum {
     private EnumOutter.EntryType type;
     /** log id with index/term 日志id 是由偏移量和 任期组合成的*/
     private LogId                id = new LogId(0, 0);
-    /** log entry current peers PeerId */
+    /** log entry current peers PeerId 当前集群中节点*/
     private List<PeerId>         peers;
-    /** log entry old peers */
+    /** log entry old peers 旧节点*/
     private List<PeerId>         oldPeers;
     /** entry data 数据实体存放在 byteBuffer中 */
     private ByteBuffer           data;
@@ -86,6 +86,8 @@ public class LogEntry implements Checksum {
         return c;
     }
 
+    // 现在通过 V1 V2 编解码器  进行编解码了
+
     /**
      * Please use {@link LogEntryEncoder} instead.
      *
@@ -129,12 +131,15 @@ public class LogEntry implements Checksum {
 
     /**
      * Returns true when the log entry is corrupted, it means that the checksum is mismatch.
+     * 判断数据是否正确 如果校验和匹配失败 代表数据异常
      * @since 1.2.6
      * @return true when the log entry is corrupted, otherwise returns false
      */
     public boolean isCorrupted() {
         return this.hasChecksum && this.checksum != checksum();
     }
+
+    // get/set 方法
 
     /**
      * Returns the checksum of the log entry. You should use {@link #hasChecksum} to check if

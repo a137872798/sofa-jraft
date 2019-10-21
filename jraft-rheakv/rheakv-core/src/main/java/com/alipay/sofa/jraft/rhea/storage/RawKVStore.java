@@ -22,7 +22,7 @@ import com.alipay.sofa.jraft.rhea.util.concurrent.DistributedLock;
 
 /**
  * Raw KV store
- *
+ * KV 存储层
  * @author dennis
  * @author jiachun.fjc
  */
@@ -43,6 +43,7 @@ public interface RawKVStore {
      *         it.close();
      *     }
      * <pre/>
+     * 返回一个基于head 的迭代器 在不使用时 应该关闭它
      */
     KVIterator localIterator();
 
@@ -57,6 +58,8 @@ public interface RawKVStore {
      * the specified key is not found.
      *
      * Provide consistent reading if {@code readOnlySafe} is true.
+     * @param key  通过key 查询数据
+     * @param readOnlySafe  true 代表保证一致性读
      */
     void get(final byte[] key, final boolean readOnlySafe, final KVStoreClosure closure);
 
@@ -82,6 +85,8 @@ public interface RawKVStore {
 
     /**
      * Equivalent to {@code scan(startKey, endKey, Integer.MAX_VALUE, readOnlySafe, closure)}.
+     * @param startKey  扫描start -> end 范围内的数据
+     * @param endKey
      */
     void scan(final byte[] startKey, final byte[] endKey, final boolean readOnlySafe, final KVStoreClosure closure);
 

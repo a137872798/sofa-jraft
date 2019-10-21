@@ -20,6 +20,7 @@ import com.alipay.sofa.jraft.entity.LogEntry;
 
 /**
  * Default log entry codec factory
+ * 默认编解码器工厂
  * @author boyan(boyan@antfin.com)
  *
  */
@@ -37,6 +38,8 @@ public class DefaultLogEntryCodecFactory implements LogEntryCodecFactory {
     public static DefaultLogEntryCodecFactory getInstance() {
         return INSTANCE;
     }
+
+    // ----------- 已弃用 -------------
 
     @SuppressWarnings("deprecation")
     private static LogEntryEncoder ENCODER = LogEntry::encode;

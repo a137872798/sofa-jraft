@@ -26,13 +26,13 @@ import com.alipay.sofa.jraft.util.Bytes;
  */
 public class ReadIndexState {
 
-    /** The committed log index*/
+    /** The committed log index 当前提交的下标*/
     private long                   index = -1;
-    /** User request context*/
+    /** User request context 请求信息*/
     private final Bytes            requestContext;
-    /** User ReadIndex closure*/
+    /** User ReadIndex closure 对应的回调对象*/
     private final ReadIndexClosure done;
-    /** Request start timestamp*/
+    /** Request start timestamp 处理请求的时间戳*/
     private final long             startTimeMs;
 
     public ReadIndexState(Bytes requestContext, ReadIndexClosure done, long startTimeMs) {

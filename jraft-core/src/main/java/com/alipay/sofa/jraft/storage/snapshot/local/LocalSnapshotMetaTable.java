@@ -36,7 +36,7 @@ import com.google.protobuf.ZeroByteStringHelper;
 
 /**
  * Table to keep local snapshot metadata infos.
- *
+ * 存放快照元数据的table
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Mar-12 7:22:27 PM
@@ -160,9 +160,11 @@ public class LocalSnapshotMetaTable {
 
     /**
      * Load metadata infos from a file by path.
+     * 将文件中的数据加载出来 并保存在本地(JVM内存中)
      */
     public boolean loadFromFile(String path) throws IOException {
         ProtoBufFile pbFile = new ProtoBufFile(path);
+        // 解析成元数据对象
         LocalSnapshotPbMeta pbMeta = pbFile.load();
         if (pbMeta == null) {
             LOG.error("Fail to load meta from {}.", path);
@@ -171,6 +173,11 @@ public class LocalSnapshotMetaTable {
         return loadFromPbMeta(pbMeta);
     }
 
+    /**
+     * 设置快照元数据
+     * @param pbMeta
+     * @return
+     */
     private boolean loadFromPbMeta(final LocalSnapshotPbMeta pbMeta) {
         if (pbMeta.hasMeta()) {
             this.meta = pbMeta.getMeta();

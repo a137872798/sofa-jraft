@@ -33,15 +33,24 @@ import com.alipay.sofa.jraft.util.Utils;
 
 /**
  * The iterator implementation.
- *
+ * 迭代器实现类
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Apr-03 3:28:37 PM
  */
 public class IteratorImpl {
 
+    /**
+     * 状态机对象
+     */
     private final StateMachine  fsm;
+    /**
+     * 该对象用于与  LogStorage 进行交互
+     */
     private final LogManager    logManager;
+    /**
+     * 内部存放一组待处理的对象
+     */
     private final List<Closure> closures;
     private final long          firstClosureIndex;
     private long                currentIndex;
@@ -50,6 +59,16 @@ public class IteratorImpl {
     private final AtomicLong    applyingIndex;
     private RaftException       error;
 
+    /**
+     *
+     * @param fsm
+     * @param logManager
+     * @param closures
+     * @param firstClosureIndex
+     * @param lastAppliedIndex 当前LogStorage 写入的下标
+     * @param committedIndex  代表要commit 的目标下标
+     * @param applyingIndex
+     */
     public IteratorImpl(final StateMachine fsm, final LogManager logManager, final List<Closure> closures,
                         final long firstClosureIndex, final long lastAppliedIndex, final long committedIndex,
                         final AtomicLong applyingIndex) {
@@ -90,6 +109,7 @@ public class IteratorImpl {
 
     /**
      * Move to next
+     * 初始化后触发
      */
     public void next() {
         this.currEntry = null; //release current entry
@@ -98,17 +118,21 @@ public class IteratorImpl {
             ++this.currentIndex;
             if (this.currentIndex <= this.committedIndex) {
                 try {
+                    // 获取指定index 对应的log 实体
                     this.currEntry = this.logManager.getEntry(this.currentIndex);
                     if (this.currEntry == null) {
+                        // 初始化error 属性
                         getOrCreateError().setType(EnumOutter.ErrorType.ERROR_TYPE_LOG);
                         getOrCreateError().getStatus().setError(-1,
                             "Fail to get entry at index=%d while committed_index=%d", this.currentIndex,
                             this.committedIndex);
                     }
+                    // 代表checkSum 校验失败
                 } catch (final LogEntryCorruptedException e) {
                     getOrCreateError().setType(EnumOutter.ErrorType.ERROR_TYPE_LOG);
                     getOrCreateError().getStatus().setError(RaftError.EINVAL, e.getMessage());
                 }
+                // 代表当前正在处理的下标
                 this.applyingIndex.set(this.currentIndex);
             }
         }

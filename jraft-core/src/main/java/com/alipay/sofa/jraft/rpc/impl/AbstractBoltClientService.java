@@ -58,12 +58,25 @@ public abstract class AbstractBoltClientService implements ClientService {
     protected static final Logger   LOG = LoggerFactory.getLogger(AbstractBoltClientService.class);
 
     static {
+        // 加载PB文件
         ProtobufMsgFactory.load();
     }
 
+    /**
+     * ali.remoting  模块的类
+     */
     protected RpcClient             rpcClient;
+    /**
+     * 看来有些请求是交由线程池处理的
+     */
     protected ThreadPoolExecutor    rpcExecutor;
+    /**
+     * 包含一系列 初始化需要的参数
+     */
     protected RpcOptions            rpcOptions;
+    /**
+     * 地址解析器
+     */
     protected JRaftRpcAddressParser rpcAddressParser;
     protected InvokeContext         defaultInvokeCtx;
 
@@ -71,11 +84,21 @@ public abstract class AbstractBoltClientService implements ClientService {
         return this.rpcClient;
     }
 
+    /**
+     * 委托给 RPCClient 判断是否连接正常  底层就是判断 channel.isActive   isWritable
+     * @param endpoint server address
+     * @return
+     */
     @Override
     public boolean isConnected(final Endpoint endpoint) {
         return this.rpcClient.checkConnection(endpoint.toString());
     }
 
+    /**
+     * 使用 options 进行初始化
+     * @param rpcOptions
+     * @return
+     */
     @Override
     public synchronized boolean init(final RpcOptions rpcOptions) {
         if (this.rpcClient != null) {
@@ -84,7 +107,9 @@ public abstract class AbstractBoltClientService implements ClientService {
         this.rpcOptions = rpcOptions;
         this.rpcAddressParser = new JRaftRpcAddressParser();
         this.defaultInvokeCtx = new InvokeContext();
+        // crc开关 就是看是否允许检查校验和
         this.defaultInvokeCtx.put(InvokeContext.BOLT_CRC_SWITCH, this.rpcOptions.isEnableRpcChecksum());
+        // 使用指定线程数进行初始化
         return initRpcClient(this.rpcOptions.getRpcProcessorThreadPoolSize());
     }
 
@@ -92,6 +117,11 @@ public abstract class AbstractBoltClientService implements ClientService {
         // NO-OP
     }
 
+    /**
+     * 初始化 RPCClient
+     * @param rpcProcessorThreadPoolSize
+     * @return
+     */
     protected boolean initRpcClient(final int rpcProcessorThreadPoolSize) {
         this.rpcClient = new RpcClient();
         configRpcClient(this.rpcClient);

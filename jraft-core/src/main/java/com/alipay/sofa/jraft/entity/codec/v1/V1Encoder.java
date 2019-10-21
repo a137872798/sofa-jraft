@@ -30,6 +30,7 @@ import com.alipay.sofa.jraft.util.Bits;
 
 /**
  * V1 log entry encoder
+ * V1 版本编码器  就是 解码器 反转的版本
  * @author boyan(boyan@antfin.com)
  *
  */

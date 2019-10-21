@@ -30,7 +30,7 @@ import com.alipay.sofa.jraft.util.ThreadId;
 
 /**
  * Replicators in a raft group.
- *
+ * 可以理解为集群中同属一个组的node
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Apr-08 5:35:26 PM
@@ -38,7 +38,7 @@ import com.alipay.sofa.jraft.util.ThreadId;
 public interface ReplicatorGroup extends Describer {
     /**
      * Init the replicator group.
-     *
+     * 通过某个节点初始化整个 group
      * @param nodeId node id
      * @param opts   options of replicator grop
      * @return true if init success
@@ -52,7 +52,7 @@ public interface ReplicatorGroup extends Describer {
      * NOTE: when calling this function, the replicators starts to work
      * immediately, and might call Node#stepDown which might have race with
      * the caller, you should deal with this situation.
-     *
+     * 为group 增加成员   一旦增加会立即进行复制工作
      * @param peer target peer
      * @return true on success
      */
@@ -60,7 +60,7 @@ public interface ReplicatorGroup extends Describer {
 
     /**
      * Send heartbeat to a peer.
-     *
+     * 向指定节点发送心跳
      * @param peer    target peer
      * @param closure callback
      */

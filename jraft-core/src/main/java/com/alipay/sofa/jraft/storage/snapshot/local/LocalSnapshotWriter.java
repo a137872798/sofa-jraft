@@ -35,7 +35,7 @@ import com.google.protobuf.Message;
 
 /**
  * Snapshot writer to write snapshot into local file system.
- *
+ * 基于本地文件系统的 快照写入对象
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Apr-08 11:51:43 AM
@@ -44,10 +44,22 @@ public class LocalSnapshotWriter extends SnapshotWriter {
 
     private static final Logger          LOG = LoggerFactory.getLogger(LocalSnapshotWriter.class);
 
+    /**
+     * 本地快照元数据 table
+     */
     private final LocalSnapshotMetaTable metaTable;
     private final String                 path;
+    /**
+     * 本地快照存储器  看来外部是通过该对象向 storage中写入数据的
+     */
     private final LocalSnapshotStorage   snapshotStorage;
 
+    /**
+     * 通过 指定文件夹路径 和 storage 对象初始化
+     * @param path
+     * @param snapshotStorage
+     * @param raftOptions
+     */
     public LocalSnapshotWriter(String path, LocalSnapshotStorage snapshotStorage, RaftOptions raftOptions) {
         super();
         this.snapshotStorage = snapshotStorage;
@@ -57,6 +69,7 @@ public class LocalSnapshotWriter extends SnapshotWriter {
 
     @Override
     public boolean init(final Void v) {
+        // 创建元数据文件夹
         final File dir = new File(this.path);
         try {
             FileUtils.forceMkdir(dir);
@@ -65,6 +78,7 @@ public class LocalSnapshotWriter extends SnapshotWriter {
             setError(RaftError.EIO, "Fail to create directory  %s", this.path);
             return false;
         }
+        // 创建元数据文件
         final String metaPath = path + File.separator + JRAFT_SNAPSHOT_META_FILE;
         final File metaFile = new File(metaPath);
         try {

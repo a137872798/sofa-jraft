@@ -64,9 +64,10 @@ import com.lmax.disruptor.dsl.ProducerType;
 
 /**
  * The finite state machine caller implementation.
+ * 该对象用于与状态机交互
  *
  * @author boyan (boyan@alibaba-inc.com)
- *
+ * <p>
  * 2018-Apr-03 11:12:14 AM
  */
 public class FSMCallerImpl implements FSMCaller {
@@ -75,8 +76,9 @@ public class FSMCallerImpl implements FSMCaller {
 
     /**
      * Task type
-     * @author boyan (boyan@alibaba-inc.com)
      *
+     * @author boyan (boyan@alibaba-inc.com)
+     * <p>
      * 2018-Apr-03 11:12:25 AM
      */
     private enum TaskType {
@@ -106,18 +108,21 @@ public class FSMCallerImpl implements FSMCaller {
      * Apply task for disruptor.
      *
      * @author boyan (boyan@alibaba-inc.com)
-     *
+     * <p>
      * 2018-Apr-03 11:12:35 AM
      */
     private static class ApplyTask {
-        TaskType            type;
+        /**
+         * 代表任务类型
+         */
+        TaskType type;
         // union fields
-        long                committedIndex;
-        long                term;
-        Status              status;
+        long committedIndex;
+        long term;
+        Status status;
         LeaderChangeContext leaderChangeCtx;
-        Closure             done;
-        CountDownLatch      shutdownLatch;
+        Closure done;
+        CountDownLatch shutdownLatch;
 
         public void reset() {
             this.type = null;
@@ -138,35 +143,49 @@ public class FSMCallerImpl implements FSMCaller {
         }
     }
 
+    /**
+     * 事件处理器
+     */
     private class ApplyTaskHandler implements EventHandler<ApplyTask> {
         // max committed index in current batch, reset to -1 every batch
         private long maxCommittedIndex = -1;
 
+        /**
+         * @param event
+         * @param sequence
+         * @param endOfBatch 代表是否是该批数据的末尾
+         * @throws Exception
+         */
         @Override
         public void onEvent(final ApplyTask event, final long sequence, final boolean endOfBatch) throws Exception {
             this.maxCommittedIndex = runApplyTask(event, this.maxCommittedIndex, endOfBatch);
         }
     }
 
-    private LogManager                                              logManager;
-    private StateMachine                                            fsm;
-    private ClosureQueue                                            closureQueue;
-    private final AtomicLong                                        lastAppliedIndex;
-    private long                                                    lastAppliedTerm;
-    private Closure                                                 afterShutdown;
-    private NodeImpl                                                node;
-    private volatile TaskType                                       currTask;
-    private final AtomicLong                                        applyingIndex;
-    private volatile RaftException                                  error;
-    private Disruptor<ApplyTask>                                    disruptor;
-    private RingBuffer<ApplyTask>                                   taskQueue;
-    private volatile CountDownLatch                                 shutdownLatch;
-    private NodeMetrics                                             nodeMetrics;
+    private LogManager logManager;
+    private StateMachine fsm;
+    private ClosureQueue closureQueue;
+    private final AtomicLong lastAppliedIndex;
+    private long lastAppliedTerm;
+    private Closure afterShutdown;
+    private NodeImpl node;
+    private volatile TaskType currTask;
+    /**
+     * 当前正在处理的下标
+     */
+    private final AtomicLong applyingIndex;
+    private volatile RaftException error;
+    private Disruptor<ApplyTask> disruptor;
+    private RingBuffer<ApplyTask> taskQueue;
+    private volatile CountDownLatch shutdownLatch;
+    private NodeMetrics nodeMetrics;
     private final CopyOnWriteArrayList<LastAppliedLogIndexListener> lastAppliedLogIndexListeners = new CopyOnWriteArrayList<>();
 
     public FSMCallerImpl() {
         super();
+        // 代表当前处在空闲状态
         this.currTask = TaskType.IDLE;
+        // 这个好像是快照下标
         this.lastAppliedIndex = new AtomicLong(0);
         this.applyingIndex = new AtomicLong(0);
     }
@@ -179,23 +198,28 @@ public class FSMCallerImpl implements FSMCaller {
         this.afterShutdown = opts.getAfterShutdown();
         this.node = opts.getNode();
         this.nodeMetrics = this.node.getNodeMetrics();
+        // 默认的 BootstrapId index 和 term 都是0
         this.lastAppliedIndex.set(opts.getBootstrapId().getIndex());
+        // 触发监听器
         notifyLastAppliedIndexUpdated(this.lastAppliedIndex.get());
         this.lastAppliedTerm = opts.getBootstrapId().getTerm();
-        this.disruptor = DisruptorBuilder.<ApplyTask> newInstance() //
-            .setEventFactory(new ApplyTaskFactory()) //
-            .setRingBufferSize(opts.getDisruptorBufferSize()) //
-            .setThreadFactory(new NamedThreadFactory("JRaft-FSMCaller-Disruptor-", true)) //
-            .setProducerType(ProducerType.MULTI) //
-            .setWaitStrategy(new BlockingWaitStrategy()) //
-            .build();
+        this.disruptor = DisruptorBuilder.<ApplyTask>newInstance() //
+                // 使用指定的事件工厂
+                .setEventFactory(new ApplyTaskFactory()) //
+                .setRingBufferSize(opts.getDisruptorBufferSize()) //
+                .setThreadFactory(new NamedThreadFactory("JRaft-FSMCaller-Disruptor-", true)) //
+                .setProducerType(ProducerType.MULTI) //
+                .setWaitStrategy(new BlockingWaitStrategy()) //
+                .build();
+        // 设置处理器
         this.disruptor.handleEventsWith(new ApplyTaskHandler());
         this.disruptor.setDefaultExceptionHandler(new LogExceptionHandler<Object>(getClass().getSimpleName()));
         this.taskQueue = this.disruptor.start();
         if (this.nodeMetrics.getMetricRegistry() != null) {
             this.nodeMetrics.getMetricRegistry().register("jraft-fsm-caller-disruptor",
-                new DisruptorMetricSet(this.taskQueue));
+                    new DisruptorMetricSet(this.taskQueue));
         }
+        // 创建异常对象
         this.error = new RaftException(EnumOutter.ErrorType.ERROR_TYPE_NONE);
         LOG.info("Starts FSMCaller successfully.");
         return true;
@@ -256,6 +280,12 @@ public class FSMCallerImpl implements FSMCaller {
         latch.await();
     }
 
+    /**
+     * 添加一个下载快照的任务
+     *
+     * @param done callback
+     * @return
+     */
     @Override
     public boolean onSnapshotLoad(final LoadSnapshotClosure done) {
         return enqueueTask((task, sequence) -> {
@@ -306,8 +336,9 @@ public class FSMCallerImpl implements FSMCaller {
 
     /**
      * Closure runs with an error.
-     * @author boyan (boyan@alibaba-inc.com)
      *
+     * @author boyan (boyan@alibaba-inc.com)
+     * <p>
      * 2018-Apr-04 2:20:31 PM
      */
     public class OnErrorClosure implements Closure {
@@ -358,45 +389,68 @@ public class FSMCallerImpl implements FSMCaller {
         }
     }
 
+    /**
+     * 处理任务
+     *
+     * @param task
+     * @param maxCommittedIndex
+     * @param endOfBatch
+     * @return
+     */
     @SuppressWarnings("ConstantConditions")
     private long runApplyTask(final ApplyTask task, long maxCommittedIndex, final boolean endOfBatch) {
         CountDownLatch shutdown = null;
+        // 处理提交任务
         if (task.type == TaskType.COMMITTED) {
+            // 更新提交index
             if (task.committedIndex > maxCommittedIndex) {
                 maxCommittedIndex = task.committedIndex;
             }
         } else {
+            // 如果是其他任务进入的情况 发现了当前 maxCommittedIndex 不为-1 代表必须要进行commit 了
             if (maxCommittedIndex >= 0) {
+                // 将当前任务设置成提交任务  看来有些地方需要通过 currTask 来做一些事情
                 this.currTask = TaskType.COMMITTED;
                 doCommitted(maxCommittedIndex);
                 maxCommittedIndex = -1L; // reset maxCommittedIndex
             }
             final long startMs = Utils.monotonicMs();
             try {
+                // 根据本次任务类型走不同逻辑
                 switch (task.type) {
                     case COMMITTED:
                         Requires.requireTrue(false, "Impossible");
                         break;
+                    // 如果是保存快照
                     case SNAPSHOT_SAVE:
+                        // 代表当前正在处理 保存快照的任务
                         this.currTask = TaskType.SNAPSHOT_SAVE;
+                        // 如果当前Caller 对象已经出现了异常就不能处理了 通过异常status触发回调 返回true 代表caller 对象正常
                         if (passByStatus(task.done)) {
                             doSnapshotSave((SaveSnapshotClosure) task.done);
                         }
                         break;
+                    // 如果是加载快照
                     case SNAPSHOT_LOAD:
                         this.currTask = TaskType.SNAPSHOT_LOAD;
                         if (passByStatus(task.done)) {
                             doSnapshotLoad((LoadSnapshotClosure) task.done);
                         }
                         break;
+
+                    // 下面的方法直接委托给状态机
+
+                    // 如果 leader 停止了
                     case LEADER_STOP:
                         this.currTask = TaskType.LEADER_STOP;
                         doLeaderStop(task.status);
                         break;
+                    // leader 启动
                     case LEADER_START:
                         this.currTask = TaskType.LEADER_START;
                         doLeaderStart(task.term);
                         break;
+                    // 代表当前节点开始跟随leader
                     case START_FOLLOWING:
                         this.currTask = TaskType.START_FOLLOWING;
                         doStartFollowing(task.leaderChangeCtx);
@@ -412,6 +466,8 @@ public class FSMCallerImpl implements FSMCaller {
                     case IDLE:
                         Requires.requireTrue(false, "Can't reach here");
                         break;
+
+                        // 下面是 2个阻塞对象
                     case SHUTDOWN:
                         this.currTask = TaskType.SHUTDOWN;
                         shutdown = task.shutdownLatch;
@@ -426,14 +482,17 @@ public class FSMCallerImpl implements FSMCaller {
             }
         }
         try {
+            // 代表是该批数据的末尾 且 需要提交数据
             if (endOfBatch && maxCommittedIndex >= 0) {
                 this.currTask = TaskType.COMMITTED;
+                // 提交数据后将 maxCommittedIndex 重置
                 doCommitted(maxCommittedIndex);
                 maxCommittedIndex = -1L; // reset maxCommittedIndex
             }
             this.currTask = TaskType.IDLE;
             return maxCommittedIndex;
         } finally {
+            // 等待任务完成
             if (shutdown != null) {
                 shutdown.countDown();
             }
@@ -453,16 +512,27 @@ public class FSMCallerImpl implements FSMCaller {
         }
     }
 
+    /**
+     * 触发 当LastAppliedIndex发生变化的监听器
+     *
+     * @param lastAppliedIndex
+     */
     private void notifyLastAppliedIndexUpdated(final long lastAppliedIndex) {
         for (final LastAppliedLogIndexListener listener : this.lastAppliedLogIndexListeners) {
             listener.onApplied(lastAppliedIndex);
         }
     }
 
+    /**
+     * 提交数据 直到指定的偏移量
+     *
+     * @param committedIndex
+     */
     private void doCommitted(final long committedIndex) {
         if (!this.error.getStatus().isOk()) {
             return;
         }
+        // 获取当前的快照偏移量
         final long lastAppliedIndex = this.lastAppliedIndex.get();
         // We can tolerate the disorder of committed_index
         if (lastAppliedIndex >= committedIndex) {
@@ -472,53 +542,76 @@ public class FSMCallerImpl implements FSMCaller {
         try {
             final List<Closure> closures = new ArrayList<>();
             final List<TaskClosure> taskClosures = new ArrayList<>();
+            // 从任务队列中 取出截取到目标偏移量的所有任务    返回原先的偏移量
             final long firstClosureIndex = this.closureQueue.popClosureUntil(committedIndex, closures, taskClosures);
 
             // Calls TaskClosure#onCommitted if necessary
+            // 如果某些回调是 TaskClosure类型 使用该方法处理 相当于对用户开放的对象
             onTaskCommitted(taskClosures);
 
             Requires.requireTrue(firstClosureIndex >= 0, "Invalid firstClosureIndex");
+            // 将 List<Closure> 包装成迭代器对象  lastAppliedIndex 是当前写入LogStorage 的下标
             final IteratorImpl iterImpl = new IteratorImpl(this.fsm, this.logManager, closures, firstClosureIndex,
-                lastAppliedIndex, committedIndex, this.applyingIndex);
+                    lastAppliedIndex, committedIndex, this.applyingIndex);
+            // 等同 hasNext()
             while (iterImpl.isGood()) {
+                // 获取currentIndex(++lastAppliedIndex) 指向的 LogEntry
                 final LogEntry logEntry = iterImpl.entry();
+                // LogEntry 分为 data 和configuration
                 if (logEntry.getType() != EnumOutter.EntryType.ENTRY_TYPE_DATA) {
                     if (logEntry.getType() == EnumOutter.EntryType.ENTRY_TYPE_CONFIGURATION) {
+                        // 这样就代表 集群配置发生了变化  才有提交的必要
                         if (logEntry.getOldPeers() != null && !logEntry.getOldPeers().isEmpty()) {
                             // Joint stage is not supposed to be noticeable by end users.
+                            // 提交配置信息  这个提交好像是由 leader 发往同个raft组中其他节点
                             this.fsm.onConfigurationCommitted(new Configuration(iterImpl.entry().getPeers()));
                         }
                     }
+                    // 获取对应的回调对象 并触发
                     if (iterImpl.done() != null) {
                         // For other entries, we have nothing to do besides flush the
                         // pending tasks and run this closure to notify the caller that the
                         // entries before this one were successfully committed and applied.
                         iterImpl.done().run(Status.OK());
                     }
+                    // 获取下个 LogEntry
                     iterImpl.next();
                     continue;
                 }
 
                 // Apply data task to user state machine
+                // 如果LogEntry 是 data 数据 内部会调用next
                 doApplyTasks(iterImpl);
             }
 
+            // 代表 committedIndex 前对应的某个实体不存在
             if (iterImpl.hasError()) {
                 setError(iterImpl.getError());
+                // 触发剩下任务对应的回调（以失败方式）
                 iterImpl.runTheRestClosureWithError();
             }
+            // 获取当前移动到的偏移量
             final long lastIndex = iterImpl.getIndex() - 1;
+            // 获取对应数据的任期
             final long lastTerm = this.logManager.getTerm(lastIndex);
             final LogId lastAppliedId = new LogId(lastIndex, lastTerm);
+            // 更新当前确认已提交的index 和任期
             this.lastAppliedIndex.set(committedIndex);
             this.lastAppliedTerm = lastTerm;
+            // 设置最后提交的LogId
             this.logManager.setAppliedId(lastAppliedId);
+            // 触发回调
             notifyLastAppliedIndexUpdated(committedIndex);
         } finally {
             this.nodeMetrics.recordLatency("fsm-commit", Utils.monotonicMs() - startMs);
         }
     }
 
+    /**
+     * 提交 TaskClosure 对象
+     *
+     * @param closures
+     */
     private void onTaskCommitted(final List<TaskClosure> closures) {
         for (int i = 0, size = closures.size(); i < size; i++) {
             final TaskClosure done = closures.get(i);
@@ -526,11 +619,18 @@ public class FSMCallerImpl implements FSMCaller {
         }
     }
 
+    /**
+     * 处理 data 数据
+     *
+     * @param iterImpl
+     */
     private void doApplyTasks(final IteratorImpl iterImpl) {
         final IteratorWrapper iter = new IteratorWrapper(iterImpl);
         final long startApplyMs = Utils.monotonicMs();
+        // 获取当前 LogEntry 对应下标
         final long startIndex = iter.getIndex();
         try {
+            // 使用状态机处理
             this.fsm.onApply(iter);
         } finally {
             this.nodeMetrics.recordLatency("fsm-apply-tasks", Utils.monotonicMs() - startApplyMs);
@@ -543,17 +643,26 @@ public class FSMCallerImpl implements FSMCaller {
         iter.next();
     }
 
+    /**
+     * 保存快照
+     *
+     * @param done
+     */
     private void doSnapshotSave(final SaveSnapshotClosure done) {
         Requires.requireNonNull(done, "SaveSnapshotClosure is null");
+        // 代表最后 成功 commited 的数据下标 应该是基于该下标进行提交
         final long lastAppliedIndex = this.lastAppliedIndex.get();
+        // 以最后提交的 index,term 为终点 创建快照对象
         final RaftOutter.SnapshotMeta.Builder metaBuilder = RaftOutter.SnapshotMeta.newBuilder() //
-            .setLastIncludedIndex(lastAppliedIndex) //
-            .setLastIncludedTerm(this.lastAppliedTerm);
+                .setLastIncludedIndex(lastAppliedIndex) //
+                .setLastIncludedTerm(this.lastAppliedTerm);
+        // 获取指定下标往前的最后一个 描述配置的信息
         final ConfigurationEntry confEntry = this.logManager.getConfiguration(lastAppliedIndex);
+        // 如果conf 为空 抛出异常
         if (confEntry == null || confEntry.isEmpty()) {
             LOG.error("Empty conf entry for lastAppliedIndex={}", lastAppliedIndex);
             Utils.runClosureInThread(done, new Status(RaftError.EINVAL, "Empty conf entry for lastAppliedIndex=%s",
-                lastAppliedIndex));
+                    lastAppliedIndex));
             return;
         }
         for (final PeerId peer : confEntry.getConf()) {
@@ -564,11 +673,13 @@ public class FSMCallerImpl implements FSMCaller {
                 metaBuilder.addOldPeers(peer.toString());
             }
         }
+        // 设置 done 的 meta 属性 并返回 writer
         final SnapshotWriter writer = done.start(metaBuilder.build());
         if (writer == null) {
             done.run(new Status(RaftError.EINVAL, "snapshot_storage create SnapshotWriter failed"));
             return;
         }
+        // 使用状态机执行 保存快照
         this.fsm.onSnapshotSave(writer, done);
     }
 
@@ -612,36 +723,46 @@ public class FSMCallerImpl implements FSMCaller {
         return sb.append(']').toString();
     }
 
+    /**
+     * 加载快照
+     *
+     * @param done
+     */
     private void doSnapshotLoad(final LoadSnapshotClosure done) {
         Requires.requireNonNull(done, "LoadSnapshotClosure is null");
+        // 返回done 内部的reader 对象
         final SnapshotReader reader = done.start();
         if (reader == null) {
             done.run(new Status(RaftError.EINVAL, "open SnapshotReader failed"));
             return;
         }
+        // 通过reader 对象去加载快照
         final RaftOutter.SnapshotMeta meta = reader.load();
         if (meta == null) {
             done.run(new Status(RaftError.EINVAL, "SnapshotReader load meta failed"));
             if (reader.getRaftError() == RaftError.EIO) {
                 final RaftException err = new RaftException(EnumOutter.ErrorType.ERROR_TYPE_SNAPSHOT, RaftError.EIO,
-                    "Fail to load snapshot meta");
+                        "Fail to load snapshot meta");
                 setError(err);
             }
             return;
         }
+        // 代表当前的快照信息
         final LogId lastAppliedId = new LogId(this.lastAppliedIndex.get(), this.lastAppliedTerm);
         final LogId snapshotId = new LogId(meta.getLastIncludedIndex(), meta.getLastIncludedTerm());
+        // 如果加载的快照比当前还旧 就不需要处理了
         if (lastAppliedId.compareTo(snapshotId) > 0) {
             done.run(new Status(
-                RaftError.ESTALE,
-                "Loading a stale snapshot last_applied_index=%d last_applied_term=%d snapshot_index=%d snapshot_term=%d",
-                lastAppliedId.getIndex(), lastAppliedId.getTerm(), snapshotId.getIndex(), snapshotId.getTerm()));
+                    RaftError.ESTALE,
+                    "Loading a stale snapshot last_applied_index=%d last_applied_term=%d snapshot_index=%d snapshot_term=%d",
+                    lastAppliedId.getIndex(), lastAppliedId.getTerm(), snapshotId.getIndex(), snapshotId.getTerm()));
             return;
         }
+        // 使用状态机加载数据时抛出异常
         if (!this.fsm.onSnapshotLoad(reader)) {
             done.run(new Status(-1, "StateMachine onSnapshotLoad failed"));
             final RaftException e = new RaftException(EnumOutter.ErrorType.ERROR_TYPE_STATE_MACHINE,
-                RaftError.ESTATEMACHINE, "StateMachine onSnapshotLoad failed");
+                    RaftError.ESTATEMACHINE, "StateMachine onSnapshotLoad failed");
             setError(e);
             return;
         }
@@ -653,8 +774,10 @@ public class FSMCallerImpl implements FSMCaller {
                 Requires.requireTrue(peer.parse(meta.getPeers(i)), "Parse peer failed");
                 conf.addPeer(peer);
             }
+            // 使用状态机提交配置
             this.fsm.onConfigurationCommitted(conf);
         }
+        // 更新成快照的值
         this.lastAppliedIndex.set(meta.getLastIncludedIndex());
         this.lastAppliedTerm = meta.getLastIncludedTerm();
         done.run(Status.OK());
@@ -664,10 +787,20 @@ public class FSMCallerImpl implements FSMCaller {
         setError(done.getError());
     }
 
+    /**
+     * 使用状态机处理 leader 暂停的情况
+     *
+     * @param status
+     */
     private void doLeaderStop(final Status status) {
         this.fsm.onLeaderStop(status);
     }
 
+    /**
+     * 当leader 启动时触发
+     *
+     * @param term
+     */
     private void doLeaderStart(final long term) {
         this.fsm.onLeaderStart(term);
     }
@@ -680,6 +813,11 @@ public class FSMCallerImpl implements FSMCaller {
         this.fsm.onStopFollowing(ctx);
     }
 
+    /**
+     * 设置结果 并用状态机和 节点去处理
+     *
+     * @param e
+     */
     private void setError(final RaftException e) {
         if (this.error.getType() != EnumOutter.ErrorType.ERROR_TYPE_NONE) {
             // already report
@@ -713,6 +851,6 @@ public class FSMCallerImpl implements FSMCaller {
     @Override
     public void describe(final Printer out) {
         out.print("  ") //
-            .println(toString());
+                .println(toString());
     }
 }

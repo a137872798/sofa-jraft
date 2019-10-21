@@ -35,7 +35,7 @@ import com.alipay.sofa.jraft.util.Copiable;
  * The PD periodically checks the number of regions in each store node, and
  * the load situation. The raft snapshot is used to migrate the region between
  * the store nodes to ensure the load balance of the cluster.
- *
+ * 用于存储 kv数据的 基本单元  每个region 都是一个 raft组
  * @author jiachun.fjc
  */
 public class Region implements Copiable<Region>, Serializable {

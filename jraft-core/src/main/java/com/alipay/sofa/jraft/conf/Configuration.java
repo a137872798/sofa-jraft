@@ -31,13 +31,13 @@ import com.alipay.sofa.jraft.util.Copiable;
 /**
  * A configuration with a set of peers.
  * @author boyan (boyan@alibaba-inc.com)
- * 代表一组候选者 (即jraft中负责参与选举的节点)
+ * 配置代表某一时期整个集群中有效的节点
  * 2018-Mar-15 11:00:26 AM
  */
 public class Configuration implements Iterable<PeerId>, Copiable<Configuration> {
 
     /**
-     * 内部携带的一组 参与者
+     * 内部携带的一组 参与者   PeerId 代表 ip + port
      */
     private List<PeerId> peers = new ArrayList<>();
 
@@ -96,6 +96,10 @@ public class Configuration implements Iterable<PeerId>, Copiable<Configuration> 
         return this.peers;
     }
 
+    /**
+     * 将候选人 替换成传入的值
+     * @param peers
+     */
     public void setPeers(final List<PeerId> peers) {
         this.peers.clear();
         for (final PeerId peer : peers) {

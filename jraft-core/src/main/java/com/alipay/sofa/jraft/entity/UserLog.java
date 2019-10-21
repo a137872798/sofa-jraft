@@ -20,16 +20,16 @@ import java.nio.ByteBuffer;
 
 /**
  * User log entry.
- *
+ * 用户日志
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Apr-04 10:03:28 AM
  */
 public class UserLog {
 
-    /** log index*/
+    /** log index 写入的数据起点 */
     private long       index;
-    /** log data*/
+    /** log data 日志中的数据*/
     private ByteBuffer data;
 
     public UserLog(long index, ByteBuffer data) {

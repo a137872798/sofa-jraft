@@ -21,7 +21,7 @@ import com.alipay.sofa.jraft.error.RaftError;
 
 /**
  * Helper to create error response.
- *
+ * 一个便捷的响应工厂  就是根据 status 生成 响应结果
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Mar-28 4:33:50 PM

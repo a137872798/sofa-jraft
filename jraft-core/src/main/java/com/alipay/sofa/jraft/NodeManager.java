@@ -43,10 +43,16 @@ public class NodeManager {
 
     private static final NodeManager                INSTANCE = new NodeManager();
 
+    /**
+     * 节点容器对象
+     */
     private final ConcurrentMap<NodeId, Node>       nodeMap  = new ConcurrentHashMap<>();
+    /**
+     * 以 group 作为key 来存放一组node
+     */
     private final ConcurrentMap<String, List<Node>> groupMap = new ConcurrentHashMap<>();
     /**
-     * 存放节点对象的容器
+     * 存放节点地址的容器
      */
     private final ConcurrentHashSet<Endpoint>       addrSet  = new ConcurrentHashSet<>();
 
@@ -56,6 +62,7 @@ public class NodeManager {
 
     /**
      * Return true when RPC service is registered.
+     * 判断指定的node 是否已经注册到manager中
      */
     public boolean serverExists(final Endpoint addr) {
         if (addr.getIp().equals(Utils.IP_ANY)) {

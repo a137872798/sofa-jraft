@@ -281,7 +281,7 @@ public class RocksDBLogStorage implements LogStorage {
                     // 使用解码器 对value 进行解码
                     final LogEntry entry = this.logEntryDecoder.decode(bs);
                     if (entry != null) {
-                        // 如果是配置信息
+                        // 如果是配置信息  相当于是旧新集群的快照
                         if (entry.getType() == EntryType.ENTRY_TYPE_CONFIGURATION) {
                             final ConfigurationEntry confEntry = new ConfigurationEntry();
                             confEntry.setId(new LogId(entry.getId().getIndex(), entry.getId().getTerm()));

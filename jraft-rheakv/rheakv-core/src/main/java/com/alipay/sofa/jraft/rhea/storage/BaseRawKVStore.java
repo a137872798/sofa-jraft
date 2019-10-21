@@ -33,9 +33,12 @@ import com.codahale.metrics.Timer;
 import static com.alipay.sofa.jraft.rhea.metrics.KVMetricNames.DB_TIMER;
 
 /**
+ * KV 存储骨架类
  * @author jiachun.fjc
  */
 public abstract class BaseRawKVStore<T> implements RawKVStore, Lifecycle<T> {
+
+    // 做一些方法的适配
 
     @Override
     public void get(final byte[] key, final KVStoreClosure closure) {
@@ -75,8 +78,15 @@ public abstract class BaseRawKVStore<T> implements RawKVStore, Lifecycle<T> {
         scan(startKey, endKey, limit, readOnlySafe, true, closure);
     }
 
+    /**
+     *
+     * @param nodeExecutor  由用户实现 每当状态机触发某个动作时 会调用该方法
+     * @param isLeader 当前节点是否是leader 节点
+     * @param closure
+     */
     @Override
     public void execute(final NodeExecutor nodeExecutor, final boolean isLeader, final KVStoreClosure closure) {
+        // 测量相关先不管
         final Timer.Context timeCtx = getTimeContext("EXECUTE");
         try {
             if (nodeExecutor != null) {
@@ -86,32 +96,42 @@ public abstract class BaseRawKVStore<T> implements RawKVStore, Lifecycle<T> {
         } catch (final Exception e) {
             final Logger LOG = LoggerFactory.getLogger(getClass());
             LOG.error("Fail to [EXECUTE], {}.", StackTraceUtil.stackTrace(e));
+            // 执行出现异常
             if (nodeExecutor != null) {
                 nodeExecutor.execute(new Status(RaftError.EIO, "Fail to [EXECUTE]"), isLeader);
             }
+            // 这里会抛出异常
             setCriticalError(closure, "Fail to [EXECUTE]", e);
         } finally {
             timeCtx.stop();
         }
     }
 
+    /**
+     * 步长过大时  返回 MAX_VALUE 否则返回 start + step
+     * @param startVal
+     * @param step
+     * @return
+     */
     public long getSafeEndValueForSequence(final long startVal, final int step) {
         return Math.max(startVal, Long.MAX_VALUE - step < startVal ? Long.MAX_VALUE : startVal + step);
     }
 
     /**
      * Note: This is not a very precise behavior, don't rely on its accuracy.
+     * 获取指定的2个key 之间的 key 数量 (非精确)
      */
     public abstract long getApproximateKeysInRange(final byte[] startKey, final byte[] endKey);
 
     /**
      * Note: This is not a very precise behavior, don't rely on its accuracy.
+     * 指定 key 跳过一段距离后返回的key  非精确
      */
     public abstract byte[] jumpOver(final byte[] startKey, final long distance);
 
     /**
      * Init the fencing token of new region.
-     *
+     * 生成篱笆 应该是用来隔绝数据的
      * @param parentKey the fencing key of parent region
      * @param childKey  the fencing key of new region
      */
@@ -126,9 +146,9 @@ public abstract class BaseRawKVStore<T> implements RawKVStore, Lifecycle<T> {
     /**
      * Sets success, if current node is a leader, reply to
      * client success with result data response.
-     *
+     * 以成功方式触发回调
      * @param closure callback
-     * @param data    result data to reply to client
+     * @param data    result data to reply to client   Boolean.true
      */
     static void setSuccess(final KVStoreClosure closure, final Object data) {
         if (closure != null) {
@@ -194,9 +214,12 @@ public abstract class BaseRawKVStore<T> implements RawKVStore, Lifecycle<T> {
     static void setClosureError(final KVStoreClosure closure) {
         if (closure != null) {
             // closure is null on follower node
+            // 设置异常
             closure.setError(Errors.STORAGE_ERROR);
         }
     }
+
+    // 为回调对象设置结果 或者获取结果
 
     /**
      * Sets the result first, then gets it by {@link #getData(KVStoreClosure)}

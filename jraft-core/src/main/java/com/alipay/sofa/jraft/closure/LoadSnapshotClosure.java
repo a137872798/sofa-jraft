@@ -21,7 +21,7 @@ import com.alipay.sofa.jraft.storage.snapshot.SnapshotReader;
 
 /**
  * Load snapshot closure
- *
+ * 代表开始加载快照的接口
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Apr-04 2:20:09 PM
@@ -30,7 +30,7 @@ public interface LoadSnapshotClosure extends Closure {
 
     /**
      * Start to load snapshot, returns a snapshot reader.
-     *
+     * 加载快照时触发
      * @return a snapshot reader.
      */
     SnapshotReader start();
