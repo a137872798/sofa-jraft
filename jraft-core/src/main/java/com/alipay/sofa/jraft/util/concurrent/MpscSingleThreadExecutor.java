@@ -35,7 +35,7 @@ import com.alipay.sofa.jraft.util.Mpsc;
 import com.alipay.sofa.jraft.util.Requires;
 
 /**
- *
+ * 多生产者 单消费者线程池
  * @author jiachun.fjc
  */
 public class MpscSingleThreadExecutor implements SingleThreadExecutor {
@@ -57,19 +57,45 @@ public class MpscSingleThreadExecutor implements SingleThreadExecutor {
 
     private static final Runnable                                            WAKEUP_TASK              = () -> {};
 
+    /**
+     * 任务队列
+     */
     private final Queue<Runnable>                                            taskQueue;
+    /**
+     * 内部组合了一个线程池
+     */
     private final Executor                                                   executor;
+    /**
+     * 拒绝策略
+     */
     private final RejectedExecutionHandler                                   rejectedExecutionHandler;
+    /**
+     * 终结钩子
+     */
     private final Set<Runnable>                                              shutdownHooks            = new LinkedHashSet<>();
+    /**
+     * 信号量
+     */
     private final Semaphore                                                  threadLock               = new Semaphore(0);
 
     private volatile int                                                     state                    = ST_NOT_STARTED;
     private volatile Worker                                                  worker;
 
+    /**
+     *
+     * @param maxPendingTasks 最多悬置的工作者 应该就是 coreSize 的概念
+     * @param threadFactory  线程工厂
+     */
     public MpscSingleThreadExecutor(int maxPendingTasks, ThreadFactory threadFactory) {
         this(maxPendingTasks, threadFactory, RejectedExecutionHandlers.reject());
     }
 
+    /**
+     *
+     * @param maxPendingTasks
+     * @param threadFactory
+     * @param rejectedExecutionHandler 默认采用拒绝策略
+     */
     public MpscSingleThreadExecutor(int maxPendingTasks, ThreadFactory threadFactory,
                                     RejectedExecutionHandler rejectedExecutionHandler) {
         this.taskQueue = newTaskQueue(maxPendingTasks);
@@ -77,15 +103,28 @@ public class MpscSingleThreadExecutor implements SingleThreadExecutor {
         this.rejectedExecutionHandler = rejectedExecutionHandler;
     }
 
+    /**
+     * 优雅关闭  默认等待15秒
+     * @return
+     */
     @Override
     public boolean shutdownGracefully() {
         return shutdownGracefully(DEFAULT_SHUTDOWN_TIMEOUT, TimeUnit.SECONDS);
     }
 
+    /**
+     * 基于给定超时时间进行优雅关闭
+     * @param timeout the maximum amount of time to wait until the executor
+     *                is shutdown
+     * @param unit    the unit of {@code timeout}
+     * @return
+     */
     @Override
     public boolean shutdownGracefully(final long timeout, final TimeUnit unit) {
         Requires.requireNonNull(unit, "unit");
         if (isShutdown()) {
+            // 如果已经终止 等待Termination  Shutdown 就是对应 shutdownGracefully 处理完后的最终状态
+            // 当线程池完全终止时 state 为 termination  这里是 等待15秒后 返回当前state 如果 为 termination 代表完全终止 否则代表还有任务在处理
             return awaitTermination(timeout, unit);
         }
 
@@ -101,6 +140,7 @@ public class MpscSingleThreadExecutor implements SingleThreadExecutor {
             switch (oldState) {
                 case ST_NOT_STARTED:
                 case ST_STARTED:
+                    // 将开始状态更新成 shutdown
                     newState = ST_SHUTDOWN;
                     break;
                 default:
@@ -112,6 +152,7 @@ public class MpscSingleThreadExecutor implements SingleThreadExecutor {
             }
         }
 
+        // 如果还没有开始 则触发 worker  应该是处理已经存入队列中的任务吧
         if (oldState == ST_NOT_STARTED) {
             try {
                 doStartWorker();
@@ -130,6 +171,7 @@ public class MpscSingleThreadExecutor implements SingleThreadExecutor {
             wakeupAndStopWorker();
         }
 
+        // 等待终止
         return awaitTermination(timeout, unit);
     }
 
@@ -137,8 +179,11 @@ public class MpscSingleThreadExecutor implements SingleThreadExecutor {
     public void execute(final Runnable task) {
         Requires.requireNonNull(task, "task");
 
+        // 将任务添加到队列中
         addTask(task);
+        // 启动worker
         startWorker();
+        // 唤醒并执行任务
         wakeupForTask();
     }
 
@@ -156,6 +201,10 @@ public class MpscSingleThreadExecutor implements SingleThreadExecutor {
         execute(() -> MpscSingleThreadExecutor.this.shutdownHooks.remove(task));
     }
 
+    /**
+     * 执行终结钩子
+     * @return
+     */
     private boolean runShutdownHooks() {
         boolean ran = false;
         // Note shutdown hooks can add / remove shutdown hooks.
@@ -175,6 +224,10 @@ public class MpscSingleThreadExecutor implements SingleThreadExecutor {
         return ran;
     }
 
+    /**
+     * 判断当前状态是否已经终止
+     * @return
+     */
     public boolean isShutdown() {
         return this.state >= ST_SHUTDOWN;
     }
@@ -188,11 +241,18 @@ public class MpscSingleThreadExecutor implements SingleThreadExecutor {
         return worker != null && worker.thread == thread;
     }
 
+    /**
+     * 等待线程池完全终止
+     * @param timeout
+     * @param unit
+     * @return
+     */
     public boolean awaitTermination(final long timeout, final TimeUnit unit) {
         Requires.requireNonNull(unit, "unit");
 
         try {
             if (this.threadLock.tryAcquire(timeout, unit)) {
+                // 这里是唤醒其他阻塞着的线程
                 this.threadLock.release();
             }
         } catch (final InterruptedException ignored) {
@@ -202,6 +262,11 @@ public class MpscSingleThreadExecutor implements SingleThreadExecutor {
         return isTerminated();
     }
 
+    /**
+     * 创建任务队列  这里没有自己实现 MPSC 而是通过 jctool 框架
+     * @param maxPendingTasks
+     * @return
+     */
     protected Queue<Runnable> newTaskQueue(final int maxPendingTasks) {
         return maxPendingTasks == Integer.MAX_VALUE ? Mpsc.newMpscQueue() : Mpsc.newMpscQueue(maxPendingTasks);
     }
@@ -209,6 +274,7 @@ public class MpscSingleThreadExecutor implements SingleThreadExecutor {
     /**
      * Add a task to the task queue, or throws a {@link RejectedExecutionException} if
      * this instance was shutdown before.
+     * 将任务添加到队列中
      */
     protected void addTask(final Runnable task) {
         if (!offerTask(task)) {
@@ -217,6 +283,7 @@ public class MpscSingleThreadExecutor implements SingleThreadExecutor {
     }
 
     protected final boolean offerTask(final Runnable task) {
+        // 处在关闭状态 拒绝接受新任务
         if (isShutdown()) {
             reject();
         }
@@ -240,11 +307,15 @@ public class MpscSingleThreadExecutor implements SingleThreadExecutor {
         }
     }
 
+    /**
+     * 启动工作者
+     */
     private void startWorker() {
         if (this.state != ST_NOT_STARTED) {
             // avoid CAS if not needed
             return;
         }
+        // 未启动进入下面的逻辑
         if (STATE_UPDATER.compareAndSet(this, ST_NOT_STARTED, ST_STARTED)) {
             try {
                 doStartWorker();
@@ -255,6 +326,9 @@ public class MpscSingleThreadExecutor implements SingleThreadExecutor {
         }
     }
 
+    /**
+     * 执行工作者
+     */
     private void doStartWorker() {
         this.executor.execute(() -> {
             MpscSingleThreadExecutor.this.worker = new Worker(Thread.currentThread());
@@ -266,14 +340,17 @@ public class MpscSingleThreadExecutor implements SingleThreadExecutor {
             } finally {
                 for (;;) {
                     int oldState = MpscSingleThreadExecutor.this.state;
+                    // 更新成 shutdown成功 退出循环
                     if (oldState >= ST_SHUTDOWN || STATE_UPDATER.compareAndSet(MpscSingleThreadExecutor.this, oldState, ST_SHUTDOWN)) {
                         break;
                     }
                 }
 
+                // 执行终结钩子
                 runShutdownHooks();
 
                 MpscSingleThreadExecutor.this.state = ST_TERMINATED;
+                // 唤醒阻塞线程
                 MpscSingleThreadExecutor.this.threadLock.release();
             }
         });
@@ -297,6 +374,9 @@ public class MpscSingleThreadExecutor implements SingleThreadExecutor {
     private static final int                               NOT_NEEDED     = 0;
     private static final int                               NEEDED         = 1;
 
+    /**
+     * 工作者
+     */
     private class Worker implements Runnable {
 
         final Thread thread;
@@ -310,6 +390,7 @@ public class MpscSingleThreadExecutor implements SingleThreadExecutor {
         @Override
         public void run() {
             for (;;) {
+                // 不断从队列中拉取任务并执行 这段跟 netty 的eventLoop好像啊
                 final Runnable task = pollTask();
                 if (task == null) {
                     // wait task
@@ -340,6 +421,7 @@ public class MpscSingleThreadExecutor implements SingleThreadExecutor {
                 }
             }
 
+            // 如果发现shutdown 了 会执行全部任务
             runAllTasks();
         }
 
@@ -385,6 +467,9 @@ public class MpscSingleThreadExecutor implements SingleThreadExecutor {
         }
     }
 
+    /**
+     * 每个任务都新建一个线程去执行
+     */
     private static class ThreadPerTaskExecutor implements Executor {
 
         private final ThreadFactory threadFactory;

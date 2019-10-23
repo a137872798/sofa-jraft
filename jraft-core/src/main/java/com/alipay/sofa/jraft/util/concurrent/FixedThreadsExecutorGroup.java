@@ -19,7 +19,7 @@ package com.alipay.sofa.jraft.util.concurrent;
 import java.util.concurrent.TimeUnit;
 
 /**
- *
+ * 线程组对象 跟netty 的 eventLoopGroup 很像 内部通过一个选择器去找到对应的执行器去执行任务
  * @author jiachun.fjc
  */
 public interface FixedThreadsExecutorGroup extends Iterable<SingleThreadExecutor> {
@@ -27,6 +27,7 @@ public interface FixedThreadsExecutorGroup extends Iterable<SingleThreadExecutor
     /**
      * Returns one of the {@link SingleThreadExecutor}s managed by this
      * {@link FixedThreadsExecutorGroup}.
+     * 由group 分配一个执行器
      */
     SingleThreadExecutor next();
 
@@ -34,7 +35,7 @@ public interface FixedThreadsExecutorGroup extends Iterable<SingleThreadExecutor
      * Executes the given task at some time in the future.  The task
      * execute by a specified thread, which is selected by index.
      *
-     * @param index index for thread chooser
+     * @param index index for thread chooser   选择指定的execute
      * @param task  the runnable task
      */
     void execute(final int index, final Runnable task);

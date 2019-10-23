@@ -23,7 +23,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- *
+ * 线程池工具类
  * @author jiachun.fjc
  */
 public final class ExecutorServiceHelper {
@@ -48,6 +48,7 @@ public final class ExecutorServiceHelper {
             return true;
         }
         // disable new tasks from being submitted
+        // shutdown 代表不能提交任务 termination 代表不能处理任务
         pool.shutdown();
         final TimeUnit unit = TimeUnit.MILLISECONDS;
         final long phaseOne = timeoutMillis / 5;
@@ -56,6 +57,7 @@ public final class ExecutorServiceHelper {
             if (pool.awaitTermination(phaseOne, unit)) {
                 return true;
             }
+            // 先尝试等待一定时间 如果还没关闭 调用shutdownNow
             pool.shutdownNow();
             // wait a while for tasks to respond to being cancelled
             if (pool.awaitTermination(timeoutMillis - phaseOne, unit)) {

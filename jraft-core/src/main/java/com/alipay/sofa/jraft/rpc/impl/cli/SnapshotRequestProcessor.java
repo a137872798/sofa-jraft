@@ -24,7 +24,7 @@ import com.google.protobuf.Message;
 
 /**
  * Snapshot request processor.
- *
+ * 请求快照处理器
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Apr-09 2:41:27 PM
@@ -45,6 +45,13 @@ public class SnapshotRequestProcessor extends BaseCliRequestProcessor<SnapshotRe
         return request.getGroupId();
     }
 
+    /**
+     * 创建本节点的 快照  谁是请求发起方 谁是处理方
+     * @param ctx
+     * @param request
+     * @param done
+     * @return
+     */
     @Override
     protected Message processRequest0(CliRequestContext ctx, SnapshotRequest request, RpcRequestClosure done) {
         LOG.info("Receive SnapshotRequest to {} from {}", ctx.node.getNodeId(), request.getPeerId());

@@ -29,7 +29,7 @@ import com.google.protobuf.Message;
 
 /**
  * Reset peer request processor.
- *
+ * 重置节点的处理器
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Apr-09 2:38:32 PM
@@ -40,6 +40,11 @@ public class ResetPeerRequestProcessor extends BaseCliRequestProcessor<ResetPeer
         super(executor);
     }
 
+    /**
+     * 该请求不是针对 leader 了
+     * @param request
+     * @return
+     */
     @Override
     protected String getPeerId(ResetPeerRequest request) {
         return request.getPeerId();
@@ -63,6 +68,7 @@ public class ResetPeerRequestProcessor extends BaseCliRequestProcessor<ResetPeer
         }
         LOG.info("Receive ResetPeerRequest to {} from {}, new conf is {}", ctx.node.getNodeId(), done.getBizContext()
             .getRemoteAddress(), newConf);
+        // 为 req中包含的node 对象重置peer
         Status st = ctx.node.resetPeers(newConf);
         return RpcResponseFactory.newResponse(st);
     }

@@ -23,7 +23,7 @@ import java.util.concurrent.RejectedExecutionException;
  * Expose helper methods which create different {@link RejectedExecutionHandler}s.
  *
  * Reference from netty project.
- *
+ * 拒绝策略工具类
  * @author jiachun.fjc
  */
 public final class RejectedExecutionHandlers {

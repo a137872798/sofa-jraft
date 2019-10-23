@@ -36,7 +36,7 @@ import com.google.protobuf.Message;
 /**
  * Base template to handle cli requests.
  * @author boyan (boyan@alibaba-inc.com)
- *
+ * 请求处理器基类   RpcRequestProcessor 读取数据并调用processRequest
  * 2018-Apr-09 11:51:42 AM 
  * @param <T>
  */
@@ -50,16 +50,19 @@ public abstract class BaseCliRequestProcessor<T extends Message> extends RpcRequ
 
     /**
      * Returns the peerId that will be find in node manager.
+     * 获取 节点ID
      */
     protected abstract String getPeerId(T request);
 
     /**
      * Returns the raft group id
+     * 获取 组ID
      */
     protected abstract String getGroupId(T request);
 
     /**
      * Process the request with CliRequestContext
+     * 处理请求 并触发 回调
      */
     protected abstract Message processRequest0(CliRequestContext ctx, T request, RpcRequestClosure done);
 
@@ -93,9 +96,16 @@ public abstract class BaseCliRequestProcessor<T extends Message> extends RpcRequ
 
     }
 
+    /**
+     * 父类接受到请求后会触发该方法
+     * @param request
+     * @param done  回调方法
+     * @return
+     */
     @Override
     public Message processRequest(T request, RpcRequestClosure done) {
 
+        // 获取当前节点所在的 组 和节点id
         String groupId = getGroupId(request);
         String peerIdStr = getPeerId(request);
         PeerId peerId = null;
@@ -108,26 +118,38 @@ public abstract class BaseCliRequestProcessor<T extends Message> extends RpcRequ
         }
 
         Status st = new Status();
+        // 寻找特殊的 node
         Node node = getNode(groupId, peerId, st);
         if (!st.isOk()) {
             return RpcResponseFactory.newResponse(st.getCode(), st.getErrorMsg());
         } else {
+            // 委托下层实现
             return processRequest0(new CliRequestContext(node, groupId, peerId), request, done);
         }
     }
 
+    /**
+     * 根据 组id 节点id 和状态 获取节点对象
+     * @param groupId
+     * @param peerId
+     * @param st
+     * @return
+     */
     protected Node getNode(String groupId, PeerId peerId, Status st) {
         Node node = null;
 
         if (peerId != null) {
+            // 从 NodeManager 中找到节点并返回
             node = NodeManager.getInstance().get(groupId, peerId);
             if (node == null) {
                 st.setError(RaftError.ENOENT, "Fail to find node %s in group %s", peerId, groupId);
             }
         } else {
+            // 获得某个组下所有节点
             List<Node> nodes = NodeManager.getInstance().getNodesByGroupId(groupId);
             if (nodes == null || nodes.isEmpty()) {
                 st.setError(RaftError.ENOENT, "Empty nodes in group %s", groupId);
+                // 不允许超过1个???
             } else if (nodes.size() > 1) {
                 st.setError(RaftError.EINVAL, "Peer must be specified since there're %d nodes in group %s",
                     nodes.size(), groupId);
@@ -136,6 +158,7 @@ public abstract class BaseCliRequestProcessor<T extends Message> extends RpcRequ
             }
 
         }
+        // 不允许访问 Cli
         if (node != null && node.getOptions().isDisableCli()) {
             st.setError(RaftError.EACCES, "Cli service is not allowed to access node %s", node.getNodeId());
         }

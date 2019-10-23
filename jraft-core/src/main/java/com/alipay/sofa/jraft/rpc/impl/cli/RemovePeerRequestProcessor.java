@@ -29,7 +29,7 @@ import com.google.protobuf.Message;
 
 /**
  * Remove peer request processor.
- *
+ * 从 一个group 中移除某个 peer
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Apr-09 2:23:40 PM
@@ -40,6 +40,11 @@ public class RemovePeerRequestProcessor extends BaseCliRequestProcessor<RemovePe
         super(executor);
     }
 
+    /**
+     * 看来只有leader 能移除 该方法就是方便父类获取 leader 对应的node
+     * @param request
+     * @return
+     */
     @Override
     protected String getPeerId(RemovePeerRequest request) {
         return request.getLeaderId();
@@ -58,6 +63,7 @@ public class RemovePeerRequestProcessor extends BaseCliRequestProcessor<RemovePe
         if (removingPeer.parse(removingPeerIdStr)) {
             LOG.info("Receive RemovePeerRequest to {} from {}, removing {}", ctx.node.getNodeId(), done.getBizContext()
                 .getRemoteAddress(), removingPeerIdStr);
+            // 移除节点 并在成功时 将快照返回给 请求方
             ctx.node.removePeer(removingPeer, status -> {
                 if (!status.isOk()) {
                     done.run(status);

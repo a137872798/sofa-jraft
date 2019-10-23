@@ -28,7 +28,7 @@ import static com.alipay.sofa.jraft.rpc.CliRequests.GetPeersResponse;
 
 /**
  * Process get all peers of the replication group request.
- *
+ * 找到某个组中所有的节点
  * @author jiachun.fjc
  */
 public class GetPeersRequestProcessor extends BaseCliRequestProcessor<GetPeersRequest> {
@@ -37,6 +37,11 @@ public class GetPeersRequestProcessor extends BaseCliRequestProcessor<GetPeersRe
         super(executor);
     }
 
+    /**
+     * 这里返回leader 是因为只有leader 才能正常调用  listAlivePeers listPeers
+     * @param request
+     * @return
+     */
     @Override
     protected String getPeerId(GetPeersRequest request) {
         return request.getLeaderId();
@@ -50,6 +55,7 @@ public class GetPeersRequestProcessor extends BaseCliRequestProcessor<GetPeersRe
     @Override
     protected Message processRequest0(CliRequestContext ctx, GetPeersRequest request, RpcRequestClosure done) {
         final List<PeerId> peers;
+        // 判断是否只获取存活节点
         if (request.hasOnlyAlive() && request.getOnlyAlive()) {
             peers = ctx.node.listAlivePeers();
         } else {
@@ -59,6 +65,7 @@ public class GetPeersRequestProcessor extends BaseCliRequestProcessor<GetPeersRe
         for (final PeerId peerId : peers) {
             builder.addPeers(peerId.toString());
         }
+        // 这里构建消息 通过父类进行发送 而不是通过回调
         return builder.build();
     }
 

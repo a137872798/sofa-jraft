@@ -20,7 +20,7 @@ package com.alipay.sofa.jraft.util.concurrent;
  * Similar to {@link java.util.concurrent.RejectedExecutionHandler} but specific to {@link SingleThreadExecutor}.
  *
  * Reference from netty project.
- *
+ * 自定义的拒绝策略  针对单线程处理器
  * @author jiachun.fjc
  */
 public interface RejectedExecutionHandler {

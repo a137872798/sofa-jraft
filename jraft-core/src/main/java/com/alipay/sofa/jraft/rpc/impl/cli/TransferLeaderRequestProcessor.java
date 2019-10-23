@@ -28,7 +28,7 @@ import com.google.protobuf.Message;
 
 /**
  * Snapshot request processor.
- *
+ * 转换leader 的请求
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Apr-09 2:41:27 PM
@@ -57,6 +57,7 @@ public class TransferLeaderRequestProcessor extends BaseCliRequestProcessor<Tran
         }
         LOG.info("Receive TransferLeaderRequest to {} from {} , newLeader will be {}", ctx.node.getNodeId(), done
             .getBizContext().getRemoteAddress(), peer);
+        // 只有leader 可以切换
         Status st = ctx.node.transferLeadershipTo(peer);
         return RpcResponseFactory.newResponse(st);
     }

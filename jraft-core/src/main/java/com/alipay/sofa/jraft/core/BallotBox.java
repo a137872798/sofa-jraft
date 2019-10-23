@@ -47,11 +47,29 @@ public class BallotBox implements Lifecycle<BallotBoxOptions>, Describer {
 
     private static final Logger      LOG                = LoggerFactory.getLogger(BallotBox.class);
 
+    /**
+     * 内部存放了 状态机对象
+     */
     private FSMCaller                waiter;
+    /**
+     * 回调队列
+     */
     private ClosureQueue             closureQueue;
+    /**
+     * 这个类没看过...  是一种优化的读写锁
+     */
     private final StampedLock        stampedLock        = new StampedLock();
+    /**
+     * 最后提交的下标
+     */
     private long                     lastCommittedIndex = 0;
+    /**
+     * 闲置下标
+     */
     private long                     pendingIndex;
+    /**
+     * 悬置队列
+     */
     private final ArrayDeque<Ballot> pendingMetaQueue   = new ArrayDeque<>();
 
     @OnlyForTest
@@ -64,7 +82,12 @@ public class BallotBox implements Lifecycle<BallotBoxOptions>, Describer {
         return this.pendingMetaQueue;
     }
 
+    /**
+     * 获取 lastCommittedIndex  下面的方法 抛开 stampedLock的api 不看 实际上就只是获取了lastCommittedIndex
+     * @return
+     */
     public long getLastCommittedIndex() {
+        // 进行乐观读
         long stamp = this.stampedLock.tryOptimisticRead();
         final long optimisticVal = this.lastCommittedIndex;
         if (this.stampedLock.validate(stamp)) {
@@ -78,8 +101,14 @@ public class BallotBox implements Lifecycle<BallotBoxOptions>, Describer {
         }
     }
 
+    /**
+     * 当投票箱对象被初始化时
+     * @param opts
+     * @return
+     */
     @Override
     public boolean init(final BallotBoxOptions opts) {
+        // 必须包含状态机 和回调队列
         if (opts.getWaiter() == null || opts.getClosureQueue() == null) {
             LOG.error("waiter or closure queue is null.");
             return false;
@@ -92,6 +121,7 @@ public class BallotBox implements Lifecycle<BallotBoxOptions>, Describer {
     /**
      * Called by leader, otherwise the behavior is undefined
      * Set logs in [first_log_index, last_log_index] are stable at |peer|.
+     * 必须由 leader 调用
      */
     public boolean commitAt(final long firstLogIndex, final long lastLogIndex, final PeerId peer) {
         // TODO  use lock-free algorithm here?

@@ -113,6 +113,10 @@ public abstract class AbstractBoltClientService implements ClientService {
         return initRpcClient(this.rpcOptions.getRpcProcessorThreadPoolSize());
     }
 
+    /**
+     * 交由子类实现
+     * @param rpcClient
+     */
     protected void configRpcClient(final RpcClient rpcClient) {
         // NO-OP
     }
@@ -124,6 +128,7 @@ public abstract class AbstractBoltClientService implements ClientService {
      */
     protected boolean initRpcClient(final int rpcProcessorThreadPoolSize) {
         this.rpcClient = new RpcClient();
+        // 配置client
         configRpcClient(this.rpcClient);
         this.rpcClient.init();
         this.rpcExecutor = ThreadPoolUtil.newBuilder() //
@@ -152,20 +157,29 @@ public abstract class AbstractBoltClientService implements ClientService {
         }
     }
 
+    /**
+     * 连接到指定的 端点
+     * @param endpoint server address
+     * @return
+     */
     @Override
     public boolean connect(final Endpoint endpoint) {
         if (this.rpcClient == null) {
             throw new IllegalStateException("Client service is not inited.");
         }
+        // 已连接情况下不做处理
         if (isConnected(endpoint)) {
             return true;
         }
         try {
+            // 构建一个心跳对象
             final PingRequest req = PingRequest.newBuilder() //
                 .setSendTimestamp(System.currentTimeMillis()) //
                 .build();
+            // 同步发送心跳请求
             final ErrorResponse resp = (ErrorResponse) this.rpcClient.invokeSync(endpoint.toString(), req,
                 this.defaultInvokeCtx, this.rpcOptions.getRpcConnectTimeoutMs());
+            // 代表成功
             return resp.getErrorCode() == 0;
         } catch (final InterruptedException e) {
             Thread.currentThread().interrupt();
@@ -176,6 +190,11 @@ public abstract class AbstractBoltClientService implements ClientService {
         }
     }
 
+    /**
+     * 断开连接 底层通过netty
+     * @param endpoint server address
+     * @return
+     */
     @Override
     public boolean disconnect(final Endpoint endpoint) {
         LOG.info("Disconnect from {}", endpoint);
@@ -201,6 +220,17 @@ public abstract class AbstractBoltClientService implements ClientService {
         return invokeWithDone(endpoint, request, ctx, done, timeoutMs, this.rpcExecutor);
     }
 
+    /**
+     * 发送req 并执行回调
+     * @param endpoint
+     * @param request
+     * @param ctx
+     * @param done
+     * @param timeoutMs
+     * @param rpcExecutor
+     * @param <T>
+     * @return
+     */
     public <T extends Message> Future<Message> invokeWithDone(final Endpoint endpoint, final Message request,
                                                               final InvokeContext ctx,
                                                               final RpcResponseClosure<T> done, final int timeoutMs,
@@ -213,6 +243,7 @@ public abstract class AbstractBoltClientService implements ClientService {
                 @SuppressWarnings("unchecked")
                 @Override
                 public void onResponse(final Object result) {
+                    // 如果future 对象已经被关闭了
                     if (future.isCancelled()) {
                         onCanceled(request, done);
                         return;
@@ -226,6 +257,7 @@ public abstract class AbstractBoltClientService implements ClientService {
                             status.setErrorMsg(eResp.getErrorMsg());
                         }
                     } else {
+                        // 为回调对象设置结果
                         if (done != null) {
                             done.setResponse((T) result);
                         }
@@ -238,6 +270,7 @@ public abstract class AbstractBoltClientService implements ClientService {
                         }
                     }
                     if (!future.isDone()) {
+                        // 这里将group 新旧节点信息返回给请求方
                         future.setResult((Message) result);
                     }
                 }
@@ -281,6 +314,12 @@ public abstract class AbstractBoltClientService implements ClientService {
         return future;
     }
 
+    /**
+     * 当发现 future 已经被关闭时 以关闭方式触发回调
+     * @param request
+     * @param done
+     * @param <T>
+     */
     private <T extends Message> void onCanceled(final Message request, final RpcResponseClosure<T> done) {
         if (done != null) {
             try {

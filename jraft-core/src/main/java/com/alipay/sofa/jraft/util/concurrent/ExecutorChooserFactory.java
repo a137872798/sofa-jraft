@@ -18,25 +18,31 @@ package com.alipay.sofa.jraft.util.concurrent;
 
 /**
  * Factory that creates new {@link ExecutorChooser}s.
- *
+ * executor 选择器工厂
  * @author jiachun.fjc
  */
 public interface ExecutorChooserFactory {
 
     /**
      * Returns a new {@link ExecutorChooser}.
+     * 返回一个选择器
      */
     ExecutorChooser newChooser(final SingleThreadExecutor[] executors);
 
+    /**
+     * executor选择器
+     */
     interface ExecutorChooser {
 
         /**
          * Returns the next {@link SingleThreadExecutor} to use.
+         * 返回下一个单线程执行器
          */
         SingleThreadExecutor next();
 
         /**
          * Returns the chosen {@link SingleThreadExecutor} to use.
+         * 根据下标返回对应的执行器
          */
         SingleThreadExecutor select(final int index);
     }

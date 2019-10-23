@@ -148,7 +148,7 @@ public interface Node extends Lifecycle<NodeOptions>, Describer {
      * [NOTE] <strong>list_alive_peers is just a transient data (snapshot)
      * and a short-term loss of response by the follower will cause it to
      * temporarily not exist in this list.</strong>
-     *
+     * 只返回所有存活节点
      * @return the alive peer list
      *
      * @since 1.2.6
@@ -158,7 +158,7 @@ public interface Node extends Lifecycle<NodeOptions>, Describer {
     /**
      * Add a new peer to the raft group. done.run() would be invoked after this
      * operation finishes, describing the detailed result.
-     *
+     * 为该node 所在的组增加一个新的节点
      * @param peer peer to add
      * @param done callback
      */

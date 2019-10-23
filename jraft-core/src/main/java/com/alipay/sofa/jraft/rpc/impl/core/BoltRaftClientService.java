@@ -50,13 +50,16 @@ import com.google.protobuf.Message;
 
 /**
  * Raft rpc service based bolt.
- * 基于投票的RPC service 对象
+ * 基于螺丝的RPC service 对象
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Mar-28 6:07:05 PM
  */
 public class BoltRaftClientService extends AbstractBoltClientService implements RaftClientService {
 
+    /**
+     * 创建线程组对象
+     */
     private static final FixedThreadsExecutorGroup  APPEND_ENTRIES_EXECUTORS = DefaultFixedThreadsExecutorGroupFactory.INSTANCE
                                                                                  .newExecutorGroup(
                                                                                      Utils.APPEND_ENTRIES_THREADS_SEND,
@@ -64,14 +67,25 @@ public class BoltRaftClientService extends AbstractBoltClientService implements 
                                                                                      Utils.MAX_APPEND_ENTRIES_TASKS_PER_THREAD,
                                                                                      true);
 
+    /**
+     * 不同的 端点使用不同的 executor 去处理
+     */
     private final ConcurrentMap<Endpoint, Executor> appendEntriesExecutorMap = new ConcurrentHashMap<>();
 
     // cached node options
     private NodeOptions                             nodeOptions;
+    /**
+     * 抽象为 通过组的 jraft 节点  拥有leader 更换 获取每个peer信息等api
+     */
     private final ReplicatorGroup                   rgGroup;
 
+    /**
+     * 配置客户端
+     * @param rpcClient
+     */
     @Override
     protected void configRpcClient(final RpcClient rpcClient) {
+        // 设置一个连接处理器
         rpcClient.addConnectionEventProcessor(ConnectionEventType.CONNECT, new ClientServiceConnectionEventProcessor(
             this.rgGroup));
     }

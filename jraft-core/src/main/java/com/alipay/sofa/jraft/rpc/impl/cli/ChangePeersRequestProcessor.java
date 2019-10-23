@@ -30,7 +30,7 @@ import com.google.protobuf.Message;
 
 /**
  * Change peers request processor.
- *
+ * 修改节点处理器
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Apr-09 3:09:23 PM
@@ -41,6 +41,11 @@ public class ChangePeersRequestProcessor extends BaseCliRequestProcessor<ChangeP
         super(executor);
     }
 
+    /**
+     * 注意 peerId 是 leaderId
+     * @param request
+     * @return
+     */
     @Override
     protected String getPeerId(ChangePeersRequest request) {
         return request.getLeaderId();
@@ -51,11 +56,20 @@ public class ChangePeersRequestProcessor extends BaseCliRequestProcessor<ChangeP
         return request.getGroupId();
     }
 
+    /**
+     * 当发送 ChangePeers请求时  旧的集群点就是 oldConf 请求中包含的新节点信息 就是 conf
+     * @param ctx
+     * @param request
+     * @param done
+     * @return
+     */
     @Override
     protected Message processRequest0(CliRequestContext ctx, ChangePeersRequest request, RpcRequestClosure done) {
+        // 获取当前组中所有节点
         List<PeerId> oldConf = ctx.node.listPeers();
 
         Configuration conf = new Configuration();
+        // 请求中包含一组新的节点
         for (String peerIdStr : request.getNewPeersList()) {
             PeerId peer = new PeerId();
             if (peer.parse(peerIdStr)) {
@@ -66,10 +80,12 @@ public class ChangePeersRequestProcessor extends BaseCliRequestProcessor<ChangeP
         }
         LOG.info("Receive ChangePeersRequest to {} from {}, new conf is {}", ctx.node.getNodeId(), done.getBizContext()
             .getRemoteAddress(), conf);
+        // 更换节点 并触发回调
         ctx.node.changePeers(conf, status -> {
             if (!status.isOk()) {
                 done.run(status);
             } else {
+                // 通过 RpcRequestClosure 将结果返回
                 ChangePeersResponse.Builder rb = ChangePeersResponse.newBuilder();
                 for (PeerId peer : oldConf) {
                     rb.addOldPeers(peer.toString());

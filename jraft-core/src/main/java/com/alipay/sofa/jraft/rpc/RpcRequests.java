@@ -47,6 +47,7 @@ public final class RpcRequests {
 
     /**
      * Protobuf type {@code jraft.PingRequest}
+     * 心跳请求对象 看来 jraft 的序列化方式 采用protobuf 
      */
     public static final class PingRequest extends com.google.protobuf.GeneratedMessageV3 implements
     // @@protoc_insertion_point(message_implements:jraft.PingRequest)

@@ -29,7 +29,7 @@ import com.google.protobuf.Message;
 
 /**
  * AddPeer request processor.
- *
+ * 为整个group 增加一个节点
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Apr-09 11:33:50 AM
@@ -40,6 +40,11 @@ public class AddPeerRequestProcessor extends BaseCliRequestProcessor<AddPeerRequ
         super(executor);
     }
 
+    /**
+     * 父类 查询Node时 会调用该 方法 也就是获取 addPeer的 leader节点 之后将请求的节点对象添加到节点组中
+     * @param request
+     * @return
+     */
     @Override
     protected String getPeerId(AddPeerRequest request) {
         return request.getLeaderId();
@@ -50,15 +55,27 @@ public class AddPeerRequestProcessor extends BaseCliRequestProcessor<AddPeerRequ
         return request.getGroupId();
     }
 
+    /**
+     * 处理请求
+     * @param ctx  上下文信息  包含 groupId PeerId  Node
+     * @param request
+     * @param done
+     * @return
+     */
     @Override
     protected Message processRequest0(CliRequestContext ctx, AddPeerRequest request, RpcRequestClosure done) {
+        // 获取该节点的同级节点  这里是深拷贝
         List<PeerId> oldPeers = ctx.node.listPeers();
+        // 获取要新增的节点
         String addingPeerIdStr = request.getPeerId();
         PeerId addingPeer = new PeerId();
         if (addingPeer.parse(addingPeerIdStr)) {
             LOG.info("Receive AddPeerRequest to {} from {}, adding {}", ctx.node.getNodeId(), done.getBizContext()
                 .getRemoteAddress(), addingPeerIdStr);
-            ctx.node.addPeer(addingPeer, status -> {
+            // 为node 节点增加同级节点
+            ctx.node.addPeer(addingPeer,
+                    // 回调对象  失败的话 直接调用本次处理请求的回调对象
+                    status -> {
                 if (!status.isOk()) {
                     done.run(status);
                 } else {
@@ -74,13 +91,16 @@ public class AddPeerRequestProcessor extends BaseCliRequestProcessor<AddPeerRequ
                     if (!alreadyExists) {
                         rb.addNewPeers(addingPeerIdStr);
                     }
+                    // 将当前集群快照返回给 请求方
                     done.sendResponse(rb.build());
                 }
             });
+        // 无法解析 提示错误
         } else {
             return RpcResponseFactory.newResponse(RaftError.EINVAL, "Fail to parse peer id %", addingPeerIdStr);
         }
 
+        //  正常情况返回 null 如果返回了一个消息体 那么 在父类会发送该消息
         return null;
     }
 

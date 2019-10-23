@@ -25,7 +25,7 @@ import com.alipay.sofa.jraft.util.NamedThreadFactory;
 import com.alipay.sofa.jraft.util.ThreadPoolUtil;
 
 /**
- *
+ * 没有使用 mpsc的 单线程执行器
  * @author jiachun.fjc
  */
 public final class DefaultSingleThreadExecutor implements SingleThreadExecutor {
@@ -35,13 +35,18 @@ public final class DefaultSingleThreadExecutor implements SingleThreadExecutor {
     /**
      * Anti-gentleman is not against villains, we believe that you are
      * providing a single-thread executor.
-     *
+     * 如果传入一个线程池对象 就包装一下
      * @param singleThreadExecutorService a {@link ExecutorService} instance
      */
     public DefaultSingleThreadExecutor(ExecutorService singleThreadExecutorService) {
         this.singleThreadExecutor = wrapSingleThreadExecutor(singleThreadExecutorService);
     }
 
+    /**
+     * 创建一个新的线程池对象
+     * @param poolName
+     * @param maxPendingTasks
+     */
     public DefaultSingleThreadExecutor(String poolName, int maxPendingTasks) {
         this.singleThreadExecutor = createSingleThreadExecutor(poolName, maxPendingTasks);
     }
@@ -61,6 +66,11 @@ public final class DefaultSingleThreadExecutor implements SingleThreadExecutor {
         return this.singleThreadExecutor.shutdownGracefully(timeout, unit);
     }
 
+    /**
+     * 包装线程池对象 对外展示为单线程池
+     * @param executor
+     * @return
+     */
     private static SingleThreadExecutor wrapSingleThreadExecutor(final ExecutorService executor) {
         if (executor instanceof SingleThreadExecutor) {
             return (SingleThreadExecutor) executor;
@@ -85,12 +95,20 @@ public final class DefaultSingleThreadExecutor implements SingleThreadExecutor {
         }
     }
 
+    /**
+     * 创建一个单线程池对象
+     * @param poolName
+     * @param maxPendingTasks
+     * @return
+     */
     private static SingleThreadExecutor createSingleThreadExecutor(final String poolName, final int maxPendingTasks) {
         final ExecutorService singleThreadPool = ThreadPoolUtil.newBuilder() //
             .poolName(poolName) //
             .enableMetric(true) //
+                // 注意 core 和 max 都是1
             .coreThreads(1) //
             .maximumThreads(1) //
+                // 这里设置了存活时间 那么 线程 会被回收 之后接到任务又会创建新线程
             .keepAliveSeconds(60L) //
             .workQueue(new LinkedBlockingQueue<>(maxPendingTasks)) //
             .threadFactory(new NamedThreadFactory(poolName, true)) //

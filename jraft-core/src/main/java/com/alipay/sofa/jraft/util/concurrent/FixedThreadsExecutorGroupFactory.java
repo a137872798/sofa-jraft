@@ -19,11 +19,18 @@ package com.alipay.sofa.jraft.util.concurrent;
 import java.util.concurrent.ExecutorService;
 
 /**
- *
+ * 这是模仿netty 的线程组吗
  * @author jiachun.fjc
  */
 public interface FixedThreadsExecutorGroupFactory {
 
+    /**
+     * 创建一个线程池组
+     * @param nThreads
+     * @param poolName
+     * @param maxPendingTasksPerThread
+     * @return
+     */
     FixedThreadsExecutorGroup newExecutorGroup(final int nThreads, final String poolName,
                                                final int maxPendingTasksPerThread);
 

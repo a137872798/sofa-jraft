@@ -18,6 +18,10 @@ package com.alipay.sofa.jraft.util;
 
 import java.util.Queue;
 
+import io.netty.util.internal.shaded.org.jctools.queues.MpscChunkedArrayQueue;
+import io.netty.util.internal.shaded.org.jctools.queues.MpscUnboundedArrayQueue;
+import io.netty.util.internal.shaded.org.jctools.queues.atomic.MpscGrowableAtomicArrayQueue;
+import io.netty.util.internal.shaded.org.jctools.queues.atomic.MpscUnboundedAtomicArrayQueue;
 import org.jctools.queues.MpscChunkedArrayQueue;
 import org.jctools.queues.MpscUnboundedArrayQueue;
 import org.jctools.queues.atomic.MpscGrowableAtomicArrayQueue;

@@ -30,7 +30,7 @@ import com.google.protobuf.Message;
 
 /**
  * Node handle requests processor template.
- *
+ * 处理节点请求
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Apr-08 6:03:25 PM 
@@ -55,6 +55,7 @@ public abstract class NodeRequestProcessor<T extends Message> extends RpcRequest
         final String peerIdStr = getPeerId(request);
         if (peer.parse(peerIdStr)) {
             final String groupId = getGroupId(request);
+            // 通过 group 和 peer 找到 node 并触发processRequest0
             final Node node = NodeManager.getInstance().get(groupId, peer);
             if (node != null) {
                 return processRequest0((RaftServerService) node, request, done);

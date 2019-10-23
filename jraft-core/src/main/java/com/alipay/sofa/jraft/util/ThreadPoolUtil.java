@@ -23,7 +23,7 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
 /**
- *
+ * 构建线程池的工具
  * @author jiachun.fjc
  */
 public final class ThreadPoolUtil {

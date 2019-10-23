@@ -24,13 +24,22 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
 
 /**
- *
+ * 默认线程组对象
  * @author jiachun.fjc
  */
 public final class DefaultFixedThreadsExecutorGroup implements FixedThreadsExecutorGroup {
 
+    /**
+     * 内部包含一组 执行器
+     */
     private final SingleThreadExecutor[]                 children;
+    /**
+     * 视图
+     */
     private final Set<SingleThreadExecutor>              readonlyChildren;
+    /**
+     * 选择器对象
+     */
     private final ExecutorChooserFactory.ExecutorChooser chooser;
 
     public DefaultFixedThreadsExecutorGroup(SingleThreadExecutor[] children) {
@@ -95,6 +104,11 @@ public final class DefaultFixedThreadsExecutorGroup implements FixedThreadsExecu
         return this.readonlyChildren.iterator();
     }
 
+    /**
+     * 将 一般的线程池 适配成单线程池
+     * @param executors
+     * @return
+     */
     private static SingleThreadExecutor[] toSingleThreadExecutors(final ExecutorService[] executors) {
         final SingleThreadExecutor[] array = new SingleThreadExecutor[executors.length];
         for (int i = 0; i < executors.length; i++) {

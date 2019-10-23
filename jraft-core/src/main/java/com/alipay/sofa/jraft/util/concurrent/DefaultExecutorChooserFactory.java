@@ -21,13 +21,18 @@ import java.util.concurrent.atomic.AtomicInteger;
 import com.alipay.sofa.jraft.util.Ints;
 
 /**
- *
+ * 选择器工厂默认实现
  * @author jiachun.fjc
  */
 public final class DefaultExecutorChooserFactory implements ExecutorChooserFactory {
 
     public static final DefaultExecutorChooserFactory INSTANCE = new DefaultExecutorChooserFactory();
 
+    /**
+     * 跟 netty 的一样
+     * @param executors
+     * @return
+     */
     @Override
     public ExecutorChooser newChooser(final SingleThreadExecutor[] executors) {
         if (Ints.isPowerOfTwo(executors.length)) {

@@ -33,7 +33,7 @@ import com.google.protobuf.Message;
 
 /**
  * Process get leader request.
- *
+ * 获取 leader 信息
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Apr-09 2:43:20 PM
@@ -44,6 +44,10 @@ public class GetLeaderRequestProcessor extends BaseCliRequestProcessor<GetLeader
         super(executor);
     }
 
+    /**
+     * @param request
+     * @return
+     */
     @Override
     protected String getPeerId(GetLeaderRequest request) {
         return request.getPeerId();
@@ -60,15 +64,24 @@ public class GetLeaderRequestProcessor extends BaseCliRequestProcessor<GetLeader
         return null;
     }
 
+    /**
+     * 原本 父类方法会通过peerId 和 groupId 获取 node 信息 (从NodeManager 中)
+     * @param request
+     * @param done
+     * @return
+     */
     @Override
     public Message processRequest(GetLeaderRequest request, RpcRequestClosure done) {
         List<Node> nodes = new ArrayList<>();
+        // 获取请求体中的目标group
         String groupId = getGroupId(request);
+        // 如果携带 PeerId   就只判断该节点是否是leader 如果不是 返回 找不到 leader的res
         if (request.hasPeerId()) {
             String peerIdStr = getPeerId(request);
             PeerId peer = new PeerId();
             if (peer.parse(peerIdStr)) {
                 Status st = new Status();
+                // 找到节点对象 并设置到list 中
                 nodes.add(getNode(groupId, peer, st));
                 if (!st.isOk()) {
                     return RpcResponseFactory.newResponse(st);
@@ -77,12 +90,14 @@ public class GetLeaderRequestProcessor extends BaseCliRequestProcessor<GetLeader
                 return RpcResponseFactory.newResponse(RaftError.EINVAL, "Fail to parse peer id %", peerIdStr);
             }
         } else {
+            // 如果 没有指定 peer 就获取该组下所有节点 通过遍历方式找到leader
             nodes = NodeManager.getInstance().getNodesByGroupId(groupId);
         }
         if (nodes == null || nodes.isEmpty()) {
             return RpcResponseFactory.newResponse(RaftError.ENOENT, "No nodes in group %s", groupId);
         }
         for (Node node : nodes) {
+            // 代表找到了leader
             PeerId leader = node.getLeaderId();
             if (leader != null && !leader.isEmpty()) {
                 return GetLeaderResponse.newBuilder().setLeaderId(leader.toString()).build();

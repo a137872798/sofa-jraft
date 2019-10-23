@@ -20,7 +20,7 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
 
 /**
- *
+ * 单线程处理器
  * @author jiachun.fjc
  */
 public interface SingleThreadExecutor extends Executor {
