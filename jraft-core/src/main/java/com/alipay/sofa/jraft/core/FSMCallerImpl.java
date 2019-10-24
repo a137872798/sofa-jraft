@@ -457,8 +457,8 @@ public class FSMCallerImpl implements FSMCaller {
     @Override
     public synchronized void join() throws InterruptedException {
         if (this.shutdownLatch != null) {
-            // 闭锁由谁来唤醒???
             this.shutdownLatch.await();
+            // 执行 shutdown 时 会判断是否有任务积压 有的话 会全部处理完 之后调用halt 这样 一旦调用barrier.waitFor 发现halt 了 就会抛出异常
             this.disruptor.shutdown();
             this.shutdownLatch = null;
         }
