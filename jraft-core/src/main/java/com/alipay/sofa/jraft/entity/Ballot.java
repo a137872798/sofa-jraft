@@ -146,7 +146,6 @@ public class Ballot {
     public PosHint grant(PeerId peerId, PosHint hint) {
         // 找到给定的 PeerId
         UnfoundPeerId peer = findPeer(peerId, peers, hint.pos0);
-        // TODO 这样看来不是 不能为一个 peer 投票2次了吗 看来理解还有偏差
         if (peer != null) {
             if (!peer.found) {
                 peer.found = true;

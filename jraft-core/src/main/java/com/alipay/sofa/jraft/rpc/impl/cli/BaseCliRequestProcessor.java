@@ -158,7 +158,7 @@ public abstract class BaseCliRequestProcessor<T extends Message> extends RpcRequ
             }
 
         }
-        // 不允许访问 Cli
+        // 该节点不支持 命令行 处理
         if (node != null && node.getOptions().isDisableCli()) {
             st.setError(RaftError.EACCES, "Cli service is not allowed to access node %s", node.getNodeId());
         }

@@ -121,20 +121,23 @@ public class BallotBox implements Lifecycle<BallotBoxOptions>, Describer {
     /**
      * Called by leader, otherwise the behavior is undefined
      * Set logs in [first_log_index, last_log_index] are stable at |peer|.
-     * 必须由 leader 调用
+     * 必须由 leader 调用  好像是判断 peer 是否在 指定的 index范围内提交过
      */
     public boolean commitAt(final long firstLogIndex, final long lastLogIndex, final PeerId peer) {
         // TODO  use lock-free algorithm here?
         final long stamp = stampedLock.writeLock();
         long lastCommittedIndex = 0;
         try {
+            // 这里又不能让它为0 ???
             if (this.pendingIndex == 0) {
                 return false;
             }
+            // 好像是这样的结构  0   ------  commitindex ------- pendingIndex
             if (lastLogIndex < this.pendingIndex) {
                 return true;
             }
 
+            // 不能超过限制
             if (lastLogIndex >= this.pendingIndex + this.pendingMetaQueue.size()) {
                 throw new ArrayIndexOutOfBoundsException();
             }
@@ -143,7 +146,9 @@ public class BallotBox implements Lifecycle<BallotBoxOptions>, Describer {
             Ballot.PosHint hint = new Ballot.PosHint();
             for (long logIndex = startAt; logIndex <= lastLogIndex; logIndex++) {
                 final Ballot bl = this.pendingMetaQueue.get((int) (logIndex - this.pendingIndex));
+                // 获取范围内所有投票对象 对 peer 进行投票
                 hint = bl.grant(peer, hint);
+                // 如果已经投完了所有的票 也就是投给了半数节点  可是每次投票 不是从 候选人里选吗 而且应该只有一票
                 if (bl.isGranted()) {
                     lastCommittedIndex = logIndex;
                 }
@@ -157,6 +162,7 @@ public class BallotBox implements Lifecycle<BallotBoxOptions>, Describer {
             // logs, since we use the new configuration to deal the quorum of the
             // removal request, we think it's safe to commit all the uncommitted
             // previous logs, which is not well proved right now
+            // 将悬置部分的数据丢弃了
             this.pendingMetaQueue.removeRange(0, (int) (lastCommittedIndex - this.pendingIndex) + 1);
             LOG.debug("Committed log fromIndex={}, toIndex={}.", this.pendingIndex, lastCommittedIndex);
             this.pendingIndex = lastCommittedIndex + 1;
@@ -164,6 +170,7 @@ public class BallotBox implements Lifecycle<BallotBoxOptions>, Describer {
         } finally {
             this.stampedLock.unlockWrite(stamp);
         }
+        // 提交结果
         this.waiter.onCommitted(lastCommittedIndex);
         return true;
     }
@@ -173,6 +180,7 @@ public class BallotBox implements Lifecycle<BallotBoxOptions>, Describer {
      * When a leader steps down, the uncommitted user applications should
      * fail immediately, which the new leader will deal whether to commit or
      * truncate.
+     * 在 写锁加持下 清空队列
      */
     public void clearPendingTasks() {
         final long stamp = this.stampedLock.writeLock();
@@ -191,22 +199,27 @@ public class BallotBox implements Lifecycle<BallotBoxOptions>, Describer {
      * According the the raft algorithm, the logs from previous terms can't be
      * committed until a log at the new term becomes committed, so
      * |newPendingIndex| should be |last_log_index| + 1.
+     * 只能当某个候选者变成ledaer 时调用  这里只是更新 悬置的index
      * @param newPendingIndex pending index of new leader
      * @return returns true if reset success
      */
     public boolean resetPendingIndex(final long newPendingIndex) {
         final long stamp = this.stampedLock.writeLock();
         try {
+            // 如果 悬置index 不为空 或者 悬置队列不为空 返回false 啥意思???
+            // 调用该方法前 必须确保 属性为初始状态
             if (!(this.pendingIndex == 0 && this.pendingMetaQueue.isEmpty())) {
                 LOG.error("resetPendingIndex fail, pendingIndex={}, pendingMetaQueueSize={}.", this.pendingIndex,
                     this.pendingMetaQueue.size());
                 return false;
             }
+            // 新的悬置index 小于最后提交index 也返回false
             if (newPendingIndex <= this.lastCommittedIndex) {
                 LOG.error("resetPendingIndex fail, newPendingIndex={}, lastCommittedIndex={}.", newPendingIndex,
                     this.lastCommittedIndex);
                 return false;
             }
+            // 更新index
             this.pendingIndex = newPendingIndex;
             this.closureQueue.resetFirstIndex(newPendingIndex);
             return true;
@@ -219,23 +232,27 @@ public class BallotBox implements Lifecycle<BallotBoxOptions>, Describer {
      * Called by leader, otherwise the behavior is undefined
      * Store application context before replication.
      *
-     * @param conf      current configuration
-     * @param oldConf   old configuration
-     * @param done      callback
-     * @return          returns true on success
+     * 添加某个悬置任务
+     * @param conf      current configuration   一个集群
+     * @param oldConf   old configuration       旧集群节点
+     * @param done      callback                处理完成后的回调方法
+     * @return          returns true on success 判断添加是否成功
      */
     public boolean appendPendingTask(final Configuration conf, final Configuration oldConf, final Closure done) {
         final Ballot bl = new Ballot();
+        // 使用传入的 conf 对象进行初始化 ballot 对象内部 包含了 2组 unfound对象 这里就是将conf 中的数据包装成 unfoundPeer 设置到 ballot 中
         if (!bl.init(conf, oldConf)) {
             LOG.error("Fail to init ballot.");
             return false;
         }
         final long stamp = this.stampedLock.writeLock();
         try {
+            // 确保悬置index > 0
             if (this.pendingIndex <= 0) {
                 LOG.error("Fail to appendingTask, pendingIndex={}.", this.pendingIndex);
                 return false;
             }
+            // 添加到 回调队列和 悬置队列中
             this.pendingMetaQueue.add(bl);
             this.closureQueue.appendPendingClosure(done);
             return true;
@@ -247,6 +264,7 @@ public class BallotBox implements Lifecycle<BallotBoxOptions>, Describer {
     /**
      * Called by follower, otherwise the behavior is undefined.
      *  Set committed index received from leader
+     *  设置最后提交的 index
      * @param lastCommittedIndex last committed index
      * @return returns true if set success
      */
@@ -254,6 +272,7 @@ public class BallotBox implements Lifecycle<BallotBoxOptions>, Describer {
         boolean doUnlock = true;
         final long stamp = this.stampedLock.writeLock();
         try {
+            // 悬置相关属性必须为空  也就是不能在 appendPending 后调用???
             if (this.pendingIndex != 0 || !this.pendingMetaQueue.isEmpty()) {
                 Requires.requireTrue(lastCommittedIndex < this.pendingIndex,
                     "Node changes to leader, pendingIndex=%d, param lastCommittedIndex=%d", this.pendingIndex,
@@ -267,6 +286,7 @@ public class BallotBox implements Lifecycle<BallotBoxOptions>, Describer {
                 this.lastCommittedIndex = lastCommittedIndex;
                 this.stampedLock.unlockWrite(stamp);
                 doUnlock = false;
+                // 将耗时操作 挪到外面执行
                 this.waiter.onCommitted(lastCommittedIndex);
             }
         } finally {
@@ -277,6 +297,9 @@ public class BallotBox implements Lifecycle<BallotBoxOptions>, Describer {
         return true;
     }
 
+    /**
+     * 对应 LifeCycle 的终止方法 清空所有悬置任务
+     */
     @Override
     public void shutdown() {
         clearPendingTasks();

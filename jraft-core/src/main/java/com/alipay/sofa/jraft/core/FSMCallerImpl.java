@@ -106,7 +106,7 @@ public class FSMCallerImpl implements FSMCaller {
 
     /**
      * Apply task for disruptor.
-     *
+     * disruptor 队列中的任务对象
      * @author boyan (boyan@alibaba-inc.com)
      * <p>
      * 2018-Apr-03 11:12:35 AM
@@ -116,8 +116,11 @@ public class FSMCallerImpl implements FSMCaller {
          * 代表任务类型
          */
         TaskType type;
-        // union fields
+        // union fields  提交的 下标
         long committedIndex;
+        /**
+         * 当前任期
+         */
         long term;
         Status status;
         LeaderChangeContext leaderChangeCtx;
@@ -137,6 +140,10 @@ public class FSMCallerImpl implements FSMCaller {
 
     private static class ApplyTaskFactory implements EventFactory<ApplyTask> {
 
+        /**
+         * 该方法在填充 ringBuffer 时会调用
+         * @return
+         */
         @Override
         public ApplyTask newInstance() {
             return new ApplyTask();
@@ -153,32 +160,72 @@ public class FSMCallerImpl implements FSMCaller {
         /**
          * @param event
          * @param sequence
-         * @param endOfBatch 代表是否是该批数据的末尾
+         * @param endOfBatch 代表当前 消费者 cursor 是否等同于 生产者 cursor 也就是是否是最后一个任务
          * @throws Exception
          */
         @Override
         public void onEvent(final ApplyTask event, final long sequence, final boolean endOfBatch) throws Exception {
+            // 处理任务并更新 commitIndex
             this.maxCommittedIndex = runApplyTask(event, this.maxCommittedIndex, endOfBatch);
         }
     }
 
+    /**
+     * 存储LogEntry 的入口
+     */
     private LogManager logManager;
+    /**
+     * 状态机对象
+     */
     private StateMachine fsm;
+    /**
+     * 回调队列对象
+     */
     private ClosureQueue closureQueue;
+    /**
+     * 最后生效的 index
+     */
     private final AtomicLong lastAppliedIndex;
+    /**
+     * 最后生效的任期
+     */
     private long lastAppliedTerm;
+    /**
+     * 当 shutdown 后触发的回调对象
+     */
     private Closure afterShutdown;
+    /**
+     * 本caller 对应的node
+     */
     private NodeImpl node;
+    /**
+     * 当前处理的任务类型
+     */
     private volatile TaskType currTask;
     /**
      * 当前正在处理的下标
      */
     private final AtomicLong applyingIndex;
+    /**
+     * 异常对象
+     */
     private volatile RaftException error;
+    /**
+     * 任务队列
+     */
     private Disruptor<ApplyTask> disruptor;
+    /**
+     * 环形缓冲区
+     */
     private RingBuffer<ApplyTask> taskQueue;
+    /**
+     * 终止闭锁
+     */
     private volatile CountDownLatch shutdownLatch;
     private NodeMetrics nodeMetrics;
+    /**
+     * 存放 偏移量发生变化的 监听器
+     */
     private final CopyOnWriteArrayList<LastAppliedLogIndexListener> lastAppliedLogIndexListeners = new CopyOnWriteArrayList<>();
 
     public FSMCallerImpl() {
@@ -190,8 +237,14 @@ public class FSMCallerImpl implements FSMCaller {
         this.applyingIndex = new AtomicLong(0);
     }
 
+    /**
+     * 开始初始化
+     * @param opts
+     * @return
+     */
     @Override
     public boolean init(final FSMCallerOptions opts) {
+        // 从opts 中获取需要的属性
         this.logManager = opts.getLogManager();
         this.fsm = opts.getFsm();
         this.closureQueue = opts.getClosureQueue();
@@ -203,6 +256,7 @@ public class FSMCallerImpl implements FSMCaller {
         // 触发监听器
         notifyLastAppliedIndexUpdated(this.lastAppliedIndex.get());
         this.lastAppliedTerm = opts.getBootstrapId().getTerm();
+        // 指定多生产者方式
         this.disruptor = DisruptorBuilder.<ApplyTask>newInstance() //
                 // 使用指定的事件工厂
                 .setEventFactory(new ApplyTaskFactory()) //
@@ -225,6 +279,9 @@ public class FSMCallerImpl implements FSMCaller {
         return true;
     }
 
+    /**
+     * 终止 caller 对象
+     */
     @Override
     public synchronized void shutdown() {
         if (this.shutdownLatch != null) {
@@ -235,12 +292,14 @@ public class FSMCallerImpl implements FSMCaller {
         if (this.taskQueue != null) {
             final CountDownLatch latch = new CountDownLatch(1);
             enqueueTask((task, sequence) -> {
+                // 相当于发布一个 终止事件 该方法会将 task 做下述转换后 交由消费者处理
                 task.reset();
                 task.type = TaskType.SHUTDOWN;
                 task.shutdownLatch = latch;
             });
             this.shutdownLatch = latch;
         }
+        // 触发终止
         doShutdown();
     }
 
@@ -255,10 +314,16 @@ public class FSMCallerImpl implements FSMCaller {
             LOG.warn("FSMCaller is stopped, can not apply new task.");
             return false;
         }
+        // 生产者发布事件 并唤醒消费者
         this.taskQueue.publishEvent(tpl);
         return true;
     }
 
+    /**
+     * 发布一个 commit 任务  外部的操作 最终都转换成对caller 的调用 更进一步说 就是 通过 disruptor 对象发布事件
+     * @param committedIndex committed log indexx
+     * @return
+     */
     @Override
     public boolean onCommitted(final long committedIndex) {
         return enqueueTask((task, sequence) -> {
@@ -269,12 +334,14 @@ public class FSMCallerImpl implements FSMCaller {
 
     /**
      * Flush all events in disruptor.
+     * 发布一个 刷盘事件
      */
     @OnlyForTest
     void flush() throws InterruptedException {
         final CountDownLatch latch = new CountDownLatch(1);
         enqueueTask((task, sequence) -> {
             task.type = TaskType.FLUSH;
+            // 推测 一旦任务设置了 闭锁 那么 在任务被消费者处理后 就会解除闭锁 主流程代码 通过使用闭锁 实现同步机制
             task.shutdownLatch = latch;
         });
         latch.await();
@@ -334,6 +401,8 @@ public class FSMCallerImpl implements FSMCaller {
         });
     }
 
+    //  以上都是 外部调用caller 将不同类型任务设置到 ringBuffer中 并唤醒消费者 消费者 根据任务类型走不同请求  其中 task 携带闭锁则实现同步机制 如果携带上下文信息 则从上下文获取需要的属性
+
     /**
      * Closure runs with an error.
      *
@@ -362,6 +431,11 @@ public class FSMCallerImpl implements FSMCaller {
         }
     }
 
+    /**
+     * 当发生异常时触发 也是修改task 对象 并发布
+     * @param error error info
+     * @return
+     */
     @Override
     public boolean onError(final RaftException error) {
         if (!this.error.getStatus().isOk()) {
@@ -383,6 +457,7 @@ public class FSMCallerImpl implements FSMCaller {
     @Override
     public synchronized void join() throws InterruptedException {
         if (this.shutdownLatch != null) {
+            // 闭锁由谁来唤醒???
             this.shutdownLatch.await();
             this.disruptor.shutdown();
             this.shutdownLatch = null;
@@ -499,7 +574,11 @@ public class FSMCallerImpl implements FSMCaller {
         }
     }
 
+    /**
+     * 触发终止回调 以及关闭状态机
+     */
     private void doShutdown() {
+        // 置空是帮助node节点被GC 回收
         if (this.node != null) {
             this.node = null;
         }

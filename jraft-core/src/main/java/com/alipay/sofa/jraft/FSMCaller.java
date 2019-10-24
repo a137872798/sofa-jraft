@@ -25,7 +25,7 @@ import com.alipay.sofa.jraft.util.Describer;
 
 /**
  * Finite state machine caller.
- *
+ * 状态机调用者
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Apr-03 11:07:52 AM
@@ -34,7 +34,7 @@ public interface FSMCaller extends Lifecycle<FSMCallerOptions>, Describer {
 
     /**
      * Listen on lastAppliedLogIndex update events.
-     *
+     * 监听 lastAppliedLogIndex 发生变化时的回调
      * @author dennis
      */
     interface LastAppliedLogIndexListener {

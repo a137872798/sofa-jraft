@@ -25,7 +25,13 @@ package com.alipay.sofa.jraft.option;
  */
 public class CliOptions extends RpcOptions {
 
+    /**
+     * 超时时间
+     */
     private int timeoutMs;
+    /**
+     * 最大重试次数
+     */
     private int maxRetry;
 
     public int getTimeoutMs() {

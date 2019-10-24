@@ -29,7 +29,7 @@ import com.google.protobuf.Message;
 
 /**
  * AddPeer request processor.
- * 为整个group 增加一个节点
+ * 为整个group 增加一个节点  只有leader 能处理该请求 在 CliServiceImpl 中 发往某个group中任意节点尝试增加节点 都会先从group中获取leaderId 之后将请求发往leader
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Apr-09 11:33:50 AM
@@ -42,6 +42,7 @@ public class AddPeerRequestProcessor extends BaseCliRequestProcessor<AddPeerRequ
 
     /**
      * 父类 查询Node时 会调用该 方法 也就是获取 addPeer的 leader节点 之后将请求的节点对象添加到节点组中
+     * 是否每个 client 上都有 nodeManager 呢 该对象内部的信息又是由谁来同步的 (多个注册中心之间)
      * @param request
      * @return
      */

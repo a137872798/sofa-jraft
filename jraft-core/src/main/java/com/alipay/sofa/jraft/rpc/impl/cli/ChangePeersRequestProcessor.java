@@ -30,7 +30,7 @@ import com.google.protobuf.Message;
 
 /**
  * Change peers request processor.
- * 修改节点处理器
+ * 修改节点处理器  (req 中包含一组新的node 这里是更替整个 group 的节点)
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Apr-09 3:09:23 PM
