@@ -35,15 +35,34 @@ public class ThreadId {
 
     private static final Logger    LOG                 = LoggerFactory.getLogger(ThreadId.class);
 
+    /**
+     * 尝试上锁超时时间
+     */
     private static final int       TRY_LOCK_TIMEOUT_MS = 10;
 
+    /**
+     * 数据体
+     */
     private final Object           data;
+    /**
+     * 非重入锁  什么时候会用到该对象???
+     */
     private final NonReentrantLock lock                = new NonReentrantLock();
+    /**
+     * 闲置的异常对象
+     */
     private final List<Integer>    pendingErrors       = Collections.synchronizedList(new ArrayList<>());
+    /**
+     * 异常回调对象
+     */
     private final OnError          onError;
+    /**
+     * 是否已经被销毁
+     */
     private volatile boolean       destroyed;
 
     /**
+     * 一个异常回调对象
      * @author boyan (boyan@alibaba-inc.com)
      *
      * 2018-Mar-29 11:01:54 AM
@@ -71,7 +90,12 @@ public class ThreadId {
         return this.data;
     }
 
+    /**
+     * 对该对象进行上锁
+     * @return
+     */
     public Object lock() {
+        // 已经销毁的情况不做处理
         if (this.destroyed) {
             return null;
         }
@@ -91,9 +115,13 @@ public class ThreadId {
             this.lock.unlock();
             return null;
         }
+        // 上锁后 返回 data
         return this.data;
     }
 
+    /**
+     * 进行解锁
+     */
     public void unlock() {
         if (!this.lock.isHeldByCurrentThread()) {
             LOG.warn("Fail to unlock with {}, the lock is held by {} and current thread is {}.", this.data,
@@ -103,6 +131,7 @@ public class ThreadId {
         // calls all pending errors before unlock
         boolean doUnlock = true;
         try {
+            // 解锁时 将所有 异常 取出来 并使用回调对象处理
             final List<Integer> errors;
             synchronized (this.pendingErrors) {
                 errors = new ArrayList<>(this.pendingErrors);
@@ -133,6 +162,9 @@ public class ThreadId {
         return this.data.toString();
     }
 
+    /**
+     * 销毁后就不允许再加锁了
+     */
     public void unlockAndDestroy() {
         if (this.destroyed) {
             return;
@@ -167,6 +199,7 @@ public class ThreadId {
                 this.onError.onError(this, this.data, errorCode);
             }
         } else {
+            // 如果上锁失败就将 异常保存到队列中
             this.pendingErrors.add(errorCode);
         }
     }

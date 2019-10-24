@@ -25,7 +25,7 @@ import com.google.protobuf.Message;
 
 /**
  * TimeoutNow request processor.
- *
+ * 处理超时请求
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Apr-23 11:12:48 AM

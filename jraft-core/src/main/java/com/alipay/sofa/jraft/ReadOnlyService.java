@@ -21,7 +21,7 @@ import com.alipay.sofa.jraft.option.ReadOnlyServiceOptions;
 
 /**
  * The read-only query service.
- *
+ * 用于查询的服务
  * @author dennis
  *
  */
@@ -29,7 +29,7 @@ public interface ReadOnlyService extends Lifecycle<ReadOnlyServiceOptions> {
 
     /**
      * Adds a ReadIndex request.
-     *
+     * 增加读取index 的请求
      * @param reqCtx    request context of readIndex
      * @param closure   callback
      */
@@ -37,7 +37,7 @@ public interface ReadOnlyService extends Lifecycle<ReadOnlyServiceOptions> {
 
     /**
      * Waits for service shutdown.
-     *
+     * 等待服务终止
      * @throws InterruptedException if the current thread is interrupted
      *         while waiting
      */

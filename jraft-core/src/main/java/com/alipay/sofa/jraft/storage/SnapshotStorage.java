@@ -24,7 +24,7 @@ import com.alipay.sofa.jraft.storage.snapshot.SnapshotWriter;
 
 /**
  * Snapshot storage.
- *
+ * 快照存储对象
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Apr-08 3:30:05 PM
@@ -34,22 +34,25 @@ public interface SnapshotStorage extends Lifecycle<Void>, Storage {
     /**
      * Set filterBeforeCopyRemote to be true.When true,
      * it will filter the data before copy to remote.
+     * 是否要过滤从远端传来的数据
      */
     boolean setFilterBeforeCopyRemote();
 
     /**
      * Create a snapshot writer.
+     * 创建一个 写入对象
      */
     SnapshotWriter create();
 
     /**
      * Open a snapshot reader.
+     * 创建一个快照读取对象
      */
     SnapshotReader open();
 
     /**
      * Copy data from remote uri.
-     *
+     * 从远端某个地址 获取 快照读取对象
      * @param uri  remote uri
      * @param opts copy options
      * @return a SnapshotReader instance
@@ -58,7 +61,7 @@ public interface SnapshotStorage extends Lifecycle<Void>, Storage {
 
     /**
      * Starts a copy job to copy data from remote uri.
-     *
+     * 开始从 远端某个地址 拷贝数据
      * @param uri  remote uri
      * @param opts copy options
      * @return a SnapshotCopier instance
@@ -67,7 +70,7 @@ public interface SnapshotStorage extends Lifecycle<Void>, Storage {
 
     /**
      * Configure a SnapshotThrottle.
-     *
+     * 设置阀门
      * @param snapshotThrottle throttle of snapshot
      */
     void setSnapshotThrottle(final SnapshotThrottle snapshotThrottle);

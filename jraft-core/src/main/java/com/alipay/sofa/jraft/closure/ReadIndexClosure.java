@@ -22,7 +22,7 @@ import com.alipay.sofa.jraft.Status;
 
 /**
  * Read index closure
- * 读下标回调???
+ * 读取index 的回调对象
  * @author dennis
  */
 public abstract class ReadIndexClosure implements Closure {

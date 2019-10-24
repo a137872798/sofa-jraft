@@ -18,7 +18,7 @@ package com.alipay.sofa.jraft.storage;
 
 /**
  * Common interface for storage.
- *
+ * 作为整个存储模块的 基接口
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Mar-12 3:52:36 PM 

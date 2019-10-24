@@ -21,11 +21,15 @@ import java.util.concurrent.locks.Lock;
 
 /**
  * Non reentrant lock, copied from netty project.
+ * 非重入锁
  */
 public final class NonReentrantLock extends AbstractQueuedSynchronizer implements Lock {
 
     private static final long serialVersionUID = -833780837233068610L;
 
+    /**
+     * 当前锁的持有者
+     */
     private Thread            owner;
 
     @Override
@@ -66,6 +70,11 @@ public final class NonReentrantLock extends AbstractQueuedSynchronizer implement
         return new ConditionObject();
     }
 
+    /**
+     * 实现非重入的核心方法 就是 只要cas 失败就返回false
+     * @param acquires
+     * @return
+     */
     @Override
     protected boolean tryAcquire(final int acquires) {
         if (compareAndSetState(0, 1)) {

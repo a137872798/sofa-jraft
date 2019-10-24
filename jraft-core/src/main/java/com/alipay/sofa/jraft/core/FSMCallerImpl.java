@@ -183,7 +183,7 @@ public class FSMCallerImpl implements FSMCaller {
      */
     private ClosureQueue closureQueue;
     /**
-     * 最后生效的 index
+     * 上次写入的 commitIndex 用于避免重复写入
      */
     private final AtomicLong lastAppliedIndex;
     /**
@@ -369,6 +369,11 @@ public class FSMCallerImpl implements FSMCaller {
         });
     }
 
+    /**
+     * 当leader 停止时触发 将任务添加到ringBuffer 中
+     * @param status status info
+     * @return
+     */
     @Override
     public boolean onLeaderStop(final Status status) {
         return enqueueTask((task, sequence) -> {
@@ -454,6 +459,11 @@ public class FSMCallerImpl implements FSMCaller {
         return this.lastAppliedIndex.get();
     }
 
+    /**
+     * 推测是 这样 一旦发现 shutdownLatch 不为空 代表创建了一个 允许同步调用的任务 那么在完成任务后就会 解除 阻塞 并调用shutdown
+     * 注意 join完后就将shutdownLatch 置空了 正对应         if (this.shutdownLatch != null) {
+     * @throws InterruptedException
+     */
     @Override
     public synchronized void join() throws InterruptedException {
         if (this.shutdownLatch != null) {
@@ -468,24 +478,28 @@ public class FSMCallerImpl implements FSMCaller {
      * 处理任务
      *
      * @param task
-     * @param maxCommittedIndex
+     * @param maxCommittedIndex   当前的最大提交偏移量  相当于是 disruptor 的全局偏移量  每次执行了提交任务后 该值会变成-1
      * @param endOfBatch
      * @return
      */
     @SuppressWarnings("ConstantConditions")
     private long runApplyTask(final ApplyTask task, long maxCommittedIndex, final boolean endOfBatch) {
         CountDownLatch shutdown = null;
-        // 处理提交任务
+        // 处理提交任务  这个提交任务是指 将数据写入到 其他follower 写入半数成功也就是 提交成功 在这之前 LogEntry 已经保存到 LogManager 中了
         if (task.type == TaskType.COMMITTED) {
-            // 更新提交index
+            // 如果任务提交的偏移量超过了 目标偏移量 就更新  注意这里并没有直接处理 任务 看来commit是在其他的某个时刻触发的
+            // 同时 每次执行完提交任务后 maxCommittedIndex 都会变成-1
             if (task.committedIndex > maxCommittedIndex) {
                 maxCommittedIndex = task.committedIndex;
             }
         } else {
             // 如果是其他任务进入的情况 发现了当前 maxCommittedIndex 不为-1 代表必须要进行commit 了
+            // 等下 这好像是一种延迟写入 只有当需要获取最新数据的时候才要求写入数据 所以当任务不是 commit 时 代表需要读取数据了
+            // 那么这时就将数据写入到LogManger 中
             if (maxCommittedIndex >= 0) {
                 // 将当前任务设置成提交任务  看来有些地方需要通过 currTask 来做一些事情
                 this.currTask = TaskType.COMMITTED;
+                // 执行提交任务就是将 LogEntry 保存到LogManager 中
                 doCommitted(maxCommittedIndex);
                 maxCommittedIndex = -1L; // reset maxCommittedIndex
             }
@@ -502,10 +516,12 @@ public class FSMCallerImpl implements FSMCaller {
                         this.currTask = TaskType.SNAPSHOT_SAVE;
                         // 如果当前Caller 对象已经出现了异常就不能处理了 通过异常status触发回调 返回true 代表caller 对象正常
                         if (passByStatus(task.done)) {
+                            // 保存快照
                             doSnapshotSave((SaveSnapshotClosure) task.done);
                         }
                         break;
-                    // 如果是加载快照
+                    // 如果是加载快照  实际上还是委托给 状态机 这里会配合 回调对象内部的 SnapshotReader 读取快照
+                    // 这里会将 快照的数据 覆盖当前数据  谁会发起该动作  如果是 leader 那么它又从哪里读取快照呢???
                     case SNAPSHOT_LOAD:
                         this.currTask = TaskType.SNAPSHOT_LOAD;
                         if (passByStatus(task.done)) {
@@ -567,7 +583,7 @@ public class FSMCallerImpl implements FSMCaller {
             this.currTask = TaskType.IDLE;
             return maxCommittedIndex;
         } finally {
-            // 等待任务完成
+            // 如果发现闭锁 在处理完任务后 唤醒可能阻塞的线程
             if (shutdown != null) {
                 shutdown.countDown();
             }
@@ -592,7 +608,7 @@ public class FSMCallerImpl implements FSMCaller {
     }
 
     /**
-     * 触发 当LastAppliedIndex发生变化的监听器
+     * 触发 当LastAppliedIndex发生变化的监听器  实际上就是 触发了 commited 将leader 的LogEntry 发送到了其他 follower
      *
      * @param lastAppliedIndex
      */
@@ -604,6 +620,7 @@ public class FSMCallerImpl implements FSMCaller {
 
     /**
      * 提交数据 直到指定的偏移量
+     * 可能会是一组数据 被 commit 因为 只有要处理的事件涉及到读操作 才会真正将数据写入
      *
      * @param committedIndex
      */
@@ -611,7 +628,7 @@ public class FSMCallerImpl implements FSMCaller {
         if (!this.error.getStatus().isOk()) {
             return;
         }
-        // 获取当前的快照偏移量
+        // 获取上次写入的 index  TODO  首先该节点应该是leader 节点 可能会接受到 index 更小的数据吗???
         final long lastAppliedIndex = this.lastAppliedIndex.get();
         // We can tolerate the disorder of committed_index
         if (lastAppliedIndex >= committedIndex) {
@@ -622,6 +639,8 @@ public class FSMCallerImpl implements FSMCaller {
             final List<Closure> closures = new ArrayList<>();
             final List<TaskClosure> taskClosures = new ArrayList<>();
             // 从任务队列中 取出截取到目标偏移量的所有任务    返回原先的偏移量
+            // 看来每个任务的 回调对象都被存放到closureQueue 中  这样 index 就能够对应起来 commitedIndex 每次应该是递增1
+            // 对应到 closureQueue 每次 index 增加1  这里是将 到该偏移量为止的所有回调对象都取出来 并返回首个未被处理的偏移量
             final long firstClosureIndex = this.closureQueue.popClosureUntil(committedIndex, closures, taskClosures);
 
             // Calls TaskClosure#onCommitted if necessary
@@ -634,7 +653,7 @@ public class FSMCallerImpl implements FSMCaller {
                     lastAppliedIndex, committedIndex, this.applyingIndex);
             // 等同 hasNext()
             while (iterImpl.isGood()) {
-                // 获取currentIndex(++lastAppliedIndex) 指向的 LogEntry
+                // 每次调用 next LogEntry 会从 lastAppliedIndex 向 commitedIndex 靠拢
                 final LogEntry logEntry = iterImpl.entry();
                 // LogEntry 分为 data 和configuration
                 if (logEntry.getType() != EnumOutter.EntryType.ENTRY_TYPE_DATA) {
@@ -646,7 +665,7 @@ public class FSMCallerImpl implements FSMCaller {
                             this.fsm.onConfigurationCommitted(new Configuration(iterImpl.entry().getPeers()));
                         }
                     }
-                    // 获取对应的回调对象 并触发
+                    // 获取对应的回调对象 并触发  (每个下标对应 queue 中的回调对象)
                     if (iterImpl.done() != null) {
                         // For other entries, we have nothing to do besides flush the
                         // pending tasks and run this closure to notify the caller that the
@@ -659,7 +678,7 @@ public class FSMCallerImpl implements FSMCaller {
                 }
 
                 // Apply data task to user state machine
-                // 如果LogEntry 是 data 数据 内部会调用next
+                // 处理 data 类型数据  内部也是委托给 状态机
                 doApplyTasks(iterImpl);
             }
 
@@ -669,7 +688,7 @@ public class FSMCallerImpl implements FSMCaller {
                 // 触发剩下任务对应的回调（以失败方式）
                 iterImpl.runTheRestClosureWithError();
             }
-            // 获取当前移动到的偏移量
+            // 最后一次调用next 会使得 currentindex 超过 commitindex 所以这里要-1
             final long lastIndex = iterImpl.getIndex() - 1;
             // 获取对应数据的任期
             final long lastTerm = this.logManager.getTerm(lastIndex);
@@ -709,7 +728,7 @@ public class FSMCallerImpl implements FSMCaller {
         // 获取当前 LogEntry 对应下标
         final long startIndex = iter.getIndex();
         try {
-            // 使用状态机处理
+            // 使用状态机处理   也就是data 类型数据 交由 状态机处理
             this.fsm.onApply(iter);
         } finally {
             this.nodeMetrics.recordLatency("fsm-apply-tasks", Utils.monotonicMs() - startApplyMs);
@@ -744,9 +763,11 @@ public class FSMCallerImpl implements FSMCaller {
                     lastAppliedIndex));
             return;
         }
+        // 获取当前新节点
         for (final PeerId peer : confEntry.getConf()) {
             metaBuilder.addPeers(peer.toString());
         }
+        // 当前旧节点
         if (confEntry.getOldConf() != null) {
             for (final PeerId peer : confEntry.getOldConf()) {
                 metaBuilder.addOldPeers(peer.toString());
@@ -754,6 +775,7 @@ public class FSMCallerImpl implements FSMCaller {
         }
         // 设置 done 的 meta 属性 并返回 writer
         final SnapshotWriter writer = done.start(metaBuilder.build());
+        // 没有找到 写对象 抛出异常
         if (writer == null) {
             done.run(new Status(RaftError.EINVAL, "snapshot_storage create SnapshotWriter failed"));
             return;

@@ -63,7 +63,7 @@ import com.lmax.disruptor.dsl.ProducerType;
 
 /**
  * Read-only service implementation.
- *
+ * 只读服务器实现
  * @author dennis
  */
 public class ReadOnlyServiceImpl implements ReadOnlyService, LastAppliedLogIndexListener {
@@ -73,8 +73,14 @@ public class ReadOnlyServiceImpl implements ReadOnlyService, LastAppliedLogIndex
     private Disruptor<ReadIndexEvent>                  readIndexDisruptor;
     private RingBuffer<ReadIndexEvent>                 readIndexQueue;
     private RaftOptions                                raftOptions;
+    /**
+     * 内部存放节点实现类
+     */
     private NodeImpl                                   node;
     private final Lock                                 lock                        = new ReentrantLock();
+    /**
+     * 状态机对象
+     */
     private FSMCaller                                  fsmCaller;
     private volatile CountDownLatch                    shutdownLatch;
 
@@ -88,13 +94,28 @@ public class ReadOnlyServiceImpl implements ReadOnlyService, LastAppliedLogIndex
     private static final Logger                        LOG                         = LoggerFactory
                                                                                        .getLogger(ReadOnlyServiceImpl.class);
 
+    /**
+     * 读取下标事件
+     */
     private static class ReadIndexEvent {
+        /**
+         * 请求上下文
+         */
         Bytes            requestContext;
+        /**
+         * 读取index 对应的 回调对象
+         */
         ReadIndexClosure done;
+        /**
+         * 闭锁 用于实现同步等待结果
+         */
         CountDownLatch   shutdownLatch;
         long             startTime;
     }
 
+    /**
+     * 对应 disruptor 事件工厂
+     */
     private static class ReadIndexEventFactory implements EventFactory<ReadIndexEvent> {
 
         @Override
@@ -105,12 +126,21 @@ public class ReadOnlyServiceImpl implements ReadOnlyService, LastAppliedLogIndex
 
     private class ReadIndexEventHandler implements EventHandler<ReadIndexEvent> {
         // task list for batch
+        // 创建用来批处理任务的队列
         private final List<ReadIndexEvent> events = new ArrayList<>(
                                                       ReadOnlyServiceImpl.this.raftOptions.getApplyBatch());
 
+        /**
+         * 处理事件的逻辑
+         * @param newEvent  读取index 的事件对象
+         * @param sequence
+         * @param endOfBatch
+         * @throws Exception
+         */
         @Override
         public void onEvent(final ReadIndexEvent newEvent, final long sequence, final boolean endOfBatch)
                                                                                                          throws Exception {
+            // 如果该对象存在 闭锁  这时才执行任务
             if (newEvent.shutdownLatch != null) {
                 executeReadIndexEvents(this.events);
                 this.events.clear();
@@ -118,7 +148,9 @@ public class ReadOnlyServiceImpl implements ReadOnlyService, LastAppliedLogIndex
                 return;
             }
 
+            // 将任务添加到 列表中
             this.events.add(newEvent);
+            // 超过批量值 或者是最后一个任务 才执行
             if (this.events.size() >= ReadOnlyServiceImpl.this.raftOptions.getApplyBatch() || endOfBatch) {
                 executeReadIndexEvents(this.events);
                 this.events.clear();
@@ -133,6 +165,9 @@ public class ReadOnlyServiceImpl implements ReadOnlyService, LastAppliedLogIndex
      */
     class ReadIndexResponseClosure extends RpcResponseClosureAdapter<ReadIndexResponse> {
 
+        /**
+         * 每个state 对象都是 readIndexEvent 封装成的
+         */
         final List<ReadIndexState> states;
         final ReadIndexRequest     request;
 
@@ -144,6 +179,7 @@ public class ReadOnlyServiceImpl implements ReadOnlyService, LastAppliedLogIndex
 
         /**
          * Called when ReadIndex response returns.
+         * 回调对象触发方法
          */
         @Override
         public void run(final Status status) {
@@ -159,6 +195,7 @@ public class ReadOnlyServiceImpl implements ReadOnlyService, LastAppliedLogIndex
             // Success
             final ReadIndexStatus readIndexStatus = new ReadIndexStatus(this.states, this.request,
                 readIndexResponse.getIndex());
+            // 更新每个state 的index
             for (final ReadIndexState state : this.states) {
                 // Records current commit log index.
                 state.setIndex(readIndexResponse.getIndex());
@@ -167,6 +204,7 @@ public class ReadOnlyServiceImpl implements ReadOnlyService, LastAppliedLogIndex
             boolean doUnlock = true;
             ReadOnlyServiceImpl.this.lock.lock();
             try {
+                // 代表获取到的偏移量对应的数据已经被发送给follower了
                 if (readIndexStatus.isApplied(ReadOnlyServiceImpl.this.fsmCaller.getLastAppliedIndex())) {
                     // Already applied, notify readIndex request.
                     ReadOnlyServiceImpl.this.lock.unlock();
@@ -174,6 +212,7 @@ public class ReadOnlyServiceImpl implements ReadOnlyService, LastAppliedLogIndex
                     notifySuccess(readIndexStatus);
                 } else {
                     // Not applied, add it to pending-notify cache.
+                    // 还没处理到这步 就先加入到闲置缓存中  利用treeMap 来保证顺序存储
                     ReadOnlyServiceImpl.this.pendingNotifyStatus
                         .computeIfAbsent(readIndexStatus.getIndex(), k -> new ArrayList<>(10)) //
                         .add(readIndexStatus);
@@ -185,12 +224,17 @@ public class ReadOnlyServiceImpl implements ReadOnlyService, LastAppliedLogIndex
             }
         }
 
+        /**
+         * 当回调处理异常结果时触发
+         * @param status
+         */
         private void notifyFail(final Status status) {
             final long nowMs = Utils.monotonicMs();
             for (final ReadIndexState state : this.states) {
                 ReadOnlyServiceImpl.this.nodeMetrics.recordLatency("read-index", nowMs - state.getStartTimeMs());
                 final ReadIndexClosure done = state.getDone();
                 if (done != null) {
+                    // 传播到下面的 回调对象
                     final Bytes reqCtx = state.getRequestContext();
                     done.run(status, ReadIndexClosure.INVALID_LOG_INDEX, reqCtx != null ? reqCtx.get() : null);
                 }
@@ -198,6 +242,10 @@ public class ReadOnlyServiceImpl implements ReadOnlyService, LastAppliedLogIndex
         }
     }
 
+    /**
+     * 批量执行 readIndexEvents
+     * @param events
+     */
     private void executeReadIndexEvents(final List<ReadIndexEvent> events) {
         if (events.isEmpty()) {
             return;
@@ -209,14 +257,22 @@ public class ReadOnlyServiceImpl implements ReadOnlyService, LastAppliedLogIndex
         final List<ReadIndexState> states = new ArrayList<>(events.size());
 
         for (final ReadIndexEvent event : events) {
+            // 将每个请求上下文包装后 设置到 ReaderIndexRequest 中
             rb.addEntries(ZeroByteStringHelper.wrap(event.requestContext.get()));
+            // 这里是批量发送 读请求 单个请求对象 也就是事件 被封装成一个 state
             states.add(new ReadIndexState(event.requestContext, event.done, event.startTime));
         }
         final ReadIndexRequest request = rb.build();
 
+        // 使用node发送 获取readIndex 的请求
         this.node.handleReadIndexRequest(request, new ReadIndexResponseClosure(states, request));
     }
 
+    /**
+     * 初始化 只读 服务
+     * @param opts
+     * @return
+     */
     @Override
     public boolean init(final ReadOnlyServiceOptions opts) {
         this.node = opts.getNode();
@@ -242,10 +298,12 @@ public class ReadOnlyServiceImpl implements ReadOnlyService, LastAppliedLogIndex
                 .register("jraft-read-only-service-disruptor", new DisruptorMetricSet(this.readIndexQueue));
         }
         // listen on lastAppliedLogIndex change events.
+        // 将自身添加到 caller 中 监听 lastIndex发生变化 推测是 配合 pending队列做什么事情
         this.fsmCaller.addLastAppliedLogIndexListener(this);
 
         // start scanner
         this.scheduledExecutorService.scheduleAtFixedRate(
+                // 定时获取 最新的提交数据的下标
             () -> onApplied(this.fsmCaller.getLastAppliedIndex()),
             this.raftOptions.getMaxElectionDelayMs(),
             this.raftOptions.getMaxElectionDelayMs(),
@@ -273,6 +331,11 @@ public class ReadOnlyServiceImpl implements ReadOnlyService, LastAppliedLogIndex
         this.scheduledExecutorService.awaitTermination(5, TimeUnit.SECONDS);
     }
 
+    /**
+     * 增加一个请求对象
+     * @param reqCtx    request context of readIndex
+     * @param closure   callback
+     */
     @Override
     public void addRequest(final byte[] reqCtx, final ReadIndexClosure closure) {
         if (this.shutdownLatch != null) {
@@ -308,7 +371,7 @@ public class ReadOnlyServiceImpl implements ReadOnlyService, LastAppliedLogIndex
 
     /**
      * Called when lastAppliedIndex updates.
-     *
+     * 传入 caller 最新提交的 index
      * @param appliedIndex applied index
      */
     @Override
@@ -317,6 +380,7 @@ public class ReadOnlyServiceImpl implements ReadOnlyService, LastAppliedLogIndex
         List<ReadIndexStatus> pendingStatuses = null;
         this.lock.lock();
         try {
+            // 处理未调用 notifySuccess 的state
             if (this.pendingNotifyStatus.isEmpty()) {
                 return;
             }
@@ -359,6 +423,10 @@ public class ReadOnlyServiceImpl implements ReadOnlyService, LastAppliedLogIndex
         return this.pendingNotifyStatus;
     }
 
+    /**
+     * 按成功方式 触发回调
+     * @param status
+     */
     private void notifySuccess(final ReadIndexStatus status) {
         final long nowMs = Utils.monotonicMs();
         final List<ReadIndexState> states = status.getStates();

@@ -30,7 +30,7 @@ import com.google.protobuf.Message;
 
 /**
  * Read a file data form local dir by fileName.
- *
+ * 基于本地文件系统存储
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Apr-06 9:25:12 PM
@@ -39,6 +39,9 @@ public class LocalDirReader implements FileReader {
 
     private static final Logger LOG = LoggerFactory.getLogger(LocalDirReader.class);
 
+    /**
+     * 目标路径
+     */
     private final String        path;
 
     public LocalDirReader(String path) {
@@ -51,6 +54,16 @@ public class LocalDirReader implements FileReader {
         return path;
     }
 
+    /**
+     * 读取文件并将结果保存到 bytebuffer 中
+     * @param buf      read bytes into this buf
+     * @param fileName file name
+     * @param offset   the offset of file
+     * @param maxCount max read bytes
+     * @return
+     * @throws IOException
+     * @throws RetryAgainException
+     */
     @Override
     public int readFile(final ByteBufferCollector buf, final String fileName, final long offset, final long maxCount)
                                                                                                                      throws IOException,
@@ -58,24 +71,42 @@ public class LocalDirReader implements FileReader {
         return readFileWithMeta(buf, fileName, null, offset, maxCount);
     }
 
+    /**
+     * 读取文件 和 元数据
+     * @param buf
+     * @param fileName
+     * @param fileMeta
+     * @param offset
+     * @param maxCount
+     * @return
+     * @throws IOException
+     * @throws RetryAgainException
+     */
     @SuppressWarnings("unused")
     protected int readFileWithMeta(final ByteBufferCollector buf, final String fileName, final Message fileMeta,
                                    long offset, final long maxCount) throws IOException, RetryAgainException {
+        // 首先判断是否需要扩容
         buf.expandIfNecessary();
+        // 找到对应的文件
         final String filePath = this.path + File.separator + fileName;
         final File file = new File(filePath);
         try (final FileInputStream input = new FileInputStream(file); final FileChannel fc = input.getChannel()) {
             int totalRead = 0;
             while (true) {
                 final int nread = fc.read(buf.getBuffer(), offset);
+                // 代表读取到了末尾
                 if (nread <= 0) {
                     return EOF;
                 }
+                // 记录读取的总数
                 totalRead += nread;
+                // 读取的数据还不足
                 if (totalRead < maxCount) {
+                    // 没有达到要求的量 返回 EOF
                     if (buf.hasRemaining()) {
                         return EOF;
                     } else {
+                        // hasRemaining == false 进行扩容
                         buf.expandAtMost((int) (maxCount - totalRead));
                         offset += nread;
                     }
@@ -85,6 +116,7 @@ public class LocalDirReader implements FileReader {
                         LOG.warn("Invalid file length {}", filePath);
                         return EOF;
                     }
+                    // 这里为什么 返回EOF  刚好读取完也不允许吗???
                     if (fsize == offset + nread) {
                         return EOF;
                     } else {

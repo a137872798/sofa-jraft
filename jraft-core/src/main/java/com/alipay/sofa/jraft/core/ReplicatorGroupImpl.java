@@ -45,7 +45,7 @@ import com.alipay.sofa.jraft.util.ThreadId;
 /**
  * Replicator group for a raft group.
  * @author boyan (boyan@alibaba-inc.com)
- *
+ * 复制者组
  * 2018-Apr-04 1:54:51 PM
  */
 public class ReplicatorGroupImpl implements ReplicatorGroup {
@@ -53,13 +53,16 @@ public class ReplicatorGroupImpl implements ReplicatorGroup {
     private static final Logger                   LOG                = LoggerFactory
                                                                          .getLogger(ReplicatorGroupImpl.class);
 
-    // <peerId, replicatorId>
+    // <peerId, replicatorId>   每个节点 对应一个 自带锁的对象
     private final ConcurrentMap<PeerId, ThreadId> replicatorMap      = new ConcurrentHashMap<>();
     /** common replicator options */
     private ReplicatorOptions                     commonOptions;
     private int                                   dynamicTimeoutMs   = -1;
     private int                                   electionTimeoutMs  = -1;
     private RaftOptions                           raftOptions;
+    /**
+     * 存放一组失败的 复制者
+     */
     private final Set<PeerId>                     failureReplicators = new ConcurrentHashSet<>();
 
     @Override
@@ -82,10 +85,17 @@ public class ReplicatorGroupImpl implements ReplicatorGroup {
         return true;
     }
 
+    /**
+     * 发送心跳请求
+     * @param peer    target peer
+     * @param closure callback
+     */
     @Override
     public void sendHeartbeat(final PeerId peer, final RpcResponseClosure<AppendEntriesResponse> closure) {
+        // 通过 peerId 找到对应的 复制者
         final ThreadId rid = this.replicatorMap.get(peer);
         if (rid == null) {
+            // 触发异常回调
             if (closure != null) {
                 closure.run(new Status(RaftError.EHOSTDOWN, "Peer %s is not connected", peer));
             }
@@ -99,16 +109,23 @@ public class ReplicatorGroupImpl implements ReplicatorGroup {
         return this.replicatorMap.get(peer);
     }
 
+    /**
+     * 往 replicatorMap 中添加新的 节点
+     * @param peer target peer
+     * @return
+     */
     @Override
     public boolean addReplicator(final PeerId peer) {
         Requires.requireTrue(this.commonOptions.getTerm() != 0);
         if (this.replicatorMap.containsKey(peer)) {
+            //这是???
             this.failureReplicators.remove(peer);
             return true;
         }
         final ReplicatorOptions opts = this.commonOptions == null ? new ReplicatorOptions() : this.commonOptions.copy();
 
         opts.setPeerId(peer);
+        // 通过配置 构建对象
         final ThreadId rid = Replicator.start(opts, this.raftOptions);
         if (rid == null) {
             LOG.error("Fail to start replicator to peer={}.", peer);
@@ -118,11 +135,22 @@ public class ReplicatorGroupImpl implements ReplicatorGroup {
         return this.replicatorMap.put(peer, rid) == null;
     }
 
+    /**
+     * 清除 失败的复制者
+     */
     @Override
     public void clearFailureReplicators() {
         this.failureReplicators.clear();
     }
 
+    /**
+     * 等待追赶
+     * @param peer
+     * @param maxMargin
+     * @param dueTime
+     * @param done
+     * @return
+     */
     @Override
     public boolean waitCaughtUp(final PeerId peer, final long maxMargin, final long dueTime, final CatchUpClosure done) {
         final ThreadId rid = this.replicatorMap.get(peer);

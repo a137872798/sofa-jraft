@@ -228,6 +228,7 @@ public class AppendEntriesRequestProcessor extends NodeRequestProcessor<AppendEn
      */
     static class PeerRequestContext {
 
+        // 该节点信息
         private final String                         groupId;
         private final String                         peerId;
 

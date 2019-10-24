@@ -25,7 +25,7 @@ import com.google.protobuf.Message;
 
 /**
  * Handle install snapshot request.
- *
+ * 安装快照的请求处理器
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Apr-08 6:09:34 PM
@@ -46,6 +46,13 @@ public class InstallSnapshotRequestProcessor extends NodeRequestProcessor<Instal
         return request.getGroupId();
     }
 
+    /**
+     * 委托给 RaftServerService
+     * @param service
+     * @param request
+     * @param done
+     * @return
+     */
     @Override
     public Message processRequest0(RaftServerService service, InstallSnapshotRequest request, RpcRequestClosure done) {
         return service.handleInstallSnapshot(request, done);

@@ -258,11 +258,15 @@ public class Utils {
 
     /**
      * Expand byte buffer at least minLength.
+     * 进行扩容
      */
     public static ByteBuffer expandByteBufferAtLeast(final ByteBuffer buf, final int minLength) {
         final int newCapacity = minLength > RAFT_DATA_BUF_SIZE ? minLength : RAFT_DATA_BUF_SIZE;
+        // 这里将大小翻倍
         final ByteBuffer newBuf = ByteBuffer.allocate(buf.capacity() + newCapacity);
+        // 反转成读模式
         buf.flip();
+        // 该方法 会将旧数据拷贝到新bytebuffer 中
         newBuf.put(buf);
         return newBuf;
     }

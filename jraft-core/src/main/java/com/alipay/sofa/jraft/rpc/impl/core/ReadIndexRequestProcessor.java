@@ -28,7 +28,7 @@ import com.google.protobuf.Message;
 
 /**
  * Handle read index request.
- *
+ * readIndex 请求处理器
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Apr-08 6:09:34 PM
@@ -49,6 +49,13 @@ public class ReadIndexRequestProcessor extends NodeRequestProcessor<ReadIndexReq
         return request.getGroupId();
     }
 
+    /**
+     * 同样是委托实现
+     * @param service
+     * @param request
+     * @param done
+     * @return
+     */
     @Override
     public Message processRequest0(RaftServerService service, ReadIndexRequest request, RpcRequestClosure done) {
         service.handleReadIndexRequest(request, new RpcResponseClosureAdapter<RpcRequests.ReadIndexResponse>() {

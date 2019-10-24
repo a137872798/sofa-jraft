@@ -27,7 +27,7 @@ import com.alipay.sofa.jraft.entity.PeerId;
 
 /**
  * Client RPC service connection event processor for {@link ConnectionEventType#CONNECT}
- *
+ * 处理连接事件
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Apr-12 10:21:22 AM
@@ -36,6 +36,9 @@ public class ClientServiceConnectionEventProcessor implements ConnectionEventPro
 
     private static final Logger   LOG = LoggerFactory.getLogger(ClientServiceConnectionEventProcessor.class);
 
+    /**
+     * 复制组  内部维护了 PeerId, Replicator 的map
+     */
     private final ReplicatorGroup rgGroup;
 
     public ClientServiceConnectionEventProcessor(ReplicatorGroup rgGroup) {

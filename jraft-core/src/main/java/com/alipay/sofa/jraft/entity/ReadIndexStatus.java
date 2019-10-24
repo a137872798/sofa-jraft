@@ -30,6 +30,9 @@ public class ReadIndexStatus {
 
     private final ReadIndexRequest     request; //raw request
     private final List<ReadIndexState> states; //read index requests in batch.
+    /**
+     * 代表读取到的结果 实际上该对象可以看作是 ReadIndexRequest 对应的 响应结果
+     */
     private final long                 index;  //committed log index.
 
     public ReadIndexStatus(List<ReadIndexState> states, ReadIndexRequest request, long index) {

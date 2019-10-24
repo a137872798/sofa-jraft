@@ -31,7 +31,7 @@ public interface SaveSnapshotClosure extends Closure {
 
     /**
      * Starts to save snapshot, returns the writer.
-     * 开始保存快照 并返回一个writer 对象
+     * 传入集群快照信息 并返回一个writer 对象
      * @param meta metadata of snapshot.
      * @return returns snapshot writer.
      */

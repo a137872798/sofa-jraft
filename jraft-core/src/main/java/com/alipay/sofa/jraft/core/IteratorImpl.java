@@ -61,11 +61,11 @@ public class IteratorImpl {
 
     /**
      *
-     * @param fsm
-     * @param logManager
-     * @param closures
-     * @param firstClosureIndex
-     * @param lastAppliedIndex 当前LogStorage 写入的下标
+     * @param fsm   状态机
+     * @param logManager   保存LogEntry 的对象
+     * @param closures   一组待处理的回调对象
+     * @param firstClosureIndex  代表从哪个下标开始的回调对象
+     * @param lastAppliedIndex 当前LogStorage 写入的下标 (或者说上次 caller 写入的index )
      * @param committedIndex  代表要commit 的目标下标
      * @param applyingIndex
      */
@@ -109,16 +109,16 @@ public class IteratorImpl {
 
     /**
      * Move to next
-     * 初始化后触发
+     * 初始化后触发  等下 调用该方法时  LogManager 已经写入数据了 那么commited 实际上是代表 leader 写入到其他follower
      */
     public void next() {
         this.currEntry = null; //release current entry
-        //get next entry
+        //get next entry  这2个值的差值 就是待写入的数据量
         if (this.currentIndex <= this.committedIndex) {
             ++this.currentIndex;
             if (this.currentIndex <= this.committedIndex) {
                 try {
-                    // 获取指定index 对应的log 实体
+                    // 获取指定index 对应的log 实体  内部借助第三方框架 先不看
                     this.currEntry = this.logManager.getEntry(this.currentIndex);
                     if (this.currEntry == null) {
                         // 初始化error 属性
@@ -132,7 +132,7 @@ public class IteratorImpl {
                     getOrCreateError().setType(EnumOutter.ErrorType.ERROR_TYPE_LOG);
                     getOrCreateError().getStatus().setError(RaftError.EINVAL, e.getMessage());
                 }
-                // 代表当前正在处理的下标
+                // 更新当前处理的偏移量
                 this.applyingIndex.set(this.currentIndex);
             }
         }

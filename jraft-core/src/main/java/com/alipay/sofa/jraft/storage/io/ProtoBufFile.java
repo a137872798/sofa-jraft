@@ -81,6 +81,7 @@ public class ProtoBufFile {
             final int msgLen = Bits.getInt(lenBytes, 0);
             final byte[] msgBytes = new byte[msgLen];
             readBytes(msgBytes, input);
+            // 将数据按照特定格式解析
             return ProtobufMsgFactory.newMessageByProtoClassName(name, msgBytes);
         }
     }

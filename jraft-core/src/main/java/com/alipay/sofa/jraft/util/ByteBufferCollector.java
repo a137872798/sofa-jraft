@@ -20,13 +20,16 @@ import java.nio.ByteBuffer;
 
 /**
  * A byte buffer collector that will expand automatically.
- *
+ * 具备自动扩容能力的 bytebuffer
  * @author dennis
  */
 public final class ByteBufferCollector implements Recyclable {
 
     private static final int MAX_CAPACITY_TO_RECYCLE = 4 * 1024 * 1024; // 4M
 
+    /**
+     * nio 的 缓冲区
+     */
     private ByteBuffer       buffer;
 
     public int capacity() {
@@ -35,6 +38,7 @@ public final class ByteBufferCollector implements Recyclable {
 
     public void expandIfNecessary() {
         if (!hasRemaining()) {
+            // 进行扩容
             getBuffer(Utils.RAFT_DATA_BUF_SIZE);
         }
     }
@@ -94,6 +98,11 @@ public final class ByteBufferCollector implements Recyclable {
         }
     }
 
+    /**
+     * 首次创建 or 扩容
+     * @param expectSize 预期的长度
+     * @return
+     */
     private ByteBuffer getBuffer(final int expectSize) {
         if (this.buffer == null) {
             this.buffer = Utils.allocate(expectSize);

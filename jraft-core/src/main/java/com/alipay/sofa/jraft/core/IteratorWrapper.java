@@ -36,6 +36,10 @@ public class IteratorWrapper implements Iterator {
         this.impl = iterImpl;
     }
 
+    /**
+     * 代表只处理 data 类型数据
+     * @return
+     */
     @Override
     public boolean hasNext() {
         return this.impl.isGood() && this.impl.entry().getType() == EnumOutter.EntryType.ENTRY_TYPE_DATA;

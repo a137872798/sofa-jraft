@@ -57,7 +57,7 @@ public class LocalSnapshotStorage implements SnapshotStorage {
 
     private static final String                      TEMP_PATH = "temp";
     /**
-     * 应该是一级缓存
+     * key 代表快照文件的 index  value 代表对该index 的引用计数
      */
     private final ConcurrentMap<Long, AtomicInteger> refMap    = new ConcurrentHashMap<>();
     /**
@@ -158,13 +158,14 @@ public class LocalSnapshotStorage implements SnapshotStorage {
 
         // TODO: add snapshot watcher
 
-        // get last_snapshot_index
+        // get last_snapshot_index   里面存放的是被删除的快照文件的 index 每个index 对应该文件是第一个快照
         if (!snapshots.isEmpty()) {
             Collections.sort(snapshots);
             final int snapshotCount = snapshots.size();
 
             for (int i = 0; i < snapshotCount - 1; i++) {
                 final long index = snapshots.get(i);
+                // 找到对应的路径(这里应该是文件夹路径)
                 final String snapshotPath = getSnapshotPath(index);
                 // 删除最后个之前的其余文件
                 if (!destroySnapshot(snapshotPath)) {
@@ -223,6 +224,11 @@ public class LocalSnapshotStorage implements SnapshotStorage {
         }
     }
 
+    /**
+     * 获取对应下标的 引用计数
+     * @param index
+     * @return
+     */
     AtomicInteger getRefs(final long index) {
         AtomicInteger refs = this.refMap.get(index);
         if (refs == null) {

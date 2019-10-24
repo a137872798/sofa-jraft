@@ -26,7 +26,7 @@ import com.google.protobuf.Message;
 
 /**
  * Get file request processor.
- *
+ * 获取文件请求处理器
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Apr-04 3:01:25 PM
@@ -37,6 +37,12 @@ public class GetFileRequestProcessor extends RpcRequestProcessor<GetFileRequest>
         super(executor);
     }
 
+    /**
+     * 转发给 文件服务处理
+     * @param request
+     * @param done
+     * @return
+     */
     @Override
     public Message processRequest(GetFileRequest request, RpcRequestClosure done) {
         return FileService.getInstance().handleGetFile(request, done);

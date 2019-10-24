@@ -122,7 +122,7 @@ import com.lmax.disruptor.dsl.ProducerType;
 
 /**
  * The raft replica node implementation.
- * node节点的默认实现
+ * node节点的默认实现  TODO  这个类 最后看
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Apr-03 4:26:51 PM

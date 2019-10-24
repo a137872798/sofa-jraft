@@ -43,7 +43,7 @@ import com.google.protobuf.ZeroByteStringHelper;
 
 /**
  * File reader service.
- *
+ * 文件读取服务对象
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Mar-30 10:23:13 AM
@@ -52,8 +52,14 @@ public final class FileService {
 
     private static final Logger                   LOG           = LoggerFactory.getLogger(FileService.class);
 
+    /**
+     * 单例模式
+     */
     private static final FileService              INSTANCE      = new FileService();
 
+    /**
+     * key peerId  value 文件读取对象
+     */
     private final ConcurrentMap<Long, FileReader> fileReaderMap = new ConcurrentHashMap<>();
     private final AtomicLong                      nextId        = new AtomicLong();
 
@@ -71,20 +77,27 @@ public final class FileService {
         this.fileReaderMap.clear();
     }
 
+    /**
+     * 初始化文件服务对象
+     */
     private FileService() {
+        // 获取进程id
         final long processId = Utils.getProcessId(ThreadLocalRandom.current().nextLong(10000, Integer.MAX_VALUE));
         final long initialValue = Math.abs(processId << 45 | System.nanoTime() << 17 >> 17);
+        // 看来生成了一个类似随机数的值
         this.nextId.set(initialValue);
         LOG.info("Initial file reader id in FileService is {}", initialValue);
     }
 
     /**
      * Handle GetFileRequest, run the response or set the response with done.
+     * 处理获取文件的请求
      */
     public Message handleGetFile(final GetFileRequest request, final RpcRequestClosure done) {
         if (request.getCount() <= 0 || request.getOffset() < 0) {
             return RpcResponseFactory.newResponse(RaftError.EREQUEST, "Invalid request: %s", request);
         }
+        // 通过id 获取对应的 FileReader 对象 没有找到则抛出异常
         final FileReader reader = this.fileReaderMap.get(request.getReaderId());
         if (reader == null) {
             return RpcResponseFactory.newResponse(RaftError.ENOENT, "Fail to find reader=%d", request.getReaderId());
@@ -96,15 +109,20 @@ public final class FileService {
                 request.getCount());
         }
 
+        // 分配一个 bytebufferCollector 对象  内部包含一个 bytebuffer 对象
         final ByteBufferCollector dataBuffer = ByteBufferCollector.allocate();
         final GetFileResponse.Builder responseBuilder = GetFileResponse.newBuilder();
         try {
+            // 将文件从指定偏移量将数据读取到 buffer 中  返回读取的长度
             final int read = reader
                 .readFile(dataBuffer, request.getFilename(), request.getOffset(), request.getCount());
             responseBuilder.setReadSize(read);
+            // 是否读到了末尾
             responseBuilder.setEof(read == FileReader.EOF);
             final ByteBuffer buf = dataBuffer.getBuffer();
+            // 反转成读模式
             buf.flip();
+            // 如果没数据可读 为 data 设置一个 空结果
             if (!buf.hasRemaining()) {
                 // skip empty data
                 responseBuilder.setData(ByteString.EMPTY);
@@ -126,6 +144,7 @@ public final class FileService {
 
     /**
      * Adds a file reader and return it's generated readerId.
+     * 增加 文件读取对象 看来该类的核心功能在 fileReader中
      */
     public long addReader(final FileReader reader) {
         final long readerId = this.nextId.getAndIncrement();

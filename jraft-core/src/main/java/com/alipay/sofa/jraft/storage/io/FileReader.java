@@ -23,7 +23,7 @@ import com.alipay.sofa.jraft.util.ByteBufferCollector;
 
 /**
  * Read data from a file, all the method should be thread-safe.
- *
+ * 文件读取对象 FileService 的核心实现就是通过转发给该对象
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Mar-13 11:48:34 AM
@@ -34,14 +34,14 @@ public interface FileReader {
 
     /**
      * Get the file path.
-     *
+     * 获取读取的目标路径
      * @return path of the file
      */
     String getPath();
 
     /**
      * Read file into buf starts from offset at most maxCount.
-     *
+     * 从指定文件 的 指定偏移量开始读取数据并存入 bytebuffer 中
      * @param buf      read bytes into this buf
      * @param fileName file name
      * @param offset   the offset of file

@@ -945,6 +945,7 @@ public class LogManagerImpl implements LogManager {
      */
     protected LogEntry getEntryFromMemory(final long index) {
         LogEntry entry = null;
+        // 缓存存在的话 就尝试获取
         if (!this.logsInMemory.isEmpty()) {
             final long firstIndex = this.logsInMemory.peekFirst().getId().getIndex();
             final long lastIndex = this.logsInMemory.peekLast().getId().getIndex();
@@ -952,6 +953,7 @@ public class LogManagerImpl implements LogManager {
                 throw new IllegalStateException(String.format("lastIndex=%d,firstIndex=%d,logsInMemory=[%s]",
                     lastIndex, firstIndex, descLogsInMemory()));
             }
+            // 代表在合理的偏移量内
             if (index >= firstIndex && index <= lastIndex) {
                 entry = this.logsInMemory.get((int) (index - firstIndex));
             }
@@ -959,6 +961,11 @@ public class LogManagerImpl implements LogManager {
         return entry;
     }
 
+    /**
+     * 根据指定偏移量从 LogManager 中获取数据实体(每次写入的数据都以 LogEntry 为单位 同时index 每次只增加1)
+     * @param index the index of log entry
+     * @return
+     */
     @Override
     public LogEntry getEntry(final long index) {
         this.readLock.lock();
@@ -966,6 +973,7 @@ public class LogManagerImpl implements LogManager {
             if (index > this.lastLogIndex || index < this.firstLogIndex) {
                 return null;
             }
+            // 首先尝试从内存加载
             final LogEntry entry = getEntryFromMemory(index);
             if (entry != null) {
                 return entry;
@@ -973,8 +981,10 @@ public class LogManagerImpl implements LogManager {
         } finally {
             this.readLock.unlock();
         }
+        // 尝试从 logStorage 中获取
         final LogEntry entry = this.logStorage.getEntry(index);
         if (entry == null) {
+            // 没有找到抛出异常
             reportError(RaftError.EIO.getNumber(), "Corrupted entry at index=%d, not found", index);
         }
         // Validate checksum
@@ -1441,6 +1451,10 @@ public class LogManagerImpl implements LogManager {
         }
     }
 
+    /**
+     * 设置最后生效的 index 和 任期
+     * @param appliedId
+     */
     @Override
     public void setAppliedId(final LogId appliedId) {
         LogId clearId;
@@ -1450,11 +1464,13 @@ public class LogManagerImpl implements LogManager {
                 return;
             }
             this.appliedId = appliedId.copy();
+            // 代表要从哪里开始清除  一开始数据是写入到内存中的  之后在某个时间点 进行刷盘 这里选择较小的偏移量 将 内存中这部分数据移除掉
             clearId = this.diskId.compareTo(this.appliedId) <= 0 ? this.diskId : this.appliedId;
         } finally {
             this.writeLock.unlock();
         }
         if (clearId != null) {
+            // 从内存中移除数据
             clearMemoryLogs(clearId);
         }
     }
