@@ -48,7 +48,7 @@ public interface LogManager extends Lifecycle<LogManagerOptions>, Describer {
     abstract class StableClosure implements Closure {
 
         /**
-         * 第一个日志文件的偏移量
+         * 要写入entry 的 首个偏移量
          */
         protected long           firstLogIndex = 0;
         /**

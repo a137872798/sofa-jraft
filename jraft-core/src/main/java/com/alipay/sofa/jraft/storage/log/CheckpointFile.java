@@ -28,7 +28,7 @@ import com.google.protobuf.ZeroByteStringHelper;
 
 /**
  * Segments checkpoint file.
- *
+ * 检查点文件
  * @author boyan(boyan@antfin.com)
  */
 public class CheckpointFile {
@@ -40,13 +40,15 @@ public class CheckpointFile {
 
     /**
      * Checkpoint metadata info.
-     *
+     * 检查点元数据
      * @author boyan(boyan@antfin.com)
      */
     public static final class Checkpoint {
         // Segment file start offset
+        // 碎片文件的 起始偏移量
         public final long firstLogIndex;
         // Segment file current commit position.
+        // 当前提交的偏移量
         public final int  committedPos;
 
         public Checkpoint(final long firstLogIndex, final int committedPos) {
@@ -76,6 +78,12 @@ public class CheckpointFile {
         this.path = path;
     }
 
+    /**
+     * 将某个检查点保存到文件中
+     * @param checkpoint
+     * @return
+     * @throws IOException
+     */
     public synchronized boolean save(final Checkpoint checkpoint) throws IOException {
         final ProtoBufFile file = new ProtoBufFile(this.path);
         final byte[] data = new byte[CHECKPOINT_METADATA_SIZE];

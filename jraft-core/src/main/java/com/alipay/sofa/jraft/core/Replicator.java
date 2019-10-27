@@ -1524,6 +1524,10 @@ public class Replicator implements ThreadId.OnError {
         return true;
     }
 
+    /**
+     * 写入数据体
+     * @param nextWaitIndex
+     */
     private void waitMoreEntries(final long nextWaitIndex) {
         try {
             LOG.debug("Node {} waits more entries", this.options.getNode().getNodeId());

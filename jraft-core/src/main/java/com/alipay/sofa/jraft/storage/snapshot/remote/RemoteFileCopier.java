@@ -40,6 +40,7 @@ import com.alipay.sofa.jraft.util.Utils;
 
 /**
  * Remote file copier
+ * 远程文件 copier
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Mar-23 2:03:14 PM
@@ -49,10 +50,22 @@ public class RemoteFileCopier {
     private static final Logger LOG = LoggerFactory.getLogger(RemoteFileCopier.class);
 
     private long                readId;
+    /**
+     * 客户端服务
+     */
     private RaftClientService   rpcService;
+    /**
+     * 定位到 远端地址
+     */
     private Endpoint            endpoint;
     private RaftOptions         raftOptions;
+    /**
+     * 定时器管理对象
+     */
     private TimerManager        timerManager;
+    /**
+     * 阀门对象
+     */
     private SnapshotThrottle    snapshotThrottle;
 
     @OnlyForTest
@@ -65,6 +78,13 @@ public class RemoteFileCopier {
         return this.endpoint;
     }
 
+    /**
+     * 初始化
+     * @param uri  对应被拷贝的 远端地址
+     * @param snapshotThrottle  过滤数据的 阀门对象
+     * @param opts
+     * @return
+     */
     public boolean init(String uri, final SnapshotThrottle snapshotThrottle, final SnapshotCopierOptions opts) {
         this.rpcService = opts.getRaftClientService();
         this.timerManager = opts.getTimerManager();
@@ -78,17 +98,21 @@ public class RemoteFileCopier {
         }
         uri = uri.substring(prefixSize);
         final int slasPos = uri.indexOf('/');
+        // 截取 ip, port
         final String ipAndPort = uri.substring(0, slasPos);
+        // 对应具体的域名   截取出来的值 应该是一个数字
         uri = uri.substring(slasPos + 1);
 
         try {
             this.readId = Long.parseLong(uri);
             final String[] ipAndPortStrs = ipAndPort.split(":");
+            // 将远端 ip port 转换成 endpoint 对象
             this.endpoint = new Endpoint(ipAndPortStrs[0], Integer.parseInt(ipAndPortStrs[1]));
         } catch (final Exception e) {
             LOG.error("Fail to parse readerId or endpoint.", e);
             return false;
         }
+        // 连接到目标服务器
         if (!this.rpcService.connect(this.endpoint)) {
             LOG.error("Fail to init channel to {}.", this.endpoint);
             return false;
@@ -99,19 +123,21 @@ public class RemoteFileCopier {
 
     /**
      * Copy `source` from remote to local dest.
-     *
-     * @param source   source from remote
+     * 将数据拷贝到文件中
+     * @param source   source from remote  相当于定位远端字段的 标识符
      * @param destPath local path
      * @param opts     options of copy
      * @return true if copy success
      */
     public boolean copyToFile(final String source, final String destPath, final CopyOptions opts) throws IOException,
                                                                                                  InterruptedException {
+        // 根据 source 定位到资源 并将数据保存到 目标路径下 同时返回一个会话对象
         final Session session = startCopyToFile(source, destPath, opts);
         if (session == null) {
             return false;
         }
         try {
+            // 阻塞直到写入完成 这个session 类似于future
             session.join();
             return session.status().isOk();
         } finally {
@@ -119,6 +145,14 @@ public class RemoteFileCopier {
         }
     }
 
+    /**
+     * 从 remote 指定路径下将数据拷贝到 目标路径
+     * @param source
+     * @param destPath
+     * @param opts
+     * @return
+     * @throws IOException
+     */
     public Session startCopyToFile(final String source, final String destPath, final CopyOptions opts)
                                                                                                       throws IOException {
         final File file = new File(destPath);
@@ -131,25 +165,36 @@ public class RemoteFileCopier {
             }
         }
 
+        // 这里通过file 定位了outputStream 的输出路径
         final OutputStream out = new BufferedOutputStream(new FileOutputStream(file, false) {
 
+            // 通过 重写close 逻辑实现 物理级别同步写入
             @Override
             public void close() throws IOException {
                 getFD().sync();
                 super.close();
             }
         });
+        // 构建会话对象
         final BoltSession session = newBoltSession(source);
+        // 当输出到文件时 不设置 buf 而是设置 outputStream
         session.setOutputStream(out);
         session.setDestPath(destPath);
         session.setDestBuf(null);
+        // 将opts 设置到 session 中
         if (opts != null) {
             session.setCopyOptions(opts);
         }
+        // 开始通过会话对象拉取数据
         session.sendNextRpc();
         return session;
     }
 
+    /**
+     * 构建会话对象
+     * @param source
+     * @return
+     */
     private BoltSession newBoltSession(final String source) {
         final GetFileRequest.Builder reqBuilder = GetFileRequest.newBuilder() //
             .setFilename(source) //
@@ -160,6 +205,7 @@ public class RemoteFileCopier {
 
     /**
      * Copy `source` from remote to  buffer.
+     * 将数据拷贝到 IOBuffer 中
      * @param source  source from remote
      * @param destBuf buffer of dest
      * @param opt     options of copy
@@ -179,13 +225,22 @@ public class RemoteFileCopier {
         }
     }
 
+    /**
+     * 将数据保存到IOBuffer 中
+     * @param source
+     * @param destBuf
+     * @param opts
+     * @return
+     */
     public Session startCopy2IoBuffer(final String source, final ByteBufferCollector destBuf, final CopyOptions opts) {
         final BoltSession session = newBoltSession(source);
+        // destion 为 buffer 时 不设置outputStream 设置destBuf
         session.setOutputStream(null);
         session.setDestBuf(destBuf);
         if (opts != null) {
             session.setCopyOptions(opts);
         }
+        // 通过session 对象拉取数据
         session.sendNextRpc();
         return session;
     }

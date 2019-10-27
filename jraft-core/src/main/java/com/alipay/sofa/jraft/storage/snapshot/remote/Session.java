@@ -22,7 +22,7 @@ import com.alipay.sofa.jraft.Status;
 
 /**
  * A copy session.
- *
+ * 拷贝过程中产生的会话对象
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Apr-08 12:02:12 PM
@@ -31,12 +31,13 @@ public interface Session extends Closeable {
 
     /**
      * Cancel the copy job.
+     * 可以通过会话对象 关闭该任务
      */
     void cancel();
 
     /**
      * Block the thread to wait the copy job finishes or canceled.
-     *
+     * 阻塞线程 直到copy 任务完成
      * @throws InterruptedException if the current thread is interrupted
      *         while waiting
      */
@@ -44,6 +45,7 @@ public interface Session extends Closeable {
 
     /**
      * Returns the copy job status.
+     * 获取拷贝任务当前的状态
      */
     Status status();
 }

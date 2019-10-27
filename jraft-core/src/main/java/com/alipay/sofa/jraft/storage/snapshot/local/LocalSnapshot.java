@@ -24,12 +24,16 @@ import com.google.protobuf.Message;
 
 /**
  * Describe the Snapshot on another machine.
+ * 描述其他机器的快照对象
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Apr-07 10:21:55 AM
  */
 public class LocalSnapshot extends Snapshot {
 
+    /**
+     * 快照元数据表
+     */
     private final LocalSnapshotMetaTable metaTable;
 
     public LocalSnapshot(RaftOptions raftOptions) {
@@ -47,7 +51,7 @@ public class LocalSnapshot extends Snapshot {
 
     /**
      * List all the existing files in the Snapshot currently
-     *
+     * 通过元数据Table 返回一组快照文件
      * @return the existing file list
      */
     @Override

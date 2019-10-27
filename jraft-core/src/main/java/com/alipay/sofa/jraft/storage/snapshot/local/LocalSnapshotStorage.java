@@ -319,6 +319,11 @@ public class LocalSnapshotStorage implements SnapshotStorage {
         return create(true);
     }
 
+    /**
+     *
+     * @param fromEmpty
+     * @return
+     */
     public SnapshotWriter create(final boolean fromEmpty) {
         LocalSnapshotWriter writer = null;
         // noinspection ConstantConditions

@@ -45,8 +45,14 @@ public class LocalSnapshotMetaTable {
 
     private static final Logger              LOG = LoggerFactory.getLogger(LocalSnapshotMetaTable.class);
 
+    /**
+     * 元数据 映射容器
+     */
     private final Map<String, LocalFileMeta> fileMap;
     private final RaftOptions                raftOptions;
+    /**
+     * 快照元数据
+     */
     private SnapshotMeta                     meta;
 
     public LocalSnapshotMetaTable(RaftOptions raftOptions) {
@@ -57,6 +63,7 @@ public class LocalSnapshotMetaTable {
 
     /**
      * Save metadata infos into byte buffer.
+     * 将远端传来的数据保存到 buffer 中
      */
     public ByteBuffer saveToByteBufferAsRemote() {
         final LocalSnapshotPbMeta.Builder pbMetaBuilder = LocalSnapshotPbMeta.newBuilder();
@@ -74,6 +81,7 @@ public class LocalSnapshotMetaTable {
 
     /**
      * Load metadata infos from byte buffer.
+     * 从 buffer 中加载数据并保存
      */
     public boolean loadFromIoBufferAsRemote(final ByteBuffer buf) {
         if (buf == null) {
@@ -86,6 +94,7 @@ public class LocalSnapshotMetaTable {
                 LOG.error("Fail to load meta from buffer.");
                 return false;
             }
+            // 从格式化后的数据中解析
             return loadFromPbMeta(pbMeta);
         } catch (final InvalidProtocolBufferException e) {
             LOG.error("Fail to parse LocalSnapshotPbMeta from byte buffer", e);
@@ -95,6 +104,7 @@ public class LocalSnapshotMetaTable {
 
     /**
      * Adds a file metadata.
+     * 保存文件映射关系
      */
     public boolean addFile(final String fileName, final LocalFileMeta meta) {
         return this.fileMap.putIfAbsent(fileName, meta) == null;
@@ -184,6 +194,7 @@ public class LocalSnapshotMetaTable {
         } else {
             this.meta = null;
         }
+        // 将元数据中的 file 于文件名映射保存起来
         this.fileMap.clear();
         for (final File f : pbMeta.getFilesList()) {
             this.fileMap.put(f.getName(), f.getMeta());

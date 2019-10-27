@@ -117,10 +117,12 @@ public class LogManagerImpl implements LogManager {
     // TODO  use a lock-free concurrent list instead?
     // 暂存日志的 内存队列
     private ArrayDeque<LogEntry>                             logsInMemory           = new ArrayDeque<>();
+
+    // 记录当前写入日志的 首尾偏移量 避免Log 被重复写入
     private volatile long                                    firstLogIndex;
     private volatile long                                    lastLogIndex;
     /**
-     * 快照id
+     * 记录快照写入 下标
      */
     private volatile LogId                                   lastSnapshotId         = new LogId(0, 0);
     private final Map<Long, WaitMeta>                        waitMap                = new HashMap<>();
@@ -208,7 +210,7 @@ public class LogManagerImpl implements LogManager {
 
     /**
      * Waiter metadata
-     * 等待相关的元数据信息
+     * 等待处理的数据 会关联对应的回调对象 并保存在一个容器中
      * @author boyan (boyan@alibaba-inc.com)
      *
      * 2018-Apr-04 5:05:04 PM
@@ -349,6 +351,7 @@ public class LogManagerImpl implements LogManager {
                 this.writeLock.unlock();
             }
         }
+        // 发布一个 shutdown 事件
         stopDiskThread();
     }
 
@@ -435,13 +438,12 @@ public class LogManagerImpl implements LogManager {
                 if (this.raftOptions.isEnableLogEntryChecksum()) {
                     entry.setChecksum(entry.checksum());
                 }
-                // TODO 如果是配置数据  配置数据 好像有 old 和 new 的概念 先不细看
                 if (entry.getType() == EntryType.ENTRY_TYPE_CONFIGURATION) {
                     Configuration oldConf = new Configuration();
                     if (entry.getOldPeers() != null) {
                         oldConf = new Configuration(entry.getOldPeers());
                     }
-                    // 同时存放旧配置 和 新配置
+                    // configManager 用于管理写入的 conf 信息 同时该对象在初始化时 会从LogStore中加载往期数据 并保存到 conf中
                     final ConfigurationEntry conf = new ConfigurationEntry(entry.getId(),
                         new Configuration(entry.getPeers()), oldConf);
                     this.configManager.add(conf);
@@ -449,13 +451,14 @@ public class LogManagerImpl implements LogManager {
             }
             if (!entries.isEmpty()) {
                 done.setFirstLogIndex(entries.get(0).getId().getIndex());
-                // 这应该是个一级缓存 而且是 通过 先写缓存后写DB 的方式解决双写一致性的  也就是允许读到错误的数据 (可能脑裂写入了旧Leader 的数据 可以却能对外展示)
+                // 数据不是直接写入到 logStore 中的 而是先写到内存中 在合适的时机进行刷盘
                 this.logsInMemory.addAll(entries);
             }
             // 将检查冲突完后的数据设置到 done 中
             done.setEntries(entries);
 
             int retryTimes = 0;
+            // 这里是发布 OTHER 事件
             final EventTranslator<StableClosureEvent> translator = (event, sequence) -> {
                 event.reset();
                 event.type = EventType.OTHER;
@@ -476,7 +479,7 @@ public class LogManagerImpl implements LogManager {
                 }
             }
             doUnlock = false;
-            // 触发回调对象
+            // 触发回调对象  这时数据不一定写入到 writeMap 中
             if (!wakeupAllWaiter(this.writeLock)) {
                 // 如果没有设置 newLog 的 回调对象 才选择触发该监听器
                 notifyLastLogIndexListeners();
@@ -554,6 +557,7 @@ public class LogManagerImpl implements LogManager {
         for (int i = 0; i < waiterCount; i++) {
             final WaitMeta wm = wms.get(i);
             wm.errorCode = errCode;
+            // 处理之前的数据
             Utils.runInThread(() -> runOnNewLog(wm));
         }
         return true;
@@ -651,7 +655,7 @@ public class LogManagerImpl implements LogManager {
          */
         LogId flush() {
             if (this.size > 0) {
-                // 写入数据 并返回最后一个写入成功的数据的 LogId （每个要写入的数据一开始就确定了LogId ）
+                // toAppend 代表一组待写入的数据
                 this.lastId = appendToStorage(this.toAppend);
                 for (int i = 0; i < this.size; i++) {
                     // storage 中每个元素都对应到toAppend 这里在处理完成时 根据状态触发回调
@@ -703,7 +707,7 @@ public class LogManagerImpl implements LogManager {
          */
         List<StableClosure> storage = new ArrayList<>(256);
         /**
-         * 批量添加对象  推测是 将 storage 存储到 diskId 之后的位置   初始化时 storage 为空
+         *
          */
         AppendBatcher       ab      = new AppendBatcher(this.storage, 256, new ArrayList<>(),
                                         LogManagerImpl.this.diskId);
@@ -724,7 +728,7 @@ public class LogManagerImpl implements LogManager {
                 this.lastId = this.ab.flush();
                 // 更新当前要刷盘的起点(id 中携带了 index 和任期)
                 setDiskId(this.lastId);
-                // 该栅栏是配合 join() 的 只有刷盘完成 stop才算完成
+                // 发出 SHUTDOWN 事件时 会设置 闭锁 可以通过 调用wait 配合 countDown 实现同步解锁
                 LogManagerImpl.this.shutDownLatch.countDown();
                 return;
             }
@@ -778,7 +782,7 @@ public class LogManagerImpl implements LogManager {
                     case RESET:
                         final ResetClosure rc = (ResetClosure) done;
                         LOG.info("Reseting storage to nextLogIndex={}", rc.nextLogIndex);
-                        // 重启 rocks DB 并将偏移量对象的 LogEntry 加载到 logManager 中
+                        // 重启 rocksDB 并将 偏移量对应的数据重新保存到 DB 中
                         ret = LogManagerImpl.this.logStorage.reset(rc.nextLogIndex);
                         break;
                     default:
@@ -791,6 +795,10 @@ public class LogManagerImpl implements LogManager {
                     done.run(Status.OK());
                 }
             }
+            // endOfBatch 只有当 囤积大量事件未消费时 才有意义 如果 生产/消费速度持平 那么 始终是true
+            // 也就是理解为 正常情况下 每次写入的数据 都会立即刷盘  这样确保了数据的实时性
+            // 只有当 (Disruptor的概念) 生产者因为什么原因 后面的数据 已经提交了 而前面的还没提交 导致的事件堆积在一次性交由消费者
+            // 处理时  这时 每次都刷盘的意义不是很大 因为消费这些数据的事件间隔会很短
             if (endOfBatch) {
                 this.lastId = this.ab.flush();
                 setDiskId(this.lastId);
@@ -815,7 +823,7 @@ public class LogManagerImpl implements LogManager {
     }
 
     /**
-     * 更新刷盘id
+     * 更新刷盘id  同时将该偏移量之前的 数据从内存中移除
      * @param id
      */
     private void setDiskId(final LogId id) {
@@ -869,23 +877,29 @@ public class LogManagerImpl implements LogManager {
             // 生成配置实体
             final ConfigurationEntry entry = new ConfigurationEntry(new LogId(meta.getLastIncludedIndex(),
                 meta.getLastIncludedTerm()), conf, oldConf);
-            // 设置配置快照
+            // 设置配置快照  快照应该不是只包含 新旧集群信息
             this.configManager.setSnapshot(entry);
+            // 获取快照数据 对应的任期   这里有一点 如果超过了 lastIndex 那么会返回0
+            // 该方法的含义是 当写入快照时 follower 的旧数据就可以清除了 这里是在划分界限 看看对应到哪个任期 如果返回0 代表数据全部过期
+            // 如果
             final long term = unsafeGetTerm(meta.getLastIncludedIndex());
+            // 代表上次快照写入的 起始偏移量
             final long savedLastSnapshotIndex = this.lastSnapshotId.getIndex();
 
+            // 更新写入的偏移量
             this.lastSnapshotId.setIndex(meta.getLastIncludedIndex());
             this.lastSnapshotId.setTerm(meta.getLastIncludedTerm());
 
-            // appliedId代表快照的偏移量
+            // appliedId代表快照的偏移量 为什么要保存该变量???
             if (this.lastSnapshotId.compareTo(this.appliedId) > 0) {
                 this.appliedId = this.lastSnapshotId.copy();
             }
 
-            // 因为生成快照了 所以 LogStorage 中 早些的数据可以去掉了
+            // 这里代表  快照对应的任期 超过了 lastIndex 这样可以清除旧数据
             if (term == 0) {
                 // last_included_index is larger than last_index
                 // FIXME: what if last_included_index is less than first_index?
+                // 这里会先将数据从 内存中移除 同时添加一个任务到 Disruptor 中 处理该任务时 会从RocksDB 中移除数据
                 truncatePrefix(meta.getLastIncludedIndex() + 1);
             } else if (term == meta.getLastIncludedTerm()) {
                 // Truncating log to the index of the last snapshot.
@@ -893,6 +907,7 @@ public class LogManagerImpl implements LogManager {
                 // some log around last_snapshot_index is probably needed by some
                 // followers
                 // TODO if there are still be need?
+                // 代表 快照之间数据有重叠 这里就删除掉重复的部分
                 if (savedLastSnapshotIndex > 0) {
                     truncatePrefix(savedLastSnapshotIndex + 1);
                 }
@@ -907,6 +922,9 @@ public class LogManagerImpl implements LogManager {
 
     }
 
+    /**
+     * 这里将 快照前的数据 清除掉
+     */
     @Override
     public void clearBufferedLogs() {
         this.writeLock.lock();
@@ -939,7 +957,7 @@ public class LogManagerImpl implements LogManager {
     }
 
     /**
-     * 从一级缓存中获取
+     * 从一级缓存中获取  存在2种保存方法 一种是 保存到内存中  还有种是保存到 LogStore 中  外部在什么时机 以及按照什么条件来选择保存方式呢???
      * @param index
      * @return
      */
@@ -1027,6 +1045,7 @@ public class LogManagerImpl implements LogManager {
 
     /**
      * 从下标中获取任期  就是通过rocksdb 获取logentry (该对象内部封装了任期)
+     * 这里没有从缓存中获取
      * @param index
      * @return
      */
@@ -1230,9 +1249,10 @@ public class LogManagerImpl implements LogManager {
         }
 
         LOG.debug("Truncate prefix, firstIndexKept is :{}", firstIndexKept);
-        // 将旧的配置也删除
+        // 将旧的配置也删除  这个 confManager 到底是干嘛用的 因为 加载rockDB 时 将所有conf 信息都保存进去了 如果 过时的数据是无效的
+        // 那么一开始就没必要保存该数据
         this.configManager.truncatePrefix(firstIndexKept);
-        // 添加写入任务
+        // 添加写入任务  也就是 针对 rockDB 的操作 都会放到 Disruptor 中
         final TruncatePrefixClosure c = new TruncatePrefixClosure(firstIndexKept);
         offerEvent(c, EventType.TRUNCATE_PREFIX);
         return true;
@@ -1425,6 +1445,7 @@ public class LogManagerImpl implements LogManager {
     private long notifyOnNewLog(final long expectedLastLogIndex, final WaitMeta wm) {
         this.writeLock.lock();
         try {
+            // index 不匹配时 直接执行 如果匹配 先存放到 waitMap 中 在某个合适的时机执行
             if (expectedLastLogIndex != this.lastLogIndex || this.stopped) {
                 wm.errorCode = this.stopped ? RaftError.ESTOP.getNumber() : 0;
                 Utils.runInThread(() -> runOnNewLog(wm));

@@ -48,7 +48,7 @@ import com.alipay.sofa.jraft.util.Utils;
 
 /**
  * Log Storage implementation based on rocksdb and segment files.
- *
+ * TODO `不影响核心逻辑 先不看
  * @author boyan(boyan@antfin.com)
  */
 public class RocksDBSegmentLogStorage extends RocksDBLogStorage {

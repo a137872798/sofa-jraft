@@ -30,6 +30,7 @@ import com.alipay.sofa.jraft.util.ByteBufferCollector;
 
 /**
  * Snapshot file reader
+ * 快照文件读取对象
  *
  * @author boyan (boyan@alibaba-inc.com)
  *
@@ -37,7 +38,13 @@ import com.alipay.sofa.jraft.util.ByteBufferCollector;
  */
 public class SnapshotFileReader extends LocalDirReader {
 
+    /**
+     * 读取的过滤器
+     */
     private final SnapshotThrottle snapshotThrottle;
+    /**
+     * 读取后将数据存放到meta中
+     */
     private LocalSnapshotMetaTable metaTable;
 
     public SnapshotFileReader(String path, SnapshotThrottle snapshotThrottle) {
@@ -58,17 +65,31 @@ public class SnapshotFileReader extends LocalDirReader {
         return file.exists();
     }
 
+    /**
+     * 从指定偏移量读取数据并保存到 buffer中
+     * @param metaBufferCollector
+     * @param fileName file name
+     * @param offset   the offset of file
+     * @param maxCount max read bytes
+     * @return
+     * @throws IOException
+     * @throws RetryAgainException
+     */
     @Override
     public int readFile(final ByteBufferCollector metaBufferCollector, final String fileName, final long offset,
                         final long maxCount) throws IOException, RetryAgainException {
         // read the whole meta file.
         if (fileName.equals(Snapshot.JRAFT_SNAPSHOT_META_FILE)) {
+            // 这里将metaTable 的 meta 和 fileMap 的数据全部保存到 buffer 中
             final ByteBuffer metaBuf = this.metaTable.saveToByteBufferAsRemote();
             // because bufRef will flip the buffer before using, so we must set the meta buffer position to it's limit.
+            // 创建 buffer 时 pos 还是0 因为之后要采用写入模式 为了避免覆盖数据 将pos 定位到 末尾
             metaBuf.position(metaBuf.limit());
             metaBufferCollector.setBuffer(metaBuf);
+            // EOF 代表读取到了末尾  end of file
             return EOF;
         }
+        // 如果不是meta文件 就从 fileMap 中找到某个指定的文件
         final LocalFileMeta fileMeta = this.metaTable.getFileMeta(fileName);
         if (fileMeta == null) {
             throw new FileNotFoundException("LocalFileMeta not found for " + fileName);
@@ -87,6 +108,7 @@ public class SnapshotFileReader extends LocalDirReader {
             }
         }
 
+        // 从fileMeta 中将数据加载到bytebuffer 中 从offset 只读取 maxCount
         return readFileWithMeta(metaBufferCollector, fileName, fileMeta, offset, newMaxCount);
     }
 }

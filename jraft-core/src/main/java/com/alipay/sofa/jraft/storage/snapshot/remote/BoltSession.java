@@ -51,6 +51,7 @@ import com.google.protobuf.Message;
 
 /**
  * Copy session based on bolt framework.
+ * 该对象必须基于线程安全来实现   该对象封装了 从远端拉取数据的逻辑
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Apr-08 12:01:23 PM
@@ -62,18 +63,42 @@ public class BoltSession implements Session {
 
     private final Lock                   lock        = new ReentrantLock();
     private final Status                 st          = Status.OK();
+    /**
+     * 用于阻塞直到任务完成的 闭锁
+     */
     private final CountDownLatch         finishLatch = new CountDownLatch(1);
+    /**
+     * 获取文件响应结果的回调对象
+     */
     private final GetFileResponseClosure done        = new GetFileResponseClosure();
+    /**
+     * 客户端对象
+     */
     private final RaftClientService      rpcService;
+    /**
+     * 获取文件的请求对象构建器
+     */
     private final GetFileRequest.Builder requestBuilder;
+    /**
+     * 该会话对应的远端地址
+     */
     private final Endpoint               endpoint;
+    /**
+     * 定时器管理器
+     */
     private final TimerManager           timerManager;
+    /**
+     * 阀门对象
+     */
     private final SnapshotThrottle       snapshotThrottle;
     private final RaftOptions            raftOptions;
     private int                          retryTimes  = 0;
     private boolean                      finished;
     private ByteBufferCollector          destBuf;
     private CopyOptions                  copyOptions = new CopyOptions();
+    /**
+     * 用于从远端写入数据的输出流
+     */
     private OutputStream                 outputStream;
     private ScheduledFuture<?>           timer;
     private String                       destPath;
@@ -81,11 +106,15 @@ public class BoltSession implements Session {
 
     /**
      * Get file response closure to answer client.
-     *
+     * 获取文件请求的 回调对象
      * @author boyan (boyan@alibaba-inc.com)
      */
     private class GetFileResponseClosure extends RpcResponseClosureAdapter<GetFileResponse> {
 
+        /**
+         * 当返回结果时触发,处理本次远端调用的res
+         * @param status the task status. 任务结果
+         */
         @Override
         public void run(final Status status) {
             onRpcReturned(status, getResponse());
@@ -116,6 +145,7 @@ public class BoltSession implements Session {
         this.lock.lock();
         try {
             if (!this.finished) {
+                // quietly 的含义就是不处理抛出的异常 而是使用打印日志的方式
                 Utils.closeQuietly(this.outputStream);
             }
         } finally {
@@ -123,6 +153,15 @@ public class BoltSession implements Session {
         }
     }
 
+    /**
+     * 会话对象
+     * @param rpcService
+     * @param timerManager
+     * @param snapshotThrottle
+     * @param raftOptions
+     * @param rb
+     * @param ep
+     */
     public BoltSession(final RaftClientService rpcService, final TimerManager timerManager,
                        final SnapshotThrottle snapshotThrottle, final RaftOptions raftOptions,
                        final GetFileRequest.Builder rb, final Endpoint ep) {
@@ -158,6 +197,7 @@ public class BoltSession implements Session {
                 this.timer.cancel(true);
             }
             if (this.rpcCall != null) {
+                // 调用该方法 会唤醒 调用get 的线程 同时 结果为CANCELLED 代表本次任务是被关闭的
                 this.rpcCall.cancel(true);
             }
             if (this.st.isOk()) {
@@ -169,6 +209,10 @@ public class BoltSession implements Session {
         }
     }
 
+    /**
+     * 外部线程 调用该方法时 被阻塞只有当内部线程完成任务后解开闭锁 才能唤醒外部线程
+     * @throws InterruptedException
+     */
     @Override
     public void join() throws InterruptedException {
         this.finishLatch.await();
@@ -179,13 +223,18 @@ public class BoltSession implements Session {
         return this.st;
     }
 
+    /**
+     * 当关闭会话对象时触发
+     */
     private void onFinished() {
         if (!this.finished) {
+            // 如果 st 已经被设置 且 code != 0 代表在拷贝过程中出现了异常
             if (!this.st.isOk()) {
                 LOG.error("Fail to copy data, readerId={} fileName={} offset={} status={}",
                     this.requestBuilder.getReaderId(), this.requestBuilder.getFilename(),
                     this.requestBuilder.getOffset(), this.st);
             }
+            // 关闭输出流对象
             if (this.outputStream != null) {
                 Utils.closeQuietly(this.outputStream);
                 this.outputStream = null;
@@ -193,37 +242,52 @@ public class BoltSession implements Session {
             if (this.destBuf != null) {
                 final ByteBuffer buf = this.destBuf.getBuffer();
                 if (buf != null) {
+                    // 这里为什么要 反转成 读模式呢
                     buf.flip();
                 }
                 this.destBuf = null;
             }
+            // 解开闭锁
             this.finished = true;
             this.finishLatch.countDown();
         }
     }
 
+    /**
+     * 代表是重试 首先任务是由一个定时器执行的 其次定时器在执行任务时又会开启一个新线程执行任务
+     */
     private void onTimer() {
         Utils.runInThread(this::sendNextRpc);
     }
 
+    /**
+     * 当远端返回结果时触发
+     * @param status  代表远端调用的结果
+     * @param response  代表本次远端调用的结果
+     */
     void onRpcReturned(final Status status, final GetFileResponse response) {
         this.lock.lock();
         try {
+            // 如果该对象已经被关闭了 就不再处理  finished 不使用 volatile 修饰的原因是 外部已经使用lock 对象加锁了 Lock 接口本身的语义被加强了
+            // 能确保可见性
             if (this.finished) {
                 return;
             }
+            // 代表本次远端访问失败
             if (!status.isOk()) {
                 // Reset count to make next rpc retry the previous one
                 this.requestBuilder.setCount(0);
                 if (status.getCode() == RaftError.ECANCELED.getNumber()) {
                     if (this.st.isOk()) {
                         this.st.setError(status.getCode(), status.getErrorMsg());
+                        // 做一些清理工作以及解除闭锁
                         onFinished();
                         return;
                     }
                 }
 
                 // Throttled reading failure does not increase _retry_times
+                // 返回结果 不为重试 且超过了重试次数
                 if (status.getCode() != RaftError.EAGAIN.getNumber()
                         && ++this.retryTimes >= this.copyOptions.getMaxRetry()) {
                     if (this.st.isOk()) {
@@ -232,18 +296,22 @@ public class BoltSession implements Session {
                         return;
                     }
                 }
+                // 这里代表 没有超过最大重试次数 那么在一定延时后 继续获取
                 this.timer = this.timerManager.schedule(this::onTimer, this.copyOptions.getRetryIntervalMs(),
                     TimeUnit.MILLISECONDS);
                 return;
             }
+            // 每次 成功都会重置重试次数
             this.retryTimes = 0;
             Requires.requireNonNull(response, "response");
             // Reset count to |real_read_size| to make next rpc get the right offset
+            // 代表没有读取到末尾
             if (!response.getEof()) {
                 this.requestBuilder.setCount(response.getReadSize());
             }
             if (this.outputStream != null) {
                 try {
+                    // 该API 是 protoBuf 的 将数据输出到输出流中 而数据流本身 定位了目标地址
                     response.getData().writeTo(this.outputStream);
                 } catch (final IOException e) {
                     LOG.error("Fail to write into file {}", this.destPath);
@@ -252,8 +320,10 @@ public class BoltSession implements Session {
                     return;
                 }
             } else {
+                // 如果没有设置 输出流 就将结果设置到 buffer 中 这里就对应2种输出方式 一种输出到 file 一种输出到 buffer
                 this.destBuf.put(response.getData().asReadOnlyByteBuffer());
             }
+            // 这里会不断调用sendNextRpc 直到数据拉取完毕 触发 onFinished 这时会唤醒闭锁
             if (response.getEof()) {
                 onFinished();
                 return;
@@ -266,20 +336,25 @@ public class BoltSession implements Session {
 
     /**
      * Send next RPC request to get a piece of file data.
+     * 基于本次偏移量 拉取下次数据
      */
     void sendNextRpc() {
         this.lock.lock();
         try {
             this.timer = null;
+            // requestBuilder 内部维护了 拉取数据的偏移量
             final long offset = this.requestBuilder.getOffset() + this.requestBuilder.getCount();
+            // 设置中包含每次拉取的 长度
             final long maxCount = this.destBuf == null ? this.raftOptions.getMaxByteCountPerRpc() : Integer.MAX_VALUE;
             this.requestBuilder.setOffset(offset).setCount(maxCount).setReadPartly(true);
 
+            // 如果 session 对象已经终止 无法拉取数据
             if (this.finished) {
                 return;
             }
             // throttle
             long newMaxCount = maxCount;
+            // 如果存在阀门 进行额外处理
             if (this.snapshotThrottle != null) {
                 newMaxCount = this.snapshotThrottle.throttledByThroughput(maxCount);
                 if (newMaxCount == 0) {
@@ -293,6 +368,7 @@ public class BoltSession implements Session {
             this.requestBuilder.setCount(newMaxCount);
             final RpcRequests.GetFileRequest request = this.requestBuilder.build();
             LOG.debug("Send get file request {} to peer {}", request, this.endpoint);
+            // 构建请求对象 并发起请求 获取文件信息  外部通过访问 rpcCall 来获取结果
             this.rpcCall = this.rpcService.getFile(this.endpoint, request, this.copyOptions.getTimeoutMs(), this.done);
         } finally {
             this.lock.unlock();

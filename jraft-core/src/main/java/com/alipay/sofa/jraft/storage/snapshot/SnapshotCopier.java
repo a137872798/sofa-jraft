@@ -22,7 +22,7 @@ import com.alipay.sofa.jraft.Status;
 
 /**
  * Copy snapshot from the give resources.
- *
+ * 定义快照copier 的 api
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Mar-12 4:55:26 PM
@@ -31,11 +31,13 @@ public abstract class SnapshotCopier extends Status implements Closeable {
 
     /**
      * Cancel the copy job.
+     * 关闭copy 任务
      */
     public abstract void cancel();
 
     /**
      * Block the thread until this copy job finishes, or some error occurs.
+     * 阻塞当前线程直到任务完成
      * @throws InterruptedException if the current thread is interrupted
      *         while waiting
      */
@@ -43,11 +45,13 @@ public abstract class SnapshotCopier extends Status implements Closeable {
 
     /**
      * Start the copy job.
+     * 开始执行任务
      */
     public abstract void start();
 
     /**
      * Get the the SnapshotReader which represents the copied Snapshot
+     * 获取快照读取对象
      */
     public abstract SnapshotReader getReader();
 }

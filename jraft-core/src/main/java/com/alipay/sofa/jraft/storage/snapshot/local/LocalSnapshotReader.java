@@ -113,7 +113,7 @@ public class LocalSnapshotReader extends SnapshotReader {
         // 拼接成一个新的文件路径
         final String metaPath = this.path + File.separator + JRAFT_SNAPSHOT_META_FILE;
         try {
-            // 通过 MetaTable 对象加载数据
+            // 初始化时 storage 对应的文件中读取数据 并存入 metaTable 中
             return this.metaTable.loadFromFile(metaPath);
         } catch (final IOException e) {
             LOG.error("Fail to load snapshot meta {}.", metaPath);
@@ -122,12 +122,18 @@ public class LocalSnapshotReader extends SnapshotReader {
         }
     }
 
+    /**
+     * 获取快照下标
+     * @return
+     */
     private long getSnapshotIndex() {
         final File file = new File(this.path);
         final String name = file.getName();
+        // 确保storage用于保存快照的文件必须以 snapshot 开头
         if (!name.startsWith(JRAFT_SNAPSHOT_PREFIX)) {
             throw new IllegalStateException("Invalid snapshot path name:" + name);
         }
+        // 后面的内容代表 快照的偏移量  看来每次的快照数据都会生成一个独有的文件
         return Long.parseLong(name.substring(JRAFT_SNAPSHOT_PREFIX.length()));
     }
 
@@ -148,19 +154,27 @@ public class LocalSnapshotReader extends SnapshotReader {
         return null;
     }
 
+    /**
+     * 生成一个 URL
+     * @return
+     */
     @Override
     public String generateURIForCopy() {
         if (this.addr == null || this.addr.equals(new Endpoint(Utils.IP_ANY, 0))) {
             LOG.error("Address is not specified");
             return null;
         }
+        // 为什么一定要readerId 为0 ???
         if (this.readerId == 0) {
+            // 创建一个快照文件读取对象
             final SnapshotFileReader reader = new SnapshotFileReader(this.path, this.snapshotThrottle);
             reader.setMetaTable(this.metaTable);
+            // 读取失败
             if (!reader.open()) {
                 LOG.error("Open snapshot {} failed.", this.path);
                 return null;
             }
+            // 添加reader 对象
             this.readerId = FileService.getInstance().addReader(reader);
             if (this.readerId < 0) {
                 LOG.error("Fail to add reader to file_service.");
@@ -176,6 +190,7 @@ public class LocalSnapshotReader extends SnapshotReader {
      */
     private void destroyReaderInFileService() {
         if (this.readerId > 0) {
+            // 如果readerId 有效  从fileService 中移除 reader
             FileService.getInstance().removeReader(this.readerId);
             this.readerId = 0;
         } else {

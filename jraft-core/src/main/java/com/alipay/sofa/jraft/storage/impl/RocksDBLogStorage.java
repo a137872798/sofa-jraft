@@ -235,9 +235,9 @@ public class RocksDBLogStorage implements LogStorage {
      * @throws RocksDBException
      */
     private boolean initAndLoad(final ConfigurationManager confManager) throws RocksDBException {
-        // 代表还没有载入数据
+        // 代表firstLogIndex 还没有被设置
         this.hasLoadFirstLogIndex = false;
-        // 首个日志文件下标
+        // 首个日志文件下标初始值为 1  也可以看作是 还没有读取firstIndex
         this.firstLogIndex = 1;
         final List<ColumnFamilyDescriptor> columnFamilyDescriptors = new ArrayList<>();
         // 创建列族配置
@@ -248,7 +248,7 @@ public class RocksDBLogStorage implements LogStorage {
         // Default column family to store user data log entry.
         columnFamilyDescriptors.add(new ColumnFamilyDescriptor(RocksDB.DEFAULT_COLUMN_FAMILY, cfOption));
 
-        // 打开数据库连接
+        // 通过一个文件路径 打开 rocksDB 的路径
         openDB(columnFamilyDescriptors);
         // 读取当前的数据 如果发现新配置 存储到configManger 中 如果发现了 firstLogIndex相关的 就更新偏移量
         load(confManager);
@@ -301,7 +301,7 @@ public class RocksDBLogStorage implements LogStorage {
                 } else {
                     // 如果是代表 firstLogIndex 的元数据
                     if (Arrays.equals(FIRST_LOG_IDX_KEY, ks)) {
-                        // 更新firstLogIndex
+                        // 更新firstLogIndex  同时更新 hasSetFirstLogIndex 标识
                         setFirstLogIndex(Bits.getLong(bs, 0));
                         // 丢弃之前的数据
                         truncatePrefixInBackground(0L, this.firstLogIndex);
@@ -495,7 +495,7 @@ public class RocksDBLogStorage implements LogStorage {
     public LogEntry getEntry(final long index) {
         this.readLock.lock();
         try {
-            // 如果小于当前保存的 index 就不再获取
+            // 如果小于当前保存的 index 就不再获取  前面的标识 代表 firstLogIndex 是加载过的有效值
             if (this.hasLoadFirstLogIndex && index < this.firstLogIndex) {
                 return null;
             }
@@ -657,7 +657,7 @@ public class RocksDBLogStorage implements LogStorage {
                 // 更新 first 偏移量
                 setFirstLogIndex(firstIndexKept);
             }
-            // 删除中间的数据
+            // 删除前面的数据  因为firstIndex 已经被更新了 所以理论上 不会获取到旧数据 这样旧数据的清理工作就可以放到后台线程
             truncatePrefixInBackground(startIndex, firstIndexKept);
             return ret;
         } finally {

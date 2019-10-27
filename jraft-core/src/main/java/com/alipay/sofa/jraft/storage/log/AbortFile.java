@@ -23,6 +23,7 @@ import com.alipay.sofa.jraft.util.Utils;
 
 /**
  * Abort file
+ * 禁止文件
  *
  * @author boyan(boyan@antfin.com)
  */
@@ -44,6 +45,10 @@ public class AbortFile {
             .createNewFile();
     }
 
+    /**
+     * 设置最后的修改时间
+     * @return
+     */
     public boolean touch() {
         return new File(this.path) //
             .setLastModified(Utils.nowMs());
