@@ -31,23 +31,27 @@ import com.alipay.sofa.jraft.util.Endpoint;
 
 /**
  * Placement driver client
- *
+ * 安置驱动的客户端
  * @author jiachun.fjc
  */
 public interface PlacementDriverClient extends Lifecycle<PlacementDriverOptions> {
 
     /**
      * Returns the cluster id.
+     * 获取集群id
      */
     long getClusterId();
 
     /**
      * Query the region by region id.
+     * 通过区域id 查询区域
      */
     Region getRegionById(final long regionId);
 
     /**
      * Returns the region to which the key belongs.
+     * 返回 该 key 对应的 region
+     * @param forceRefresh  代表是否强制刷新
      */
     Region findRegionByKey(final byte[] key, final boolean forceRefresh);
 
@@ -63,16 +67,19 @@ public interface PlacementDriverClient extends Lifecycle<PlacementDriverOptions>
 
     /**
      * Returns the list of regions covered by startKey and endKey.
+     * 返回 范围内的一组 region
      */
     List<Region> findRegionsByKeyRange(final byte[] startKey, final byte[] endKey, final boolean forceRefresh);
 
     /**
      * Returns the startKey of next region.
+     * 返回下个区域的 startKey???
      */
     byte[] findStartKeyOfNextRegion(final byte[] key, final boolean forceRefresh);
 
     /**
      * Returns the regionRouteTable instance.
+     * 获取区域路由表
      */
     RegionRouteTable getRegionRouteTable();
 

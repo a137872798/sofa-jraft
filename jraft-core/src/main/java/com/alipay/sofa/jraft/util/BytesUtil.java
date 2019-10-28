@@ -103,6 +103,9 @@ public final class BytesUtil {
         return getDefaultByteArrayComparator().compare(a, b) < 0 ? a : b;
     }
 
+    /**
+     * 基于byte[] 的比较对象 用于构建 二叉树
+     */
     public interface ByteArrayComparator extends Comparator<byte[]>, Serializable {
 
         int compare(final byte[] buffer1, final int offset1, final int length1, final byte[] buffer2,

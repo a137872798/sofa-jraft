@@ -17,10 +17,14 @@
 package com.alipay.sofa.jraft.rhea.util;
 
 /**
- *
+ * 代表连接着什么数据
  * @author jiachun.fjc
  */
 public interface Attachable<T> {
 
+    /**
+     * 获取连接数据
+     * @return
+     */
     T getAttachments();
 }

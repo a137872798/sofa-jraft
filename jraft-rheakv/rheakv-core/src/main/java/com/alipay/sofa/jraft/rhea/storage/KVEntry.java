@@ -21,7 +21,7 @@ import java.io.Serializable;
 import com.alipay.sofa.jraft.util.BytesUtil;
 
 /**
- *
+ * 包含一组 KV  对象
  * @author jiachun.fjc
  */
 public class KVEntry implements Serializable {

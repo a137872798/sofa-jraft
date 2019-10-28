@@ -22,6 +22,11 @@ package com.alipay.sofa.jraft.rhea.errors;
 public final class ApiExceptionHelper {
 
     // require refresh region route table
+    /**
+     * 判断是否region数据无效
+     * @param cause
+     * @return
+     */
     public static boolean isInvalidEpoch(final Throwable cause) {
         return cause instanceof InvalidRegionMembershipException //
                || cause instanceof InvalidRegionVersionException //

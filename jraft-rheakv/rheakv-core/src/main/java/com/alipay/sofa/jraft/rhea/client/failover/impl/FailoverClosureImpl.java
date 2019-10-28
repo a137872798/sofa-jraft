@@ -33,16 +33,25 @@ import com.alipay.sofa.jraft.rhea.storage.BaseKVStoreClosure;
  * A new object will be created when a retry operation occurs
  * and {@code retriesLeft} will decrease by 1, until
  * {@code retriesLeft} == 0.
- *
+ * 故障转移对象实现
  * @author jiachun.fjc
  */
 public final class FailoverClosureImpl<T> extends BaseKVStoreClosure implements FailoverClosure<T> {
 
     private static final Logger        LOG = LoggerFactory.getLogger(FailoverClosureImpl.class);
 
+    /**
+     * 包含创建结果的 组合 future 对象
+     */
     private final CompletableFuture<T> future;
+    /**
+     * 无效的时代???
+     */
     private final boolean              retryOnInvalidEpoch;
     private final int                  retriesLeft;
+    /**
+     * 重试的具体逻辑
+     */
     private final RetryRunner          retryRunner;
 
     public FailoverClosureImpl(CompletableFuture<T> future, int retriesLeft, RetryRunner retryRunner) {
@@ -57,15 +66,23 @@ public final class FailoverClosureImpl<T> extends BaseKVStoreClosure implements 
         this.retryRunner = retryRunner;
     }
 
+    /**
+     * 故障转移的回调实现
+     * @param status the task status. 任务结果
+     */
     @SuppressWarnings("unchecked")
     @Override
     public void run(final Status status) {
+        /**
+         * 如果本次执行结果是正常的 就设置到 data 字段中
+         */
         if (status.isOk()) {
             success((T) getData());
             return;
         }
 
         final Errors error = getError();
+        // 还有重试机会 使用 runner 处理异常
         if (this.retriesLeft > 0
             && (ErrorsHelper.isInvalidPeer(error) || (this.retryOnInvalidEpoch && ErrorsHelper.isInvalidEpoch(error)))) {
             LOG.warn("[Failover] status: {}, error: {}, [{}] retries left.", status, error, this.retriesLeft);
@@ -84,11 +101,19 @@ public final class FailoverClosureImpl<T> extends BaseKVStoreClosure implements 
         return future;
     }
 
+    /**
+     * 就是往 future 对象中设置结果
+     * @param result
+     */
     @Override
     public void success(final T result) {
         this.future.complete(result);
     }
 
+    /**
+     * 以设置异常的方式 终止 await (外部肯定是调用 future.await 来等待结果)
+     * @param cause
+     */
     @Override
     public void failure(final Throwable cause) {
         this.future.completeExceptionally(cause);

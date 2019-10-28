@@ -20,13 +20,21 @@ import com.alipay.sofa.jraft.Closure;
 import com.alipay.sofa.jraft.rhea.errors.Errors;
 
 /**
- *
+ * 基于KV 的 回调
  * @author jiachun.fjc
  */
 public interface KVStoreClosure extends Closure {
 
+    /**
+     * 获取异常信息
+     * @return
+     */
     Errors getError();
 
+    /**
+     * 设置异常
+     * @param error
+     */
     void setError(final Errors error);
 
     Object getData();

@@ -17,7 +17,7 @@
 package com.alipay.sofa.jraft.util;
 
 /**
- *
+ * 信号处理器
  * @author jiachun.fjc
  */
 public interface JRaftSignalHandler {

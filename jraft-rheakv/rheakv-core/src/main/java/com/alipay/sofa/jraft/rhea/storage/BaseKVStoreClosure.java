@@ -19,12 +19,20 @@ package com.alipay.sofa.jraft.rhea.storage;
 import com.alipay.sofa.jraft.rhea.errors.Errors;
 
 /**
+ * KV 存储回调基类
  * @author jiachun.fjc
  */
 public abstract class BaseKVStoreClosure implements KVStoreClosure {
 
+    /**
+     * 异常信息
+     */
     private volatile Errors error;
+    /**
+     * 具体数据
+     */
     private volatile Object data;
+
 
     @Override
     public Errors getError() {

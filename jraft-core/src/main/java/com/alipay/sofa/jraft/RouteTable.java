@@ -51,6 +51,9 @@ public class RouteTable {
     private static final RouteTable                INSTANCE       = new RouteTable();
 
     // Map<groupId, groupConf>
+    /**
+     * GroupConf 包含 groupId 下 所有 peerId  以及 leader的 peerId
+     */
     private final ConcurrentMap<String, GroupConf> groupConfTable = new ConcurrentHashMap<>();
 
     public static RouteTable getInstance() {
@@ -70,8 +73,10 @@ public class RouteTable {
 
         final GroupConf gc = getOrCreateGroupConf(groupId);
         final StampedLock stampedLock = gc.stampedLock;
+        // 加写锁
         final long stamp = stampedLock.writeLock();
         try {
+            // 这里没有设置leader 只是如果和 conf 有出入 移除 leader
             gc.conf = conf;
             if (gc.leader != null && !gc.conf.contains(gc.leader)) {
                 gc.leader = null;
@@ -82,6 +87,12 @@ public class RouteTable {
         return true;
     }
 
+
+    /**
+     * 先为 groupId 填充对应的配置对象
+     * @param groupId
+     * @return
+     */
     private GroupConf getOrCreateGroupConf(final String groupId) {
         GroupConf gc = this.groupConfTable.get(groupId);
         if (gc == null) {
@@ -118,7 +129,7 @@ public class RouteTable {
      * Get the cached leader of the group, return it when found, null otherwise.
      * Make sure calls {@link #refreshLeader(CliClientService, String, int)} already
      * before invoke this method.
-     *
+     * 从 gc 中返回leader 如果没设置会怎么样???
      * @param groupId raft group id
      * @return peer of leader
      */
@@ -130,6 +141,7 @@ public class RouteTable {
             return null;
         }
         final StampedLock stampedLock = gc.stampedLock;
+        // 乐观读  该api 如何使用先不管
         long stamp = stampedLock.tryOptimisticRead();
         PeerId leader = gc.leader;
         if (!stampedLock.validate(stamp)) {
@@ -145,7 +157,7 @@ public class RouteTable {
 
     /**
      * Update leader info.
-     *
+     * 更新leader
      * @param groupId raft group id
      * @param leader  peer of leader
      * @return true on success
@@ -162,6 +174,7 @@ public class RouteTable {
         final StampedLock stampedLock = gc.stampedLock;
         final long stamp = stampedLock.writeLock();
         try {
+            // 将leader 设置成外部传入的那个
             gc.leader = leader;
         } finally {
             stampedLock.unlockWrite(stamp);
@@ -171,7 +184,7 @@ public class RouteTable {
 
     /**
      * Update leader info.
-     *
+     * 更新leader 信息
      * @param groupId   raft group id
      * @param leaderStr peer string of leader
      * @return true on success
@@ -229,6 +242,7 @@ public class RouteTable {
         Requires.requireTrue(!StringUtils.isBlank(groupId), "Blank group id");
         Requires.requireTrue(timeoutMs > 0, "Invalid timeout: " + timeoutMs);
 
+        // 通过groupId 找到对应的 groupConf 之后再找到 该配置中所有节点信息
         final Configuration conf = getConfiguration(groupId);
         if (conf == null) {
             return new Status(RaftError.ENOENT,
@@ -240,6 +254,7 @@ public class RouteTable {
         final CliRequests.GetLeaderRequest request = rb.build();
         TimeoutException timeoutException = null;
         for (final PeerId peer : conf) {
+            // 找到group 中所有节点 挨个进行连接
             if (!cliClientService.connect(peer.getEndpoint())) {
                 if (st.isOk()) {
                     st.setError(-1, "Fail to init channel to %s", peer);
@@ -249,6 +264,7 @@ public class RouteTable {
                 }
                 continue;
             }
+            // 发送获取leader 的请求 某个group 中每个节点都应该能返回leader (都知道哪个节点是leader)
             final Future<Message> result = cliClientService.getLeader(peer.getEndpoint(), request, null);
             try {
                 final Message msg = result.get(timeoutMs, TimeUnit.MILLISECONDS);
@@ -261,6 +277,7 @@ public class RouteTable {
                     }
                 } else {
                     final CliRequests.GetLeaderResponse response = (CliRequests.GetLeaderResponse) msg;
+                    // 使用某个节点更新leader
                     updateLeader(groupId, response.getLeaderId());
                     return Status.OK();
                 }
@@ -282,6 +299,15 @@ public class RouteTable {
         return st;
     }
 
+    /**
+     * 刷新配置信息
+     * @param cliClientService
+     * @param groupId
+     * @param timeoutMs
+     * @return
+     * @throws InterruptedException
+     * @throws TimeoutException
+     */
     public Status refreshConfiguration(final CliClientService cliClientService, final String groupId,
                                        final int timeoutMs) throws InterruptedException, TimeoutException {
         Requires.requireTrue(!StringUtils.isBlank(groupId), "Blank group id");
@@ -293,8 +319,10 @@ public class RouteTable {
                 "Group %s is not registered in RouteTable, forgot to call updateConfiguration?", groupId);
         }
         final Status st = Status.OK();
+        // 获取leader
         PeerId leaderId = selectLeader(groupId);
         if (leaderId == null) {
+            // leader 不存在就刷新leader 列表
             refreshLeader(cliClientService, groupId, timeoutMs);
             leaderId = selectLeader(groupId);
         }
@@ -306,6 +334,7 @@ public class RouteTable {
             st.setError(-1, "Fail to init channel to %s", leaderId);
             return st;
         }
+        // 从leader 获取 最新的conf信息
         final CliRequests.GetPeersRequest.Builder rb = CliRequests.GetPeersRequest.newBuilder();
         rb.setGroupId(groupId);
         rb.setLeaderId(leaderId.toString());
@@ -323,6 +352,7 @@ public class RouteTable {
                 if (!conf.equals(newConf)) {
                     LOG.info("Configuration of replication group {} changed from {} to {}", groupId, conf, newConf);
                 }
+                // 更新conf
                 updateConfiguration(groupId, newConf);
             } else {
                 final RpcRequests.ErrorResponse resp = (RpcRequests.ErrorResponse) result;
@@ -356,11 +386,23 @@ public class RouteTable {
     private RouteTable() {
     }
 
+    /**
+     * 组配置信息
+     */
     private static class GroupConf {
 
+        /**
+         * 改进版读写锁
+         */
         private final StampedLock stampedLock = new StampedLock();
 
+        /**
+         * 一组节点对象
+         */
         private Configuration     conf;
+        /**
+         * 这组对象的leader
+         */
         private PeerId            leader;
     }
 }

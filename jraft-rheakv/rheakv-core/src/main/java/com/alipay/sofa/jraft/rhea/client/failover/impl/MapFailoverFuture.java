@@ -33,7 +33,7 @@ import com.alipay.sofa.jraft.rhea.util.StackTraceUtil;
  * A helper object for map result failover, which is an immutable object.
  * A new object will be created when a retry operation occurs and
  * {@code retriesLeft} will decrease by 1, until {@code retriesLeft} == 0.
- *
+ * 基于map 的故障转移对象
  * @author jiachun.fjc
  */
 public final class MapFailoverFuture<K, V> extends CompletableFuture<Map<K, V>> implements Attachable<Object> {

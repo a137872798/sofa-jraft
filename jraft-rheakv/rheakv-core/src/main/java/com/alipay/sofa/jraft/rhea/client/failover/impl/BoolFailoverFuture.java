@@ -38,8 +38,17 @@ public final class BoolFailoverFuture extends CompletableFuture<Boolean> impleme
 
     private static final Logger          LOG = LoggerFactory.getLogger(BoolFailoverFuture.class);
 
+    /**
+     * 重试次数吗???
+     */
     private final int                    retriesLeft;
+    /**
+     * 重试回调
+     */
     private final RetryCallable<Boolean> retryCallable;
+    /**
+     * 关联对象
+     */
     private final Object                 attachments;
 
     public BoolFailoverFuture(int retriesLeft, RetryCallable<Boolean> retryCallable) {
@@ -52,15 +61,25 @@ public final class BoolFailoverFuture extends CompletableFuture<Boolean> impleme
         this.attachments = attachments;
     }
 
+    /**
+     * 父类实现 是将异常作为result 设置到 completableFuture中   该对象怎么初始化? 一般来说是通过一个函数来初始化内部对象的
+     * @param ex
+     * @return
+     */
     @Override
     public boolean completeExceptionally(final Throwable ex) {
+        // 首先异常是 region 相关的 其次 重试次数大于0
         if (this.retriesLeft > 0 && ApiExceptionHelper.isInvalidEpoch(ex)) {
             LOG.warn("[InvalidEpoch-Failover] cause: {}, [{}] retries left.", StackTraceUtil.stackTrace(ex),
                     this.retriesLeft);
+            // 使用重试回调处理异常并返回 一组CompletableFuture
             final FutureGroup<Boolean> futureGroup = this.retryCallable.run(ex);
+            // 确保 所有future 完成后 触发whenComplete
             CompletableFuture.allOf(futureGroup.toArray()).whenComplete((ignored, throwable) -> {
+                // 如果不再出现异常
                 if (throwable == null) {
                     for (final CompletableFuture<Boolean> partOf : futureGroup.futures()) {
+                        // 如果获取的结果是 false 就将结果设置到 result中
                         if (!partOf.join()) {
                             super.complete(false);
                             return;
@@ -77,6 +96,7 @@ public final class BoolFailoverFuture extends CompletableFuture<Boolean> impleme
             LOG.error("[InvalidEpoch-Failover] cause: {}, {} retries left.", StackTraceUtil.stackTrace(ex),
                     this.retriesLeft);
         }
+        // 使用异常对象去设置future 的结果
         return super.completeExceptionally(ex);
     }
 

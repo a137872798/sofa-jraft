@@ -25,13 +25,19 @@ import java.util.concurrent.TimeoutException;
 import com.alipay.sofa.jraft.util.Requires;
 
 /**
- *
+ * 拓展CompletableFuture
  * @author jiachun.fjc
  */
 public class FutureGroup<V> extends CompletableFuture<V> {
 
+    /**
+     * 内部存放一组 future 对象
+     */
     private final List<CompletableFuture<V>> futures;
 
+    /**
+     * 这里也存放一组 future 对象
+     */
     private volatile CompletableFuture<V>[]  array;
 
     public FutureGroup(List<CompletableFuture<V>> futures) {
@@ -60,6 +66,11 @@ public class FutureGroup<V> extends CompletableFuture<V> {
         return this.futures.size();
     }
 
+    /**
+     * 这里变成了 关闭所有future
+     * @param mayInterruptIfRunning
+     * @return
+     */
     @Override
     public boolean cancel(final boolean mayInterruptIfRunning) {
         boolean result = true;
@@ -69,6 +80,10 @@ public class FutureGroup<V> extends CompletableFuture<V> {
         return result;
     }
 
+    /**
+     * 全部都关闭 才算关闭
+     * @return
+     */
     @Override
     public boolean isCancelled() {
         for (final CompletableFuture<V> f : this.futures) {
@@ -94,6 +109,15 @@ public class FutureGroup<V> extends CompletableFuture<V> {
         throw new UnsupportedOperationException("get");
     }
 
+    /**
+     * 一组为单位不允许 读取单个结果
+     * @param timeout
+     * @param unit
+     * @return
+     * @throws InterruptedException
+     * @throws ExecutionException
+     * @throws TimeoutException
+     */
     @Override
     public V get(final long timeout, final TimeUnit unit) throws InterruptedException, ExecutionException,
                                                          TimeoutException {

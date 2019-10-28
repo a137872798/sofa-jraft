@@ -20,7 +20,7 @@ import com.alipay.sofa.jraft.rhea.errors.Errors;
 
 /**
  * A retry task.
- *
+ * 根据对应的 异常 执行重试
  * @author jiachun.fjc
  */
 public interface RetryRunner {

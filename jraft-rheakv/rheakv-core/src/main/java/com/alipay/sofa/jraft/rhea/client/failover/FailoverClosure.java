@@ -22,13 +22,21 @@ import com.alipay.sofa.jraft.rhea.errors.Errors;
 import com.alipay.sofa.jraft.rhea.storage.KVStoreClosure;
 
 /**
- *
+ * 故障转移回调
  * @author jiachun.fjc
  */
 public interface FailoverClosure<T> extends KVStoreClosure {
 
+    /**
+     * 获取异步结果对象
+     * @return
+     */
     CompletableFuture<T> future();
 
+    /**
+     * 设置结果并触发 success
+     * @param result
+     */
     void success(final T result);
 
     void failure(final Throwable cause);

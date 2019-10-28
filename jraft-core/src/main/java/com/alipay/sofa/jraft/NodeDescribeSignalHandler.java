@@ -32,7 +32,7 @@ import com.alipay.sofa.jraft.util.FileOutputSignalHandler;
 import com.alipay.sofa.jraft.util.SystemPropertyUtil;
 
 /**
- *
+ * 节点描述信息处理器
  * @author jiachun.fjc
  */
 public class NodeDescribeSignalHandler extends FileOutputSignalHandler {
@@ -50,6 +50,7 @@ public class NodeDescribeSignalHandler extends FileOutputSignalHandler {
         }
 
         try {
+            // 根据默认的文件路径生成文件
             final File file = getOutputFile(DIR, BASE_NAME);
 
             LOG.info("Describing raft nodes with signal: {} to file: {}.", signalName, file);
@@ -58,6 +59,7 @@ public class NodeDescribeSignalHandler extends FileOutputSignalHandler {
                 StandardCharsets.UTF_8))) {
                 final Describer.Printer printer = new DefaultPrinter(out);
                 for (final Node node : nodes) {
+                    // 将节点描述信息写入到文件中
                     node.describe(printer);
                 }
             }

@@ -45,7 +45,7 @@ public final class JRaftUtils {
 
     /**
      * Bootstrap a non-empty raft node.
-     *
+     * 根据配置信息生成一个 node 对象
      * @param opts options of bootstrap 启动选项
      * @return true if bootstrap success 是否启动成功
      */

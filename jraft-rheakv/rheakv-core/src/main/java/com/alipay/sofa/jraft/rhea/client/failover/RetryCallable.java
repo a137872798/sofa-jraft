@@ -20,7 +20,7 @@ import com.alipay.sofa.jraft.rhea.client.FutureGroup;
 
 /**
  * A retry task that returns a {@link FutureGroup<T>} result.
- *
+ * 重试回调 只是返回的 T 是单类型 而 ListRetryCallable 是 List<T>
  * @author jiachun.fjc
  */
 public interface RetryCallable<T> {

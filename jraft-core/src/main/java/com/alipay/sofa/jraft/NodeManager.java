@@ -88,6 +88,7 @@ public class NodeManager {
 
     /**
      * Adds a node.
+     * 将某个节点 添加到manager 中
      */
     public boolean add(final Node node) {
         // check address ok?
@@ -95,8 +96,10 @@ public class NodeManager {
             return false;
         }
         final NodeId nodeId = node.getNodeId();
+        // == null 代表是 最先添加的
         if (this.nodeMap.putIfAbsent(nodeId, node) == null) {
             final String groupId = node.getGroupId();
+            // 将映射关系也添加到 groupMap中
             List<Node> nodes = this.groupMap.get(groupId);
             if (nodes == null) {
                 nodes = Collections.synchronizedList(new ArrayList<>());
@@ -123,6 +126,7 @@ public class NodeManager {
 
     /**
      * Remove a node.
+     * 从nodeMap 和 groupMapo 中移除节点
      */
     public boolean remove(final Node node) {
         if (this.nodeMap.remove(node.getNodeId(), node)) {

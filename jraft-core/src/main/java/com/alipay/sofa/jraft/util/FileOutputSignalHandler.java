@@ -25,11 +25,18 @@ import java.util.Date;
 import org.apache.commons.io.FileUtils;
 
 /**
- *
+ * 基于文件的信号处理器
  * @author jiachun.fjc
  */
 public abstract class FileOutputSignalHandler implements JRaftSignalHandler {
 
+    /**
+     * 根据路径 定位到文件
+     * @param path
+     * @param baseFileName
+     * @return
+     * @throws IOException
+     */
     protected File getOutputFile(final String path, final String baseFileName) throws IOException {
         makeDir(path);
         final String now = new SimpleDateFormat("yyyy-MM-dd_HH-mm-ss").format(new Date());

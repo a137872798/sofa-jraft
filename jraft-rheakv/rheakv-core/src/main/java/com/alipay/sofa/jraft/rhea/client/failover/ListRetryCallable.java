@@ -22,10 +22,15 @@ import com.alipay.sofa.jraft.rhea.client.FutureGroup;
 
 /**
  * A retry task that returns a {@link FutureGroup<List>} result.
- *
+ * 重试的回调
  * @author jiachun.fjc
  */
 public interface ListRetryCallable<T> {
 
+    /**
+     * 传入造成失败的原因 并返回一个future组 (该对象内部维护了一组 CompletableFuture)
+     * @param retryCause
+     * @return
+     */
     FutureGroup<List<T>> run(final Throwable retryCause);
 }

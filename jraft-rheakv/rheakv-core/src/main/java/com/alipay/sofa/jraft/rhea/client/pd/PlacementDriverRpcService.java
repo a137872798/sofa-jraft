@@ -33,7 +33,7 @@ public interface PlacementDriverRpcService extends Lifecycle<RpcOptions> {
 
     /**
      * Send requests to the remote placement driver nodes.
-     *
+     * 基于RPC 的方式 访问 PD 服务
      * @param request   request data
      * @param closure   callback for failover strategy
      * @param lastCause the exception information held by the last call

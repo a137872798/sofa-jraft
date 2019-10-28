@@ -42,6 +42,7 @@ import com.alipay.sofa.jraft.util.Requires;
  * in which the 'key' is located, and can also calculate all
  * regions of a 'key range' hit.
  *
+ * 如果 pd 服务 可用 会从pd server 刷新 路由信息 否则从本地配置刷新信息
  * If the pd server is enabled, the routing data will be refreshed
  * from the pd server, otherwise the routing data is completely
  * based on the local configuration.
@@ -81,13 +82,16 @@ import com.alipay.sofa.jraft.util.Requires;
  *      id continuing to 2 and region3[splitKey, endKey2) with id 3.
  *  c) At this point, you only need to add an element <region3, splitKey> to
  *      the RegionRouteTable. The data of region2 does not need to be modified.
- *
+ * 区域路由表
  * @author jiachun.fjc
  */
 public class RegionRouteTable {
 
     private static final Logger              LOG                = LoggerFactory.getLogger(RegionRouteTable.class);
 
+    /**
+     * 比较 一个byte[] 的 函数
+     */
     private static final Comparator<byte[]>  keyBytesComparator = BytesUtil.getDefaultByteArrayComparator();
 
     private final StampedLock                stampedLock        = new StampedLock();

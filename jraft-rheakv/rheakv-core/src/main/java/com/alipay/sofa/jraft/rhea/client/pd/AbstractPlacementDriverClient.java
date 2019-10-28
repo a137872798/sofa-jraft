@@ -54,20 +54,36 @@ import com.alipay.sofa.jraft.util.Endpoint;
 import com.alipay.sofa.jraft.util.Requires;
 
 /**
- *
+ * 安置驱动 骨架类
  * @author jiachun.fjc
  */
 public abstract class AbstractPlacementDriverClient implements PlacementDriverClient {
 
     private static final Logger         LOG              = LoggerFactory.getLogger(AbstractPlacementDriverClient.class);
 
+    /**
+     * region 路由表
+     */
     protected final RegionRouteTable    regionRouteTable = new RegionRouteTable();
     protected final long                clusterId;
     protected final String              clusterName;
 
+    /**
+     * 命令行服务
+     */
     protected CliService                cliService;
+    /**
+     * 命令行客户端
+     */
     protected CliClientService          cliClientService;
+    /**
+     *
+     */
     protected RpcClient                 rpcClient;
+    /**
+     * 驱动服务对象 应该是将具体的行为抽象出来
+     * 包含一个访问 PDclient 的api
+     */
     protected PlacementDriverRpcService pdRpcService;
 
     protected AbstractPlacementDriverClient(long clusterId, String clusterName) {
@@ -75,8 +91,14 @@ public abstract class AbstractPlacementDriverClient implements PlacementDriverCl
         this.clusterName = clusterName;
     }
 
+    /**
+     * 初始化
+     * @param opts
+     * @return
+     */
     @Override
     public synchronized boolean init(final PlacementDriverOptions opts) {
+        // 初始化 cli 客户端
         initCli(opts.getCliOptions());
         this.pdRpcService = new DefaultPlacementDriverRpcService(this);
         RpcOptions rpcOpts = opts.getPdRpcOptions();
@@ -400,6 +422,10 @@ public abstract class AbstractPlacementDriverClient implements PlacementDriverCl
         return region;
     }
 
+    /**
+     * 初始化 cli 服务
+     * @param cliOpts
+     */
     protected void initCli(CliOptions cliOpts) {
         if (cliOpts == null) {
             cliOpts = new CliOptions();

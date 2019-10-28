@@ -33,6 +33,7 @@ import com.alipay.sofa.jraft.rhea.util.StackTraceUtil;
  * A helper future for list result failover, which is an immutable object.
  * A new object will be created when a retry operation occurs and
  * {@code retriesLeft} will decrease by 1, until {@code retriesLeft} == 0.
+ * 基于 List<T> 的 故障转移
  *
  * @author jiachun.fjc
  */
@@ -41,6 +42,9 @@ public final class ListFailoverFuture<T> extends CompletableFuture<List<T>> impl
     private static final Logger        LOG = LoggerFactory.getLogger(ListFailoverFuture.class);
 
     private final int                  retriesLeft;
+    /**
+     * 该对象与 BoolFailoverFuture 的不同点就是 这里
+     */
     private final ListRetryCallable<T> retryCallable;
     private final Object               attachments;
 
@@ -64,6 +68,7 @@ public final class ListFailoverFuture<T> extends CompletableFuture<List<T>> impl
                 if (throwable == null) {
                     final List<T> all = Lists.newArrayList();
                     for (final CompletableFuture<List<T>> partOf : futureGroup.futures()) {
+                        // 将所有结果设置到 这里 最后设置到 result字段中
                         all.addAll(partOf.join());
                     }
                     super.complete(all);
