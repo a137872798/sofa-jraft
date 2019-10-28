@@ -2987,11 +2987,12 @@ public class NodeImpl implements Node, RaftServerService {
     }
 
     /**
-     * 更新配置
+     * 当安装完本地快照后 更新配置
      */
     public void updateConfigurationAfterInstallingSnapshot() {
         this.writeLock.lock();
         try {
+            // 将当前 conf 关联到 ConfigurationManager.ConfigurationEntry 上 ConfigurationEntry 对应到 加载完快照后的信息实体
             this.conf = this.logManager.checkAndSetConfiguration(this.conf);
         } finally {
             this.writeLock.unlock();

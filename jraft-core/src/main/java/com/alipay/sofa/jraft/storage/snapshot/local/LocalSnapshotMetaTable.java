@@ -119,6 +119,7 @@ public class LocalSnapshotMetaTable {
 
     /**
      * Save metadata infos into file by path.
+     * 将元数据信息保存到指定路径的文件下
      */
     public boolean saveToFile(String path) throws IOException {
         LocalSnapshotPbMeta.Builder pbMeta = LocalSnapshotPbMeta.newBuilder();
@@ -170,7 +171,7 @@ public class LocalSnapshotMetaTable {
 
     /**
      * Load metadata infos from a file by path.
-     * 将文件中的数据加载出来 并保存在本地(JVM内存中)
+     * 将文件中的数据加载出来
      */
     public boolean loadFromFile(String path) throws IOException {
         ProtoBufFile pbFile = new ProtoBufFile(path);

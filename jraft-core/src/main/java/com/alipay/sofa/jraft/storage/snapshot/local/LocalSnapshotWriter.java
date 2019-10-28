@@ -63,13 +63,14 @@ public class LocalSnapshotWriter extends SnapshotWriter {
     public LocalSnapshotWriter(String path, LocalSnapshotStorage snapshotStorage, RaftOptions raftOptions) {
         super();
         this.snapshotStorage = snapshotStorage;
+        // 写入的目标文件路径  实际上对应到一个 temp文件  在调用storage.close 时会将temp文件转换为持久文件(携带快照下标的文件)
         this.path = path;
         this.metaTable = new LocalSnapshotMetaTable(raftOptions);
     }
 
     @Override
     public boolean init(final Void v) {
-        // 创建元数据文件夹
+        // 根据临时文件路径创建文件夹
         final File dir = new File(this.path);
         try {
             FileUtils.forceMkdir(dir);
@@ -82,6 +83,7 @@ public class LocalSnapshotWriter extends SnapshotWriter {
         final String metaPath = path + File.separator + JRAFT_SNAPSHOT_META_FILE;
         final File metaFile = new File(metaPath);
         try {
+            // 如果已经存在文件夹 就加载旧的数据
             if (metaFile.exists()) {
                 return metaTable.loadFromFile(metaPath);
             }
@@ -93,6 +95,10 @@ public class LocalSnapshotWriter extends SnapshotWriter {
         return true;
     }
 
+    /**
+     * 获取快照数据 对应的最后写入的index  这个index 应该就是对应LogEntry 的 index
+     * @return
+     */
     public long getSnapshotIndex() {
         return this.metaTable.hasMeta() ? this.metaTable.getMeta().getLastIncludedIndex() : 0;
     }
@@ -107,21 +113,42 @@ public class LocalSnapshotWriter extends SnapshotWriter {
         close(false);
     }
 
+    /**
+     * 关闭同时会将 temp 文件持久化
+     * @param keepDataOnError whether to keep data when error happens. 当出现异常时 是否停止删除
+     * @throws IOException
+     */
     @Override
     public void close(final boolean keepDataOnError) throws IOException {
         this.snapshotStorage.close(this, keepDataOnError);
     }
 
+    /**
+     * 将元数据 保存安东 metaTable 中
+     * @param meta snapshot metadata
+     * @return
+     */
     @Override
     public boolean saveMeta(final SnapshotMeta meta) {
         this.metaTable.setMeta(meta);
         return true;
     }
 
+    /**
+     * 等待元数据写入到文件中
+     * @return
+     * @throws IOException
+     */
     public boolean sync() throws IOException {
         return this.metaTable.saveToFile(this.path + File.separator + JRAFT_SNAPSHOT_META_FILE);
     }
 
+    /**
+     * 将某个文件映射数据保存到 metaTable中
+     * @param fileName file name
+     * @param fileMeta file metadata
+     * @return
+     */
     @Override
     public boolean addFile(final String fileName, final Message fileMeta) {
         final Builder metaBuilder = LocalFileMeta.newBuilder();

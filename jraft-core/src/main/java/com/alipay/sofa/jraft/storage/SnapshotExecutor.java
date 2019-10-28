@@ -44,7 +44,7 @@ public interface SnapshotExecutor extends Lifecycle<SnapshotExecutorOptions>, De
     /**
      * Start to snapshot StateMachine, and |done| is called after the
      * execution finishes or fails.
-     * 创建快照 并触发回调
+     * 开始触发快照相关的状态机api
      * @param done snapshot callback
      */
     void doSnapshot(final Closure done);

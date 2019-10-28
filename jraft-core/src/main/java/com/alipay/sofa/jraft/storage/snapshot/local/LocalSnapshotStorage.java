@@ -76,7 +76,7 @@ public class LocalSnapshotStorage implements SnapshotStorage {
     private final Lock                               lock;
     private final RaftOptions                        raftOptions;
     /**
-     * 快照阀门???  推测是配合 filterBeforeCopyRemote 起作用
+     *
      */
     private SnapshotThrottle                         snapshotThrottle;
 
@@ -127,8 +127,9 @@ public class LocalSnapshotStorage implements SnapshotStorage {
             return false;
         }
 
-        // delete temp snapshot
+        // delete temp snapshot   这里是没有阀门的情况
         if (!this.filterBeforeCopyRemote) {
+            // 注意临时文件的生成时机
             final String tempSnapshotPath = this.path + File.separator + TEMP_PATH;
             final File tempFile = new File(tempSnapshotPath);
             if (tempFile.exists()) {
@@ -141,7 +142,7 @@ public class LocalSnapshotStorage implements SnapshotStorage {
                 }
             }
         }
-        // delete old snapshot
+        // delete old snapshot  这里记录着当前已经存在的 快照文件的下标
         final List<Long> snapshots = new ArrayList<>();
         final File[] oldFiles = dir.listFiles();
         if (oldFiles != null) {
@@ -165,15 +166,14 @@ public class LocalSnapshotStorage implements SnapshotStorage {
 
             for (int i = 0; i < snapshotCount - 1; i++) {
                 final long index = snapshots.get(i);
-                // 找到对应的路径(这里应该是文件夹路径)
+                // 找到对应的快照文件路径
                 final String snapshotPath = getSnapshotPath(index);
-                // 删除最后个之前的其余文件
                 if (!destroySnapshot(snapshotPath)) {
                     return false;
                 }
             }
             this.lastSnapshotIndex = snapshots.get(snapshotCount - 1);
-            // 增加引用计数
+            // 增加引用计数  也就是在 init 之前 所有快照文件都没有引用计数
             ref(this.lastSnapshotIndex);
         }
 
@@ -243,6 +243,7 @@ public class LocalSnapshotStorage implements SnapshotStorage {
 
     /**
      * 必须确保 引用数为0 才能关闭文件
+     * 调用该方法时 写入已经完成了
      * @param writer
      * @param keepDataOnError
      * @throws IOException
@@ -251,6 +252,8 @@ public class LocalSnapshotStorage implements SnapshotStorage {
         int ret = writer.getCode();
         // noinspection ConstantConditions
         do {
+            // 下面应该是根据结果准备设置state
+
             if (ret != 0) {
                 break;
             }
@@ -264,6 +267,7 @@ public class LocalSnapshotStorage implements SnapshotStorage {
                 ret = RaftError.EIO.getNumber();
                 break;
             }
+            // 意味着本次没有实际写入的数据
             final long oldIndex = getLastSnapshotIndex();
             final long newIndex = writer.getSnapshotIndex();
             if (oldIndex == newIndex) {
@@ -280,11 +284,13 @@ public class LocalSnapshotStorage implements SnapshotStorage {
                 break;
             }
             LOG.info("Renaming {} to {}.", tempPath, newPath);
+            // writer 应该是 先写入到一个临时文件中 之后重命名为 以新index 为后缀的文件夹
             if (!new File(tempPath).renameTo(new File(newPath))) {
                 LOG.error("Renamed temp snapshot failed, from path {} to path {}.", tempPath, newPath);
                 ret = RaftError.EIO.getNumber();
                 break;
             }
+            // 将引用转移到新的文件
             ref(newIndex);
             this.lock.lock();
             try {
@@ -295,6 +301,7 @@ public class LocalSnapshotStorage implements SnapshotStorage {
             }
             unref(oldIndex);
         } while (false);
+        // 销毁临时文件
         if (ret != 0 && !keepDataOnError) {
             destroySnapshot(writer.getPath());
         }
@@ -321,13 +328,14 @@ public class LocalSnapshotStorage implements SnapshotStorage {
 
     /**
      *
-     * @param fromEmpty
+     * @param fromEmpty   代表如果指定路径的文件已经存在的情况下是否要删除文件夹
      * @return
      */
     public SnapshotWriter create(final boolean fromEmpty) {
         LocalSnapshotWriter writer = null;
         // noinspection ConstantConditions
         do {
+            // 按照临时文件的路径去创建writer 这样 writer 都是先将数据写入到临时文件中
             final String snapshotPath = this.path + File.separator + TEMP_PATH;
             // delete temp
             // TODO: Notify watcher before deleting
@@ -336,6 +344,7 @@ public class LocalSnapshotStorage implements SnapshotStorage {
                     break;
                 }
             }
+            // 初始化 writer 对象
             writer = new LocalSnapshotWriter(snapshotPath, this, this.raftOptions);
             if (!writer.init(null)) {
                 LOG.error("Fail to init snapshot writer.");
@@ -358,6 +367,7 @@ public class LocalSnapshotStorage implements SnapshotStorage {
             // lastSnapshotIndex 代表快照文件的下标而不是偏移量 这样就代表 又有一处在引用该映射文件 (应该是指代reader 在引用该文件)
             if (this.lastSnapshotIndex != 0) {
                 lsIndex = this.lastSnapshotIndex;
+                // 这里意味着  有个reader对象也在依赖该index 的文件
                 ref(lsIndex);
             }
         } finally {
@@ -381,6 +391,12 @@ public class LocalSnapshotStorage implements SnapshotStorage {
         return reader;
     }
 
+    /**
+     * 从指定路径拉取数据
+     * @param uri  remote uri
+     * @param opts copy options
+     * @return
+     */
     @Override
     public SnapshotReader copyFrom(final String uri, final SnapshotCopierOptions opts) {
         final SnapshotCopier copier = startToCopyFrom(uri, opts);
@@ -388,17 +404,25 @@ public class LocalSnapshotStorage implements SnapshotStorage {
             return null;
         }
         try {
+            // 等待拉取动作完成
             copier.join();
         } catch (final InterruptedException e) {
             Thread.currentThread().interrupt();
             LOG.error("Join on snapshot copier was interrupted.");
             return null;
         }
+        // 返回可以直接读取 快照数据的对象
         final SnapshotReader reader = copier.getReader();
         Utils.closeQuietly(copier);
         return reader;
     }
 
+    /**
+     * 启动 copy 对象开始拉取数据
+     * @param uri  remote uri
+     * @param opts copy options
+     * @return
+     */
     @Override
     public SnapshotCopier startToCopyFrom(final String uri, final SnapshotCopierOptions opts) {
         final LocalSnapshotCopier copier = new LocalSnapshotCopier();

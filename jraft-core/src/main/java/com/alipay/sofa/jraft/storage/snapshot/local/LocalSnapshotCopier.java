@@ -450,6 +450,9 @@ public class LocalSnapshotCopier extends SnapshotCopier {
         this.future = Utils.runInThread(this::startCopy);
     }
 
+    /**
+     * 可能是某个leader 失效了 那么就不能继续从那个节点拉取快照了 就要将本任务关闭
+     */
     @Override
     public void cancel() {
         this.lock.lock();

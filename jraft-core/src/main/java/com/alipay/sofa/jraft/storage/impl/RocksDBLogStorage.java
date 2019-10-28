@@ -262,8 +262,7 @@ public class RocksDBLogStorage implements LogStorage {
     public static final byte[] FIRST_LOG_IDX_KEY = Utils.getBytes("meta/firstLogIndex");
 
     /**
-     * 从 config 中加载配置
-     * @param confManager
+     * @param confManager 存储 抽取出来的配置信息
      */
     private void load(final ConfigurationManager confManager) {
         // 确保 db 已经初始化

@@ -30,7 +30,7 @@ import com.alipay.sofa.jraft.util.ByteBufferCollector;
 
 /**
  * Snapshot file reader
- * 快照文件读取对象
+ *
  *
  * @author boyan (boyan@alibaba-inc.com)
  *
@@ -43,7 +43,7 @@ public class SnapshotFileReader extends LocalDirReader {
      */
     private final SnapshotThrottle snapshotThrottle;
     /**
-     * 读取后将数据存放到meta中
+     * 数据存放在metaTable中
      */
     private LocalSnapshotMetaTable metaTable;
 
@@ -83,7 +83,7 @@ public class SnapshotFileReader extends LocalDirReader {
             // 这里将metaTable 的 meta 和 fileMap 的数据全部保存到 buffer 中
             final ByteBuffer metaBuf = this.metaTable.saveToByteBufferAsRemote();
             // because bufRef will flip the buffer before using, so we must set the meta buffer position to it's limit.
-            // 创建 buffer 时 pos 还是0 因为之后要采用写入模式 为了避免覆盖数据 将pos 定位到 末尾
+            // 将写指针 定位到最后 这样调用flip 后才可以正常读取数据
             metaBuf.position(metaBuf.limit());
             metaBufferCollector.setBuffer(metaBuf);
             // EOF 代表读取到了末尾  end of file
@@ -108,7 +108,7 @@ public class SnapshotFileReader extends LocalDirReader {
             }
         }
 
-        // 从fileMeta 中将数据加载到bytebuffer 中 从offset 只读取 maxCount
+        // 从fileName 对应的文件中指定的offset 读取 count 数量的数据
         return readFileWithMeta(metaBufferCollector, fileName, fileMeta, offset, newMaxCount);
     }
 }

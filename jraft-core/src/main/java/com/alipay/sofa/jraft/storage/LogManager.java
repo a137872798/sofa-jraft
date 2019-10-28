@@ -40,7 +40,7 @@ public interface LogManager extends Lifecycle<LogManagerOptions>, Describer {
 
     /**
      * Closure to to run in stable state.
-     * 什么叫稳定的回调对象 ???
+     * 稳定的回调对象  可能就是指内部的属性不会发生变化吧  当往LogManager 中写入一组 LogEntry 时触发 firstLogIndex 为这个数组的首元素下标 因为这时还没真正写入 只是存入内存
      * @author boyan (boyan@alibaba-inc.com)
      *
      * 2018-Apr-04 4:35:29 PM
@@ -61,7 +61,7 @@ public interface LogManager extends Lifecycle<LogManagerOptions>, Describer {
         protected int            nEntries;
 
         public StableClosure() {
-            // NO-OP
+            // NO-O
         }
 
         public long getFirstLogIndex() {

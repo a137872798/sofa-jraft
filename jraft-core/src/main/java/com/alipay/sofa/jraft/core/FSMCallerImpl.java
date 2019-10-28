@@ -521,7 +521,6 @@ public class FSMCallerImpl implements FSMCaller {
                         }
                         break;
                     // 如果是加载快照  实际上还是委托给 状态机 这里会配合 回调对象内部的 SnapshotReader 读取快照
-                    // 这里会将 快照的数据 覆盖当前数据  谁会发起该动作  如果是 leader 那么它又从哪里读取快照呢???
                     case SNAPSHOT_LOAD:
                         this.currTask = TaskType.SNAPSHOT_LOAD;
                         if (passByStatus(task.done)) {

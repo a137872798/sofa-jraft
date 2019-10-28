@@ -40,7 +40,7 @@ public class ConfigurationManager {
      */
     private final LinkedList<ConfigurationEntry> configurations = new LinkedList<>();
     /**
-     * 快照对象  该对象是针对链表中某个ConfEntry 的快照 还是???
+     * 最近一次快照数据
      */
     private ConfigurationEntry                   snapshot       = new ConfigurationEntry();
 
@@ -84,7 +84,7 @@ public class ConfigurationManager {
     }
 
     /**
-     * 设置快照  该快照是针对哪个对象的呢???
+     * 设置快照
      * @param snapshot
      */
     public void setSnapshot(final ConfigurationEntry snapshot) {

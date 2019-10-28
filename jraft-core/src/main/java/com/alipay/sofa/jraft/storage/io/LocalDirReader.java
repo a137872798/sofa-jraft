@@ -102,9 +102,10 @@ public class LocalDirReader implements FileReader {
                 totalRead += nread;
                 // 读取的数据还不足
                 if (totalRead < maxCount) {
-                    // 没有达到要求的量 返回 EOF
+                    // 可读的数据不足
                     if (buf.hasRemaining()) {
                         return EOF;
+                    // 代表buffer 空间不足
                     } else {
                         // hasRemaining == false 进行扩容
                         buf.expandAtMost((int) (maxCount - totalRead));
@@ -116,7 +117,7 @@ public class LocalDirReader implements FileReader {
                         LOG.warn("Invalid file length {}", filePath);
                         return EOF;
                     }
-                    // 这里为什么 返回EOF  刚好读取完也不允许吗???
+                    // EOF 就代表文件刚好读取完了
                     if (fsize == offset + nread) {
                         return EOF;
                     } else {
