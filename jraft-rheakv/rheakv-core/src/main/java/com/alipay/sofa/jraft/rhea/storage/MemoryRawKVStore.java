@@ -48,6 +48,7 @@ import static com.alipay.sofa.jraft.rhea.storage.MemoryKVStoreSnapshotFile.Segme
 import static com.alipay.sofa.jraft.rhea.storage.MemoryKVStoreSnapshotFile.TailIndex;
 
 /**
+ * 基于内存实现 KV键值对存储
  * @author jiachun.fjc
  */
 public class MemoryRawKVStore extends BatchRawKVStore<MemoryDBOptions> {
@@ -55,8 +56,14 @@ public class MemoryRawKVStore extends BatchRawKVStore<MemoryDBOptions> {
     private static final Logger                          LOG          = LoggerFactory.getLogger(MemoryRawKVStore.class);
 
     private static final byte                            DELIMITER    = (byte) ',';
+    /**
+     * 用于比较数据大小
+     */
     private static final Comparator<byte[]>              COMPARATOR   = BytesUtil.getDefaultByteArrayComparator();
 
+    /**
+     * 基于跳表
+     */
     private final ConcurrentNavigableMap<byte[], byte[]> defaultDB    = new ConcurrentSkipListMap<>(COMPARATOR);
     private final Map<ByteArray, Long>                   sequenceDB   = new ConcurrentHashMap<>();
     private final Map<ByteArray, Long>                   fencingKeyDB = new ConcurrentHashMap<>();
@@ -71,6 +78,9 @@ public class MemoryRawKVStore extends BatchRawKVStore<MemoryDBOptions> {
         return true;
     }
 
+    /**
+     * 终止 store 对象就是清除堆内存
+     */
     @Override
     public void shutdown() {
         this.defaultDB.clear();
@@ -79,6 +89,10 @@ public class MemoryRawKVStore extends BatchRawKVStore<MemoryDBOptions> {
         this.lockerDB.clear();
     }
 
+    /**
+     * 返回基于跳表的 迭代器
+     * @return
+     */
     @Override
     public KVIterator localIterator() {
         return new MemoryKVIterator(this.defaultDB);
@@ -308,6 +322,14 @@ public class MemoryRawKVStore extends BatchRawKVStore<MemoryDBOptions> {
         }
     }
 
+    /**
+     * 获取锁的套路也是类似的 就是用key去查询某个值是否已经存在了 类似redis 的分布式锁
+     * @param key
+     * @param fencingKey
+     * @param keepLease
+     * @param acquirer
+     * @param closure
+     */
     @Override
     public void tryLockWith(final byte[] key, final byte[] fencingKey, final boolean keepLease,
                             final DistributedLock.Acquirer acquirer, final KVStoreClosure closure) {

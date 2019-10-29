@@ -27,14 +27,14 @@ public interface LeaderStateListener extends StateListener {
 
     /**
      * Called when current node becomes leader.
-     *
+     * 当前节点变成leader 时触发
      * @param newTerm the new term
      */
     void onLeaderStart(final long newTerm);
 
     /**
      * Called when current node loses leadership.
-     *
+     * 当该节点不再是 leader 时触发
      * @param oldTerm the old term
      */
     void onLeaderStop(final long oldTerm);

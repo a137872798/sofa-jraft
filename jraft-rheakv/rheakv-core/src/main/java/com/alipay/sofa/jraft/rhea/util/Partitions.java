@@ -24,7 +24,7 @@ import java.util.function.Function;
  * Batch tasks are split and executed in the smallest unit,
  * can be used to perform parallel tasks, and can also be
  * used to perform serial batch tasks.
- *
+ * 将批量任务以更小的单位执行
  * @author jiachun.fjc
  */
 public class Partitions {
@@ -50,11 +50,16 @@ public class Partitions {
 
         final List<OUT> outputList = Lists.newArrayListWithCapacity((int) Math.ceil((double) inputSize / unitSize));
 
+        // 代表可以将所有数据整合成单个元素
         if (inputSize <= unitSize) {
+            // 这里是将 list 通过压缩函数 生成单个元素并添加到 outputList中
             add(outputList, func.apply(inputList));
             return outputList;
         }
 
+        /**
+         * 创建等大的容器 将前面的数据填充到该列表中并进行压缩
+         */
         List<IN> segment = Lists.newArrayListWithCapacity(unitSize);
         for (final IN input : inputList) {
             segment.add(input);
@@ -64,6 +69,7 @@ public class Partitions {
             }
         }
 
+        // 最后剩余的任务会压缩后再一次添加到list中
         if (!segment.isEmpty()) {
             add(outputList, func.apply(segment));
         }

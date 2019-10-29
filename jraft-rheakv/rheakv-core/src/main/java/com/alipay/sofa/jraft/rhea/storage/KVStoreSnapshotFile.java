@@ -24,24 +24,24 @@ import com.alipay.sofa.jraft.storage.snapshot.SnapshotReader;
 import com.alipay.sofa.jraft.storage.snapshot.SnapshotWriter;
 
 /**
- *
+ * 基于快照的文件存储
  * @author jiachun.fjc
  */
 public interface KVStoreSnapshotFile {
 
     /**
      * Save a snapshot for the specified region.
-     *
-     * @param writer   snapshot writer
+     * 为特定的 region 存储快照
+     * @param writer   snapshot writer  写入快照的对象
      * @param done     callback
      * @param region   the region to save snapshot
-     * @param executor the executor to compress snapshot
+     * @param executor the executor to compress snapshot  使用特定的线程池实现异步写入
      */
     void save(final SnapshotWriter writer, final Closure done, final Region region, final ExecutorService executor);
 
     /**
      * Load snapshot for the specified region.
-     *
+     * 加载某个指定地区的 快照信息
      * @param reader snapshot reader
      * @param region the region to load snapshot
      * @return true if load succeed

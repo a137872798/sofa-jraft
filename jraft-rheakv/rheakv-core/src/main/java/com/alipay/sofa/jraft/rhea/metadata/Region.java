@@ -51,10 +51,16 @@ public class Region implements Copiable<Region>, Serializable {
      * 该地区id
      */
     private long              id;                                             // region id
-    // Region key range [startKey, endKey)
+    // Region key range [startKey, endKey)  代表 该region 起始的key
     private byte[]            startKey;                                       // inclusive
     private byte[]            endKey;                                         // exclusive
+    /**
+     * 该 region 的描述信息
+     */
     private RegionEpoch       regionEpoch;                                    // region term
+    /**
+     * 该region 下所有的peer
+     */
     private List<Peer>        peers;                                          // all peers in the region
 
     public Region() {

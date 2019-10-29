@@ -52,7 +52,7 @@ import com.codahale.metrics.Slf4jReporter;
 
 /**
  * Minimum execution/copy unit of RheaKVStore.
- * 一个最小的 执行/复制单位
+ * 一个最小的 执行/复制单位   多个regionEngine 组成了StoreEngine
  * @author jiachun.fjc
  */
 public class RegionEngine implements Lifecycle<RegionEngineOptions> {
@@ -64,14 +64,26 @@ public class RegionEngine implements Lifecycle<RegionEngineOptions> {
      */
     private final Region        region;
     /**
-     * 存储引擎
+     * 该region 所属的存储引擎
      */
     private final StoreEngine   storeEngine;
 
+    /**
+     * 该对象是 操作 KVStore 的入口 实际实现是通过内部的 RocksRawKVStore
+     */
     private RaftRawKVStore      raftRawKVStore;
     private MetricsRawKVStore   metricsRawKVStore;
+    /**
+     * 代表一个 raft 集群
+     */
     private RaftGroupService    raftGroupService;
+    /**
+     * 该地区对应的节点 节点与地区是一对一关系???
+     */
     private Node                node;
+    /**
+     * 状态机对象
+     */
     private KVStoreStateMachine fsm;
     private RegionEngineOptions regionOpts;
 
@@ -91,6 +103,7 @@ public class RegionEngine implements Lifecycle<RegionEngineOptions> {
             return true;
         }
         this.regionOpts = Requires.requireNonNull(opts, "opts");
+        // 初始化 状态机
         this.fsm = new KVStoreStateMachine(this.region, this.storeEngine);
 
         // node options
@@ -103,10 +116,12 @@ public class RegionEngine implements Lifecycle<RegionEngineOptions> {
             // metricsReportPeriod > 0 means enable metrics
             nodeOpts.setEnableMetrics(true);
         }
+        // 初始化集群信息
         nodeOpts.setInitialConf(new Configuration(JRaftHelper.toJRaftPeerIdList(this.region.getPeers())));
         nodeOpts.setFsm(this.fsm);
         final String raftDataPath = opts.getRaftDataPath();
         try {
+            // 创建存放数据的文件夹
             FileUtils.forceMkdir(new File(raftDataPath));
         } catch (final Throwable t) {
             LOG.error("Fail to make dir for raftDataPath {}.", raftDataPath);
@@ -127,13 +142,17 @@ public class RegionEngine implements Lifecycle<RegionEngineOptions> {
         LOG.info("[RegionEngine: {}], log uri: {}, raft meta uri: {}, snapshot uri: {}.", this.region,
             nodeOpts.getLogUri(), nodeOpts.getRaftMetaUri(), nodeOpts.getSnapshotUri());
         final Endpoint serverAddress = opts.getServerAddress();
+        // 生成本服务器peerId
         final PeerId serverId = new PeerId(serverAddress, 0);
         final RpcServer rpcServer = this.storeEngine.getRpcServer();
         this.raftGroupService = new RaftGroupService(opts.getRaftGroupId(), serverId, nodeOpts, rpcServer, true);
+        // 启动组服务 返回一个节点
         this.node = this.raftGroupService.start(false);
         RouteTable.getInstance().updateConfiguration(this.raftGroupService.getGroupId(), nodeOpts.getInitialConf());
         if (this.node != null) {
+            // 获取 storeEngine 的store  这个对象 和regionEngine 的 store 有什么区别
             final RawKVStore rawKVStore = this.storeEngine.getRawKVStore();
+            // 获取调用 readIndex 的线程池
             final Executor readIndexExecutor = this.storeEngine.getReadIndexExecutor();
             this.raftRawKVStore = new RaftRawKVStore(this.node, rawKVStore, readIndexExecutor);
             this.metricsRawKVStore = new MetricsRawKVStore(this.region.getId(), this.raftRawKVStore);
@@ -167,6 +186,7 @@ public class RegionEngine implements Lifecycle<RegionEngineOptions> {
         if (this.raftGroupService != null) {
             this.raftGroupService.shutdown();
             try {
+                // 阻塞线程 直到 groupService 终止
                 this.raftGroupService.join();
             } catch (final InterruptedException e) {
                 ThrowUtil.throwException(e);
@@ -179,8 +199,14 @@ public class RegionEngine implements Lifecycle<RegionEngineOptions> {
         LOG.info("[RegionEngine] shutdown successfully: {}.", this);
     }
 
+    /**
+     * 替换leader
+     * @param endpoint
+     * @return
+     */
     public boolean transferLeadershipTo(final Endpoint endpoint) {
         final PeerId peerId = new PeerId(endpoint, 0);
+        // 交由node 去执行
         final Status status = this.node.transferLeadershipTo(peerId);
         final boolean isOk = status.isOk();
         if (isOk) {

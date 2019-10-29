@@ -75,6 +75,7 @@ import com.alipay.sofa.jraft.rhea.util.concurrent.DistributedLock;
 
 /**
  * Rhea KV region RPC request processing service.
+ * 用于处理针对 Region 的 RPC 请求 实际上都转发给store 进行处理
  *
  * @author jiachun.fjc
  */
@@ -87,6 +88,7 @@ public class DefaultRegionKVService implements RegionKVService {
 
     public DefaultRegionKVService(RegionEngine regionEngine) {
         this.regionEngine = regionEngine;
+        // 测量相关不看
         this.rawKVStore = regionEngine.getMetricsRawKVStore();
     }
 
@@ -100,16 +102,24 @@ public class DefaultRegionKVService implements RegionKVService {
         return this.regionEngine.getRegion().getRegionEpoch();
     }
 
+    /**
+     * 处理添加数据的请求
+     * @param request
+     * @param closure
+     */
     @Override
     public void handlePutRequest(final PutRequest request,
                                  final RequestProcessClosure<BaseRequest, BaseResponse<?>> closure) {
+        // 设置 该res 是由哪个 region生成的
         final PutResponse response = new PutResponse();
         response.setRegionId(getRegionId());
         response.setRegionEpoch(getRegionEpoch());
         try {
+            // 确保请求的 region 版本号和confVer 一致 如果变动了可能就是 leader 发生变化了???
             KVParameterRequires.requireSameEpoch(request, getRegionEpoch());
             final byte[] key = KVParameterRequires.requireNonNull(request.getKey(), "put.key");
             final byte[] value = KVParameterRequires.requireNonNull(request.getValue(), "put.value");
+            // 当数据成功添加到 store 中后触发回调 并发送res
             this.rawKVStore.put(key, value, new BaseKVStoreClosure() {
 
                 @Override
@@ -129,6 +139,11 @@ public class DefaultRegionKVService implements RegionKVService {
         }
     }
 
+    /**
+     * 处理批量添加请求
+     * @param request
+     * @param closure
+     */
     @Override
     public void handleBatchPutRequest(final BatchPutRequest request,
                                       final RequestProcessClosure<BaseRequest, BaseResponse<?>> closure) {

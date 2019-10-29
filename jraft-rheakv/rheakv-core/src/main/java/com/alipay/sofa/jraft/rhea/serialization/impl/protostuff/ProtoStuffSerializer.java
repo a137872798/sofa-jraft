@@ -35,7 +35,7 @@ import com.alipay.sofa.jraft.rhea.util.ThrowUtil;
 import com.alipay.sofa.jraft.util.SystemPropertyUtil;
 
 /**
- *
+ * 基于 protobuf 的序列化对象
  * @author jiachun.fjc
  */
 public class ProtoStuffSerializer extends Serializer {

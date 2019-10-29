@@ -23,7 +23,7 @@ import com.alipay.sofa.jraft.rhea.serialization.io.OutputBuf;
 
 /**
  * This interface provides an abstract view for one or more serializer impl.
- *
+ * 序列化对象
  * @author jiachun.fjc
  */
 public abstract class Serializer {

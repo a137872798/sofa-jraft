@@ -29,6 +29,7 @@ import com.alipay.sofa.jraft.util.Requires;
  * A simple kv state list which is recyclable.
  * This implementation does not allow {@code null} elements to be added.
  * 在 BatchRawKVStore 中被使用   该对象的创建和销毁肯定比较耗资源 所以需要用 Recycles 进行重复利用
+ * 该对象就是一个 ArrayList 的加强版
  */
 public final class KVStateOutputList extends ArrayList<KVState> implements Recyclable {
 
@@ -47,6 +48,7 @@ public final class KVStateOutputList extends ArrayList<KVState> implements Recyc
      * Create a new empty {@link KVStateOutputList} instance with the given capacity.
      */
     public static KVStateOutputList newInstance(final int minCapacity) {
+        // 从recycle 中获取结果 并确认容量是否足够
         final KVStateOutputList ret = recyclers.get();
         ret.ensureCapacity(minCapacity);
         return ret;
@@ -59,6 +61,7 @@ public final class KVStateOutputList extends ArrayList<KVState> implements Recyc
     /**
      * You must first check to make sure that {@link #isSingletonList()}
      * returns true.
+     * 获取内部的首个元素 必须先确保它是一个单元素列表 才有调用该方法的必要
      */
     public KVState getSingletonElement() {
         Requires.requireTrue(!isEmpty(), "empty");

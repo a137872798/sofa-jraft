@@ -26,7 +26,7 @@ import com.alipay.sofa.jraft.util.Requires;
 
 /**
  * The KV store operation
- *
+ * 针对 KV store 的操作
  * @author jiachun.fjc
  */
 public class KVOperation implements Serializable {

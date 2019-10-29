@@ -88,8 +88,17 @@ public class StoreEngine implements Lifecycle<StoreEngineOptions> {
         ExtSerializerSupports.init();
     }
 
+    /**
+     * key: regionId  value: 对应的 kv 服务器
+     */
     private final ConcurrentMap<Long, RegionKVService> regionKVServiceTable = Maps.newConcurrentMapLong();
+    /**
+     * key: regionId value: 地区引擎
+     */
     private final ConcurrentMap<Long, RegionEngine>    regionEngineTable    = Maps.newConcurrentMapLong();
+    /**
+     * PD客户端
+     */
     private final PlacementDriverClient                pdClient;
     private final long                                 clusterId;
 
@@ -97,9 +106,21 @@ public class StoreEngine implements Lifecycle<StoreEngineOptions> {
     private final AtomicBoolean                        splitting            = new AtomicBoolean(false);
     // When the store is started (unix timestamp in milliseconds)
     private long                                       startTime            = System.currentTimeMillis();
+    /**
+     * DB 文件
+     */
     private File                                       dbPath;
+    /**
+     * RPC 服务器
+     */
     private RpcServer                                  rpcServer;
+    /**
+     * 具备批量存储功能  也就是存储引擎看作是一个具备存储能力的服务器 核心能力由该对象实现 而其他组件是它作为服务器额外的功能
+     */
     private BatchRawKVStore<?>                         rawKVStore;
+    /**
+     * 发送心跳对象
+     */
     private HeartbeatSender                            heartbeatSender;
     private StoreEngineOptions                         storeOpts;
 
@@ -112,6 +133,7 @@ public class StoreEngine implements Lifecycle<StoreEngineOptions> {
     private ExecutorService                            kvRpcExecutor;
 
     private ScheduledExecutorService                   metricsScheduler;
+    // 测量相关的
     private ScheduledReporter                          kvMetricsReporter;
     private ScheduledReporter                          threadPoolMetricsReporter;
 
@@ -122,6 +144,11 @@ public class StoreEngine implements Lifecycle<StoreEngineOptions> {
         this.clusterId = pdClient.getClusterId();
     }
 
+    /**
+     * 初始化存储引擎
+     * @param opts
+     * @return
+     */
     @Override
     public synchronized boolean init(final StoreEngineOptions opts) {
         if (this.started) {
@@ -133,27 +160,32 @@ public class StoreEngine implements Lifecycle<StoreEngineOptions> {
         final int port = serverAddress.getPort();
         final String ip = serverAddress.getIp();
         if (ip == null || Utils.IP_ANY.equals(ip)) {
+            // 生成服务器地址
             serverAddress = new Endpoint(NetUtil.getLocalCanonicalHostName(), port);
             opts.setServerAddress(serverAddress);
         }
         final long metricsReportPeriod = opts.getMetricsReportPeriod();
-        // init region options
+        // init region options  初始化 以region  为单位的存储对象
         List<RegionEngineOptions> rOptsList = opts.getRegionEngineOptionsList();
         if (rOptsList == null || rOptsList.isEmpty()) {
-            // -1 region
+            // -1 region  代表没有regionEngine相关配置 就创建一个默认值
             final RegionEngineOptions rOpts = new RegionEngineOptions();
             rOpts.setRegionId(Constants.DEFAULT_REGION_ID);
             rOptsList = Lists.newArrayList();
             rOptsList.add(rOpts);
             opts.setRegionEngineOptionsList(rOptsList);
         }
+        // 获取集群名
         final String clusterName = this.pdClient.getClusterName();
+        // 生成regionEngine   看来regionEngine 是属于某个 storeEngine 的 一个storeEngine 下有多个regionEngine
         for (final RegionEngineOptions rOpts : rOptsList) {
             rOpts.setRaftGroupId(JRaftHelper.getJRaftGroupId(clusterName, rOpts.getRegionId()));
             rOpts.setServerAddress(serverAddress);
+            // 初始化服务组
             rOpts.setInitialServerList(opts.getInitialServerList());
             if (rOpts.getNodeOptions() == null) {
                 // copy common node options
+                // 没有配置就使用 公共配置
                 rOpts.setNodeOptions(opts.getCommonNodeOptions() == null ? new NodeOptions() : opts
                     .getCommonNodeOptions().copy());
             }
@@ -162,14 +194,14 @@ public class StoreEngine implements Lifecycle<StoreEngineOptions> {
                 rOpts.setMetricsReportPeriod(metricsReportPeriod);
             }
         }
-        // init store
+        // init store 通过 pdClient 内部的 metadataRpcClient 以及opts 的 serverEndpoint 去 拉取store信息 同时会更新regionRouteTable
         final Store store = this.pdClient.getStoreMetadata(opts);
         if (store == null || store.getRegions() == null || store.getRegions().isEmpty()) {
             LOG.error("Empty store metadata: {}.", store);
             return false;
         }
         this.storeId = store.getId();
-        // init executors
+        // init executors  创建相关线程池
         if (this.readIndexExecutor == null) {
             this.readIndexExecutor = StoreEngineHelper.createReadIndexExecutor(opts.getReadIndexCoreThreads());
         }
@@ -194,19 +226,23 @@ public class StoreEngine implements Lifecycle<StoreEngineOptions> {
         }
         // init metrics
         startMetricReporters(metricsReportPeriod);
-        // init rpc server
+        // init rpc server  创建RpcServer 用于接受远端的请求
         this.rpcServer = new RpcServer(port, true, true);
+        // 注册请求处理器  raftRpcExecutor 代表处理 raft 请求 cli 代表处理命令行请求
         RaftRpcServerFactory.addRaftRequestProcessors(this.rpcServer, this.raftRpcExecutor, this.cliRpcExecutor);
+        // 本对象具备处理多种req 的能力
         StoreEngineHelper.addKvStoreRequestProcessor(this.rpcServer, this);
+        // 启动netty 服务器
         if (!this.rpcServer.start()) {
             LOG.error("Fail to init [RpcServer].");
             return false;
         }
-        // init db store
+        // init db store  初始化KVStore 失败
         if (!initRawKVStore(opts)) {
             return false;
         }
         // init all region engine
+        // 初始化该storeEngine 下所有的 regionEngine
         if (!initAllRegionEngine(opts, store)) {
             LOG.error("Fail to init all [RegionEngine].");
             return false;
@@ -403,6 +439,11 @@ public class StoreEngine implements Lifecycle<StoreEngineOptions> {
         this.threadPoolMetricsReporter = threadPoolMetricsReporter;
     }
 
+    /**
+     * 将某个engine 从 映射表中移除 同时要终止该engine
+     * @param regionId
+     * @return
+     */
     public boolean removeAndStopRegionEngine(final long regionId) {
         final RegionEngine engine = this.regionEngineTable.get(regionId);
         if (engine != null) {
@@ -412,6 +453,10 @@ public class StoreEngine implements Lifecycle<StoreEngineOptions> {
         return false;
     }
 
+    /**
+     * 将所有地区中是 leader 的添加进列表中  那么 一个store 可能有多个leader 他们不属于一个 region
+     * @return
+     */
     public List<Long> getLeaderRegionIds() {
         final List<Long> regionIds = Lists.newArrayListWithCapacity(this.regionEngineTable.size());
         for (final RegionEngine regionEngine : this.regionEngineTable.values()) {
@@ -436,13 +481,17 @@ public class StoreEngine implements Lifecycle<StoreEngineOptions> {
         return count;
     }
 
+    /**
+     * 判断是否繁忙???
+     * @return
+     */
     public boolean isBusy() {
         // Need more info
         return splitting.get();
     }
 
     /**
-     * 进行拆分
+     * 进行拆分   看来是要将原来的某个region 拆分 那么数据怎么划分呢 还有region 与 node 之间到底是什么关系呢
      * @param regionId
      * @param newRegionId
      * @param closure
@@ -450,16 +499,19 @@ public class StoreEngine implements Lifecycle<StoreEngineOptions> {
     public void applySplit(final Long regionId, final Long newRegionId, final KVStoreClosure closure) {
         Requires.requireNonNull(regionId, "regionId");
         Requires.requireNonNull(newRegionId, "newRegionId");
+        // 如果该region 已经存在就抛出异常
         if (this.regionEngineTable.containsKey(newRegionId)) {
             closure.setError(Errors.CONFLICT_REGION_ID);
             closure.run(new Status(-1, "Conflict region id %d", newRegionId));
             return;
         }
+        // 设置成正在拆分中那么 对外显示就是繁忙状态
         if (!this.splitting.compareAndSet(false, true)) {
             closure.setError(Errors.SERVER_BUSY);
             closure.run(new Status(-1, "Server is busy now"));
             return;
         }
+        // 获取对应的引擎 不存在 抛出异常
         final RegionEngine parentEngine = getRegionEngine(regionId);
         if (parentEngine == null) {
             closure.setError(Errors.NO_REGION_FOUND);
@@ -467,6 +519,7 @@ public class StoreEngine implements Lifecycle<StoreEngineOptions> {
             this.splitting.set(false);
             return;
         }
+        // 必须是 leader 才能进行拆分
         if (!parentEngine.isLeader()) {
             closure.setError(Errors.NOT_LEADER);
             closure.run(new Status(-1, "RegionEngine[%s] not leader", regionId));
@@ -476,7 +529,9 @@ public class StoreEngine implements Lifecycle<StoreEngineOptions> {
         final Region parentRegion = parentEngine.getRegion();
         final byte[] startKey = BytesUtil.nullToEmpty(parentRegion.getStartKey());
         final byte[] endKey = parentRegion.getEndKey();
+        // 拉取一定数量的key
         final long approximateKeys = this.rawKVStore.getApproximateKeysInRange(startKey, endKey);
+        // 获取最少拆分的key
         final long leastKeysOnSplit = this.storeOpts.getLeastKeysOnSplit();
         if (approximateKeys < leastKeysOnSplit) {
             closure.setError(Errors.TOO_SMALL_TO_SPLIT);
@@ -484,6 +539,7 @@ public class StoreEngine implements Lifecycle<StoreEngineOptions> {
             this.splitting.set(false);
             return;
         }
+        // 这里找到接近中间的位置
         final byte[] splitKey = this.rawKVStore.jumpOver(startKey, approximateKeys >> 1);
         if (splitKey == null) {
             closure.setError(Errors.STORAGE_ERROR);
@@ -491,6 +547,7 @@ public class StoreEngine implements Lifecycle<StoreEngineOptions> {
             this.splitting.set(false);
             return;
         }
+        // 创建一个拆分操作 并交由 node 执行
         final KVOperation op = KVOperation.createRangeSplit(splitKey, regionId, newRegionId);
         final Task task = new Task();
         task.setData(ByteBuffer.wrap(Serializers.getDefault().writeObject(op)));
@@ -498,14 +555,22 @@ public class StoreEngine implements Lifecycle<StoreEngineOptions> {
         parentEngine.getNode().apply(task);
     }
 
+    /**
+     * 实际执行拆分的动作
+     * @param regionId
+     * @param newRegionId
+     * @param splitKey
+     */
     public void doSplit(final Long regionId, final Long newRegionId, final byte[] splitKey) {
         try {
+            // 获取一些基本信息
             Requires.requireNonNull(regionId, "regionId");
             Requires.requireNonNull(newRegionId, "newRegionId");
             final RegionEngine parent = getRegionEngine(regionId);
             final Region region = parent.getRegion().copy();
             final RegionEngineOptions rOpts = parent.copyRegionOpts();
             region.setId(newRegionId);
+            // 新的region 的startKey 为之前拆分的位置
             region.setStartKey(splitKey);
             region.setRegionEpoch(new RegionEpoch(-1, -1));
 
@@ -527,7 +592,7 @@ public class StoreEngine implements Lifecycle<StoreEngineOptions> {
                 throw Errors.REGION_ENGINE_FAIL.exception();
             }
 
-            // update parent conf
+            // update parent conf  将新的region 添加到 映射中 (该region 实际是从旧的region分裂出来的)
             final Region pRegion = parent.getRegion();
             final RegionEpoch pEpoch = pRegion.getRegionEpoch();
             final long version = pEpoch.getVersion();
@@ -582,6 +647,11 @@ public class StoreEngine implements Lifecycle<StoreEngineOptions> {
         }
     }
 
+    /**
+     * 初始化 KV 存储
+     * @param opts
+     * @return
+     */
     private boolean initRawKVStore(final StoreEngineOptions opts) {
         final StorageType storageType = opts.getStorageType();
         switch (storageType) {
@@ -594,9 +664,15 @@ public class StoreEngine implements Lifecycle<StoreEngineOptions> {
         }
     }
 
+    /**
+     * 初始化 RocksDB
+     * @param opts
+     * @return
+     */
     private boolean initRocksDB(final StoreEngineOptions opts) {
         RocksDBOptions rocksOpts = opts.getRocksDBOptions();
         if (rocksOpts == null) {
+            // 创建一个默认opts
             rocksOpts = new RocksDBOptions();
             opts.setRocksDBOptions(rocksOpts);
         }
@@ -609,11 +685,15 @@ public class StoreEngine implements Lifecycle<StoreEngineOptions> {
                 return false;
             }
         } else {
+            // 默认为 ""
             dbPath = "";
         }
         final String childPath = "db_" + this.storeId + "_" + opts.getServerAddress().getPort();
+        // 拼接路径后作为 DB 路径
         rocksOpts.setDbPath(Paths.get(dbPath, childPath).toString());
+        // 创建db 文件
         this.dbPath = new File(rocksOpts.getDbPath());
+        // 初始化基于 Rocks的 存储对象
         final RocksRawKVStore rocksRawKVStore = new RocksRawKVStore();
         if (!rocksRawKVStore.init(rocksOpts)) {
             LOG.error("Fail to init [RocksRawKVStore].");
@@ -638,9 +718,16 @@ public class StoreEngine implements Lifecycle<StoreEngineOptions> {
         return true;
     }
 
+    /**
+     * 初始化regionEngine
+     * @param opts
+     * @param store
+     * @return
+     */
     private boolean initAllRegionEngine(final StoreEngineOptions opts, final Store store) {
         Requires.requireNonNull(opts, "opts");
         Requires.requireNonNull(store, "store");
+        // 默认的存放数据路径
         String baseRaftDataPath = opts.getRaftDataPath();
         if (Strings.isNotBlank(baseRaftDataPath)) {
             try {
@@ -660,13 +747,17 @@ public class StoreEngine implements Lifecycle<StoreEngineOptions> {
             final RegionEngineOptions rOpts = rOptsList.get(i);
             final Region region = regionList.get(i);
             if (Strings.isBlank(rOpts.getRaftDataPath())) {
+                // 生成一个默认的地址
                 final String childPath = "raft_data_region_" + region.getId() + "_" + serverAddress.getPort();
                 rOpts.setRaftDataPath(Paths.get(baseRaftDataPath, childPath).toString());
             }
             Requires.requireNonNull(region.getRegionEpoch(), "regionEpoch");
+            // 通过region 和本对象创建 regionEngine
             final RegionEngine engine = new RegionEngine(region, this);
             if (engine.init(rOpts)) {
+                // 创建RegionKVService 相当于是一个入口 没有直接将 engine 暴露给外部
                 final RegionKVService regionKVService = new DefaultRegionKVService(engine);
+                // 将服务注册到storeEngine 上
                 registerRegionKVService(regionKVService);
                 this.regionEngineTable.put(region.getId(), engine);
             } else {
@@ -677,6 +768,10 @@ public class StoreEngine implements Lifecycle<StoreEngineOptions> {
         return true;
     }
 
+    /**
+     * 将regionId 与对应的 服务 设置到映射容器中
+     * @param regionKVService
+     */
     private void registerRegionKVService(final RegionKVService regionKVService) {
         final RegionKVService preService = this.regionKVServiceTable.putIfAbsent(regionKVService.getRegionId(),
             regionKVService);

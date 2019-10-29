@@ -20,14 +20,14 @@ import com.alipay.sofa.jraft.entity.PeerId;
 
 /**
  * Follower state listener.
- *
+ * follower 状态监听器
  * @author jiachun.fjc
  */
 public interface FollowerStateListener extends StateListener {
 
     /**
      * Called when current node becomes leader.
-     *
+     * 当该节点变成leader节点时触发
      * @param term the new term
      */
     default void onLeaderStart(final long term) {

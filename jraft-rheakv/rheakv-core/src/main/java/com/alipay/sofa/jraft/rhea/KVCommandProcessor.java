@@ -48,12 +48,18 @@ import com.alipay.sofa.jraft.util.Requires;
 
 /**
  * Rhea KV store RPC request processing service.
- *
+ * 处理针对 RheaKVstore 的请求处理器
  * @author jiachun.fjc
  */
 public class KVCommandProcessor<T extends BaseRequest> extends AsyncUserProcessor<T> {
 
+    /**
+     * 能够处理的请求类型
+     */
     private final Class<T>    reqClazz;
+    /**
+     * 代表处理逻辑实际上是转发到该类的
+     */
     private final StoreEngine storeEngine;
 
     public KVCommandProcessor(Class<T> reqClazz, StoreEngine storeEngine) {
@@ -135,6 +141,10 @@ public class KVCommandProcessor<T extends BaseRequest> extends AsyncUserProcesso
         }
     }
 
+    /**
+     * 代表可以接受哪种类型的请求
+     * @return
+     */
     @Override
     public String interest() {
         return this.reqClazz.getName();

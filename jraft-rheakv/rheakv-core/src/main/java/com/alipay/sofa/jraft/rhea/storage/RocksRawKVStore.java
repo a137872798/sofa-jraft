@@ -86,7 +86,7 @@ import com.codahale.metrics.Timer;
 
 /**
  * Local KV store based on RocksDB
- *
+ * 基于Rocks 的存储
  * @author dennis
  * @author jiachun.fjc
  */
@@ -98,12 +98,18 @@ public class RocksRawKVStore extends BatchRawKVStore<RocksDBOptions> {
         RocksDB.loadLibrary();
     }
 
-    // The maximum number of keys in once batch write
+    // The maximum number of keys in once batch write   最大批量写入尺寸
     public static final int                    MAX_BATCH_WRITE_SIZE = SystemPropertyUtil.getInt(
                                                                         "rhea.rocksdb.user.max_batch_write_size", 128);
 
+    /**
+     * 读写锁对象
+     */
     private final ReadWriteLock                readWriteLock        = new ReentrantReadWriteLock();
 
+    /**
+     * 当前db 版本
+     */
     private final AtomicLong                   databaseVersion      = new AtomicLong(0);
     private final Serializer                   serializer           = Serializers.getDefault();
 
@@ -123,17 +129,26 @@ public class RocksRawKVStore extends BatchRawKVStore<RocksDBOptions> {
     private Statistics                         statistics;
     private RocksStatisticsCollector           statisticsCollector;
 
+    /**
+     * 初始化db 存储
+     * @param opts
+     * @return
+     */
     @Override
     public boolean init(final RocksDBOptions opts) {
+        // 读写锁是为了保证线程安全
         final Lock writeLock = this.readWriteLock.writeLock();
         writeLock.lock();
         try {
+            // 如果db 已经被初始化 不做处理
             if (this.db != null) {
                 LOG.info("[RocksRawKVStore] already started.");
                 return true;
             }
             this.opts = opts;
+            // 创建db相关配置
             this.options = createDBOptions();
+            // 统计先不看
             if (opts.isOpenStatisticsCollector()) {
                 this.statistics = new Statistics();
                 this.options.setStatistics(this.statistics);
@@ -159,7 +174,9 @@ public class RocksRawKVStore extends BatchRawKVStore<RocksDBOptions> {
             this.writeOptions.setDisableWAL(!opts.isSync() && opts.isDisableWAL());
             // Delete existing data, relying on raft's snapshot and log playback
             // to reply to the data is the correct behavior.
+            // 先销毁存在的数据 如果重启 则通过 快照的方式
             destroyRocksDB(opts);
+            // 开启db
             openRocksDB(opts);
             LOG.info("[RocksRawKVStore] start successfully, options: {}.", opts);
             return true;
@@ -171,6 +188,9 @@ public class RocksRawKVStore extends BatchRawKVStore<RocksDBOptions> {
         return false;
     }
 
+    /**
+     * 销毁db 对象
+     */
     @Override
     public void shutdown() {
         final Lock writeLock = this.readWriteLock.writeLock();
@@ -226,6 +246,10 @@ public class RocksRawKVStore extends BatchRawKVStore<RocksDBOptions> {
         }
     }
 
+    /**
+     * 将本地数据 以迭代器方式返回
+     * @return
+     */
     @Override
     public KVIterator localIterator() {
         final Lock readLock = this.readWriteLock.readLock();
@@ -237,13 +261,21 @@ public class RocksRawKVStore extends BatchRawKVStore<RocksDBOptions> {
         }
     }
 
+    /**
+     *
+     * @param key  通过key 查询数据
+     * @param readOnlySafe  true 代表保证一致性读
+     * @param closure
+     */
     @Override
     public void get(final byte[] key, @SuppressWarnings("unused") final boolean readOnlySafe,
                     final KVStoreClosure closure) {
+        // 统计相关先不管
         final Timer.Context timeCtx = getTimeContext("GET");
         final Lock readLock = this.readWriteLock.readLock();
         readLock.lock();
         try {
+            // 通过 db的api 查询到 value 并触发回调
             final byte[] value = this.db.get(key);
             setSuccess(closure, value);
         } catch (final Exception e) {
@@ -255,6 +287,12 @@ public class RocksRawKVStore extends BatchRawKVStore<RocksDBOptions> {
         }
     }
 
+    /**
+     * 批量查询数据
+     * @param keys
+     * @param readOnlySafe
+     * @param closure
+     */
     @Override
     public void multiGet(final List<byte[]> keys, @SuppressWarnings("unused") final boolean readOnlySafe,
                          final KVStoreClosure closure) {
@@ -262,9 +300,11 @@ public class RocksRawKVStore extends BatchRawKVStore<RocksDBOptions> {
         final Lock readLock = this.readWriteLock.readLock();
         readLock.lock();
         try {
+            // db 本身就有 批量获取数据的api
             final Map<byte[], byte[]> rawMap = this.db.multiGet(keys);
             final Map<ByteArray, byte[]> resultMap = Maps.newHashMapWithExpectedSize(rawMap.size());
             for (final Map.Entry<byte[], byte[]> entry : rawMap.entrySet()) {
+                // 将key 包装后 作为result 触发回调
                 resultMap.put(ByteArray.wrap(entry.getKey()), entry.getValue());
             }
             setSuccess(closure, resultMap);
@@ -277,6 +317,10 @@ public class RocksRawKVStore extends BatchRawKVStore<RocksDBOptions> {
         }
     }
 
+    /**
+     * 返回 startKey endKey 之间的所有数据
+     * @param limit 代表最多允许读取多少数据
+     */
     @Override
     public void scan(final byte[] startKey, final byte[] endKey, final int limit,
                      @SuppressWarnings("unused") final boolean readOnlySafe, final boolean returnValue,
@@ -292,6 +336,7 @@ public class RocksRawKVStore extends BatchRawKVStore<RocksDBOptions> {
         final Lock readLock = this.readWriteLock.readLock();
         readLock.lock();
         try (final RocksIterator it = this.db.newIterator()) {
+            // 将内部迭代器 指向指定的为止
             if (startKey == null) {
                 it.seekToFirst();
             } else {
@@ -300,6 +345,7 @@ public class RocksRawKVStore extends BatchRawKVStore<RocksDBOptions> {
             int count = 0;
             while (it.isValid() && count++ < maxCount) {
                 final byte[] key = it.key();
+                // 在到达 endKey 之前或者 maxCount 之前会不断获取数据并添加到 entries 中
                 if (endKey != null && BytesUtil.compare(key, endKey) >= 0) {
                     break;
                 }
@@ -317,6 +363,12 @@ public class RocksRawKVStore extends BatchRawKVStore<RocksDBOptions> {
         }
     }
 
+    /**
+     * 获取 序列 ???  这个方法是干嘛用的
+     * @param seqKey
+     * @param step
+     * @param closure
+     */
     @Override
     public void getSequence(final byte[] seqKey, final int step, final KVStoreClosure closure) {
         final Timer.Context timeCtx = getTimeContext("GET_SEQUENCE");
@@ -328,21 +380,26 @@ public class RocksRawKVStore extends BatchRawKVStore<RocksDBOptions> {
             if (prevBytesVal == null) {
                 startVal = 0;
             } else {
+                // 将序列变成了 start 指针
                 startVal = Bits.getLong(prevBytesVal, 0);
             }
+            // 如果读取的偏移量为 负数 抛出异常
             if (step < 0) {
                 // never get here
                 setFailure(closure, "Fail to [GET_SEQUENCE], step must >= 0");
                 return;
             }
+            // 代表只读取当前序列 并触发回调
             if (step == 0) {
                 setSuccess(closure, new Sequence(startVal, startVal));
                 return;
             }
+            // 获取结束的 序列值
             final long endVal = getSafeEndValueForSequence(startVal, step);
             if (startVal != endVal) {
                 final byte[] newBytesVal = new byte[8];
                 Bits.putLong(newBytesVal, 0, endVal);
+                // 将结束的序列值保存到db中
                 this.db.put(this.sequenceHandle, this.writeOptions, seqKey, newBytesVal);
             }
             setSuccess(closure, new Sequence(startVal, endVal));
@@ -362,6 +419,7 @@ public class RocksRawKVStore extends BatchRawKVStore<RocksDBOptions> {
         final Lock readLock = this.readWriteLock.readLock();
         readLock.lock();
         try {
+            // 删除指定序列对应的数据
             this.db.delete(this.sequenceHandle, seqKey);
             setSuccess(closure, Boolean.TRUE);
         } catch (final Exception e) {
@@ -374,10 +432,16 @@ public class RocksRawKVStore extends BatchRawKVStore<RocksDBOptions> {
         }
     }
 
+    /**
+     * 批量重置序列
+     * @param kvStates
+     */
     @Override
     public void batchResetSequence(final KVStateOutputList kvStates) {
+        // 如果长度是1
         if (kvStates.isSingletonList()) {
             final KVState kvState = kvStates.getSingletonElement();
+            // 就是删除 key 以及对应的值
             resetSequence(kvState.getOp().getKey(), kvState.getDone());
             return;
         }
@@ -385,13 +449,18 @@ public class RocksRawKVStore extends BatchRawKVStore<RocksDBOptions> {
         final Lock readLock = this.readWriteLock.readLock();
         readLock.lock();
         try {
+            // 将多个任务进行合并
             Partitions.manyToOne(kvStates, MAX_BATCH_WRITE_SIZE, (Function<List<KVState>, Void>) segment -> {
+                // 压缩函数  WriteBatch 是 RocksDB 的对象 用于批量写入数据
                 try (final WriteBatch batch = new WriteBatch()) {
+                    // 这里的 delete 应该是还没执行的 而是以一种任务形式暂存在batch中
                     for (final KVState kvState : segment) {
                         batch.delete(sequenceHandle, kvState.getOp().getKey());
                     }
+                    // 执行批量删除
                     this.db.write(this.writeOptions, batch);
                     for (final KVState kvState : segment) {
+                        // 看来 回调要触发好几次
                         setSuccess(kvState.getDone(), Boolean.TRUE);
                     }
                 } catch (final Exception e) {
@@ -407,12 +476,19 @@ public class RocksRawKVStore extends BatchRawKVStore<RocksDBOptions> {
         }
     }
 
+    /**
+     * 将数据存入 RocksDB 中
+     * @param key
+     * @param value
+     * @param closure
+     */
     @Override
     public void put(final byte[] key, final byte[] value, final KVStoreClosure closure) {
         final Timer.Context timeCtx = getTimeContext("PUT");
         final Lock readLock = this.readWriteLock.readLock();
         readLock.lock();
         try {
+            // 将kv 通过db 对象存入文件
             this.db.put(this.writeOptions, key, value);
             setSuccess(closure, Boolean.TRUE);
         } catch (final Exception e) {
@@ -425,8 +501,13 @@ public class RocksRawKVStore extends BatchRawKVStore<RocksDBOptions> {
         }
     }
 
+    /**
+     * 批量插入数据
+     * @param kvStates
+     */
     @Override
     public void batchPut(final KVStateOutputList kvStates) {
+        // 如果只有单元素 走单元素put
         if (kvStates.isSingletonList()) {
             final KVState kvState = kvStates.getSingletonElement();
             final KVOperation op = kvState.getOp();
@@ -437,6 +518,7 @@ public class RocksRawKVStore extends BatchRawKVStore<RocksDBOptions> {
         final Lock readLock = this.readWriteLock.readLock();
         readLock.lock();
         try {
+            // 通过压缩函数批量执行 并多次触发回调
             Partitions.manyToOne(kvStates, MAX_BATCH_WRITE_SIZE, (Function<List<KVState>, Void>) segment -> {
                 try (final WriteBatch batch = new WriteBatch()) {
                     for (final KVState kvState : segment) {
@@ -459,6 +541,12 @@ public class RocksRawKVStore extends BatchRawKVStore<RocksDBOptions> {
         }
     }
 
+    /**
+     * 将新的value 存入db 中并返回旧的value 用于触发回调
+     * @param key
+     * @param value
+     * @param closure
+     */
     @Override
     public void getAndPut(final byte[] key, final byte[] value, final KVStoreClosure closure) {
         final Timer.Context timeCtx = getTimeContext("GET_PUT");
@@ -478,6 +566,10 @@ public class RocksRawKVStore extends BatchRawKVStore<RocksDBOptions> {
         }
     }
 
+    /**
+     * 批量插入以及触发回调
+     * @param kvStates
+     */
     @Override
     public void batchGetAndPut(final KVStateOutputList kvStates) {
         if (kvStates.isSingletonList()) {
@@ -499,7 +591,7 @@ public class RocksRawKVStore extends BatchRawKVStore<RocksDBOptions> {
                         keys.add(key);
                         batch.put(key, op.getValue());
                     }
-                    // first, get prev values
+                    // first, get prev values   获取旧数据 用于触发回调
                     final Map<byte[], byte[]> prevValMap = this.db.multiGet(keys);
                     this.db.write(this.writeOptions, batch);
                     for (final KVState kvState : segment) {
@@ -518,6 +610,13 @@ public class RocksRawKVStore extends BatchRawKVStore<RocksDBOptions> {
         }
     }
 
+    /**
+     * 就是 CAS
+     * @param key
+     * @param expect
+     * @param update
+     * @param closure
+     */
     @Override
     public void compareAndPut(final byte[] key, final byte[] expect, final byte[] update, final KVStoreClosure closure) {
         final Timer.Context timeCtx = getTimeContext("COMPARE_PUT");
@@ -525,6 +624,7 @@ public class RocksRawKVStore extends BatchRawKVStore<RocksDBOptions> {
         readLock.lock();
         try {
             final byte[] actual = this.db.get(key);
+            // 与预期相同时才允许覆盖写入
             if (Arrays.equals(expect, actual)) {
                 this.db.put(this.writeOptions, key, update);
                 setSuccess(closure, Boolean.TRUE);
@@ -541,6 +641,10 @@ public class RocksRawKVStore extends BatchRawKVStore<RocksDBOptions> {
         }
     }
 
+    /**
+     * 批量 CAS
+     * @param kvStates
+     */
     @Override
     public void batchCompareAndPut(final KVStateOutputList kvStates) {
         if (kvStates.isSingletonList()) {
@@ -565,9 +669,11 @@ public class RocksRawKVStore extends BatchRawKVStore<RocksDBOptions> {
                         expects.put(key, expect);
                         updates.put(key, update);
                     }
+                    // 先获取旧的数据
                     final Map<byte[], byte[]> prevValMap = this.db.multiGet(Lists.newArrayList(expects.keySet()));
                     for (final KVState kvState : segment) {
                         final byte[] key = kvState.getOp().getKey();
+                        // 循环 更换命中的数据
                         if (Arrays.equals(expects.get(key), prevValMap.get(key))) {
                             batch.put(key, updates.get(key));
                             setData(kvState.getDone(), Boolean.TRUE);
@@ -578,6 +684,7 @@ public class RocksRawKVStore extends BatchRawKVStore<RocksDBOptions> {
                     if (batch.count() > 0) {
                         this.db.write(this.writeOptions, batch);
                     }
+                    // 上面的分支确定了 data 这里根据结果触发回调
                     for (final KVState kvState : segment) {
                         setSuccess(kvState.getDone(), getData(kvState.getDone()));
                     }
@@ -594,6 +701,12 @@ public class RocksRawKVStore extends BatchRawKVStore<RocksDBOptions> {
         }
     }
 
+    /**
+     * 聚合数据  具体由rocksDB 实现
+     * @param key
+     * @param value
+     * @param closure
+     */
     @Override
     public void merge(final byte[] key, final byte[] value, final KVStoreClosure closure) {
         final Timer.Context timeCtx = getTimeContext("MERGE");
@@ -612,6 +725,10 @@ public class RocksRawKVStore extends BatchRawKVStore<RocksDBOptions> {
         }
     }
 
+    /**
+     * 批量触发 merge
+     * @param kvStates
+     */
     @Override
     public void batchMerge(final KVStateOutputList kvStates) {
         if (kvStates.isSingletonList()) {
@@ -672,6 +789,7 @@ public class RocksRawKVStore extends BatchRawKVStore<RocksDBOptions> {
         final Lock readLock = this.readWriteLock.readLock();
         readLock.lock();
         try {
+            // 这里 通过读锁 确保线程安全
             final byte[] prevVal = this.db.get(key);
             if (prevVal == null) {
                 this.db.put(this.writeOptions, key, value);
@@ -687,6 +805,10 @@ public class RocksRawKVStore extends BatchRawKVStore<RocksDBOptions> {
         }
     }
 
+    /**
+     * 批量 CAS 基本同上
+     * @param kvStates
+     */
     @Override
     public void batchPutIfAbsent(final KVStateOutputList kvStates) {
         if (kvStates.isSingletonList()) {
@@ -738,6 +860,14 @@ public class RocksRawKVStore extends BatchRawKVStore<RocksDBOptions> {
         }
     }
 
+    /**
+     * 尝试为指定数据加锁
+     * @param key
+     * @param fencingKey
+     * @param keepLease
+     * @param acquirer   该对象内包含了 等待锁的时间
+     * @param closure
+     */
     @Override
     public void tryLockWith(final byte[] key, final byte[] fencingKey, final boolean keepLease,
                             final DistributedLock.Acquirer acquirer, final KVStoreClosure closure) {
@@ -749,16 +879,20 @@ public class RocksRawKVStore extends BatchRawKVStore<RocksDBOptions> {
             // synchronized clock across the processes, still the local time in
             // every process flows approximately at the same rate, with an error
             // which is small compared to the auto-release time of the lock.
+            // 代表尝试获取锁的时间戳 该值是由谁来设置 又是在哪一环节
             final long now = acquirer.getLockingTimestamp();
+            // 持有锁的时间
             final long timeoutMillis = acquirer.getLeaseMillis();
+            // 获取尝试加锁的数据
             final byte[] prevBytesVal = this.db.get(this.lockingHandle, key);
 
+            // 分布式锁的持有者
             final DistributedLock.Owner owner;
             // noinspection ConstantConditions
             do {
                 final DistributedLock.OwnerBuilder builder = DistributedLock.newOwnerBuilder();
                 if (prevBytesVal == null) {
-                    // no others own this lock
+                    // no others own this lock  如果本次请求代表想针对已有的锁 进行续约 也就是加长时间 那么只能返回false 因为锁已经被释放了
                     if (keepLease) {
                         // it wants to keep the lease but too late, will return failure
                         owner = builder //
@@ -771,7 +905,7 @@ public class RocksRawKVStore extends BatchRawKVStore<RocksDBOptions> {
                         break;
                     }
                     // is first time to try lock (another possibility is that this lock has been deleted),
-                    // will return successful
+                    // will return successful 代表成功获取锁
                     owner = builder //
                         // set acquirer id, now it will own the lock
                         .id(acquirer.getId())
@@ -779,7 +913,7 @@ public class RocksRawKVStore extends BatchRawKVStore<RocksDBOptions> {
                         .deadlineMillis(now + timeoutMillis)
                         // first time to acquire and success
                         .remainingMillis(DistributedLock.OwnerBuilder.FIRST_TIME_SUCCESS)
-                        // create a new fencing token
+                        // create a new fencing token  这里更新了token
                         .fencingToken(getNextFencingToken(fencingKey))
                         // init acquires
                         .acquires(1)
@@ -787,16 +921,19 @@ public class RocksRawKVStore extends BatchRawKVStore<RocksDBOptions> {
                         .context(acquirer.getContext())
                         // set successful
                         .success(true).build();
+                    // 将结果设置到 db中
                     this.db.put(this.lockingHandle, this.writeOptions, key, this.serializer.writeObject(owner));
                     break;
                 }
 
-                // this lock has an owner, check if it has expired
+                // this lock has an owner, check if it has expired  代表锁已经被其他人持有了
+                // 反序列化 获取当前锁的持有者
                 final DistributedLock.Owner prevOwner = this.serializer.readObject(prevBytesVal,
                     DistributedLock.Owner.class);
                 final long remainingMillis = prevOwner.getDeadlineMillis() - now;
+                // 代表锁已经过期
                 if (remainingMillis < 0) {
-                    // the previous owner is out of lease
+                    // the previous owner is out of lease  那么无法续约
                     if (keepLease) {
                         // it wants to keep the lease but too late, will return failure
                         owner = builder //
@@ -812,7 +949,7 @@ public class RocksRawKVStore extends BatchRawKVStore<RocksDBOptions> {
                             .success(false).build();
                         break;
                     }
-                    // create new lock owner
+                    // create new lock owner 创建一个新的锁持有者 注意会更新 token
                     owner = builder //
                         // set acquirer id, now it will own the lock
                         .id(acquirer.getId())
@@ -832,8 +969,10 @@ public class RocksRawKVStore extends BatchRawKVStore<RocksDBOptions> {
                     break;
                 }
 
-                // the previous owner is not out of lease (remainingMillis >= 0)
+                // the previous owner is not out of lease (remainingMillis >= 0)  代表可以针对之前持有的锁进行续约
+                // 这里要判断 2个 acq 对象的 token 和id  是否一致
                 final boolean isReentrant = prevOwner.isSameAcquirer(acquirer);
+                // 代表是 重入锁 那么 允许续约
                 if (isReentrant) {
                     // is the same old friend come back (reentrant lock)
                     if (keepLease) {
@@ -843,7 +982,7 @@ public class RocksRawKVStore extends BatchRawKVStore<RocksDBOptions> {
                             .id(prevOwner.getId())
                             // update the deadline to keep lease
                             .deadlineMillis(now + timeoutMillis)
-                            // success to keep lease
+                            // success to keep lease    注意增加了时间
                             .remainingMillis(DistributedLock.OwnerBuilder.KEEP_LEASE_SUCCESS)
                             // keep fencing token
                             .fencingToken(prevOwner.getFencingToken())
@@ -856,13 +995,13 @@ public class RocksRawKVStore extends BatchRawKVStore<RocksDBOptions> {
                         this.db.put(this.lockingHandle, this.writeOptions, key, this.serializer.writeObject(owner));
                         break;
                     }
-                    // now we are sure that is an old friend who is back again (reentrant lock)
+                    // now we are sure that is an old friend who is back again (reentrant lock)  非续约情况获取锁 不会延长时间
                     owner = builder //
                         // still previous owner id
                         .id(prevOwner.getId())
                         // by the way, the lease will also be kept
                         .deadlineMillis(now + timeoutMillis)
-                        // success reentrant
+                        // success reentrant   重入成功 应该是不增加时间的
                         .remainingMillis(DistributedLock.OwnerBuilder.REENTRANT_SUCCESS)
                         // keep fencing token
                         .fencingToken(prevOwner.getFencingToken())
@@ -899,18 +1038,26 @@ public class RocksRawKVStore extends BatchRawKVStore<RocksDBOptions> {
         }
     }
 
+    /**
+     * 释放锁
+     * @param key
+     * @param acquirer
+     * @param closure
+     */
     @Override
     public void releaseLockWith(final byte[] key, final DistributedLock.Acquirer acquirer, final KVStoreClosure closure) {
         final Timer.Context timeCtx = getTimeContext("RELEASE_LOCK");
         final Lock readLock = this.readWriteLock.readLock();
         readLock.lock();
         try {
+            // 那么实际上 锁不就是通过 rocksDB 实现的???
             final byte[] prevBytesVal = this.db.get(this.lockingHandle, key);
 
             final DistributedLock.Owner owner;
             // noinspection ConstantConditions
             do {
                 final DistributedLock.OwnerBuilder builder = DistributedLock.newOwnerBuilder();
+                // 代表当前没有锁
                 if (prevBytesVal == null) {
                     LOG.warn("Lock not exist: {}.", acquirer);
                     owner = builder //
@@ -925,10 +1072,13 @@ public class RocksRawKVStore extends BatchRawKVStore<RocksDBOptions> {
                     break;
                 }
 
+                // 代表存在锁
                 final DistributedLock.Owner prevOwner = this.serializer.readObject(prevBytesVal,
                     DistributedLock.Owner.class);
 
+                // 只有当前持有者 可以释放锁
                 if (prevOwner.isSameAcquirer(acquirer)) {
+                    // 这个应该是 重入次数
                     final long acquires = prevOwner.getAcquires() - 1;
                     owner = builder //
                         // still previous owner id
@@ -943,6 +1093,7 @@ public class RocksRawKVStore extends BatchRawKVStore<RocksDBOptions> {
                         .context(prevOwner.getContext())
                         // set successful
                         .success(true).build();
+                    // 代表 释放次数 等于获取次数 也就是完全释放重入锁
                     if (acquires <= 0) {
                         // real delete, goodbye ~
                         this.db.delete(this.lockingHandle, this.writeOptions, key);
@@ -978,14 +1129,22 @@ public class RocksRawKVStore extends BatchRawKVStore<RocksDBOptions> {
         }
     }
 
+    /**
+     * 获取下个 token  理解为全局递增
+     * @param fencingKey
+     * @return
+     * @throws RocksDBException
+     */
     private long getNextFencingToken(final byte[] fencingKey) throws RocksDBException {
         final Timer.Context timeCtx = getTimeContext("FENCING_TOKEN");
         final Lock readLock = this.readWriteLock.readLock();
         readLock.lock();
         try {
+            // realKey ??? 难道key 有不止一个
             final byte[] realKey = BytesUtil.nullToEmpty(fencingKey);
             final byte[] prevBytesVal = this.db.get(this.fencingHandle, realKey);
             final long prevVal;
+            // 获取对应的值
             if (prevBytesVal == null) {
                 prevVal = 0; // init
             } else {
@@ -994,6 +1153,7 @@ public class RocksRawKVStore extends BatchRawKVStore<RocksDBOptions> {
             // Don't worry about the token number overflow.
             // It takes about 290,000 years for the 1 million TPS system
             // to use the numbers in the range [0 ~ Long.MAX_VALUE].
+            // 增加后作为新的token 返回
             final long newVal = prevVal + 1;
             final byte[] newBytesVal = new byte[8];
             Bits.putLong(newBytesVal, 0, newVal);
@@ -1004,6 +1164,8 @@ public class RocksRawKVStore extends BatchRawKVStore<RocksDBOptions> {
             timeCtx.stop();
         }
     }
+
+    // 删除操作比较简单 都是委托给 rocksDB 实现的
 
     @Override
     public void delete(final byte[] key, final KVStoreClosure closure) {
@@ -1093,14 +1255,22 @@ public class RocksRawKVStore extends BatchRawKVStore<RocksDBOptions> {
         }
     }
 
+    /**
+     * 获取近似值
+     * @param startKey
+     * @param endKey
+     * @return
+     */
     @Override
     public long getApproximateKeysInRange(final byte[] startKey, final byte[] endKey) {
         // TODO This is a sad code, the performance is too damn bad
         final Timer.Context timeCtx = getTimeContext("APPROXIMATE_KEYS");
         final Lock readLock = this.readWriteLock.readLock();
         readLock.lock();
+        // 这里获取了快照 db 对象本身就有快照的概念???
         final Snapshot snapshot = this.db.getSnapshot();
         try (final ReadOptions readOptions = new ReadOptions()) {
+            // 设置快照
             readOptions.setSnapshot(snapshot);
             try (final RocksIterator it = this.db.newIterator(readOptions)) {
                 if (startKey == null) {
@@ -1110,7 +1280,7 @@ public class RocksRawKVStore extends BatchRawKVStore<RocksDBOptions> {
                 }
                 long approximateKeys = 0;
                 for (;;) {
-                    // The accuracy is 100, don't ask more
+                    // The accuracy is 100, don't ask more  直接获取 100 个数据 之后比较数据是否满足条件 如果提前发现有问题的数据 就直接退出
                     for (int i = 0; i < 100; i++) {
                         if (!it.isValid()) {
                             return approximateKeys;
@@ -1118,6 +1288,7 @@ public class RocksRawKVStore extends BatchRawKVStore<RocksDBOptions> {
                         it.next();
                         ++approximateKeys;
                     }
+                    // 满足条件 返回结果 如果不满足 继续读取 每次读取100个
                     if (endKey != null && BytesUtil.compare(it.key(), endKey) >= 0) {
                         return approximateKeys;
                     }
@@ -1133,6 +1304,12 @@ public class RocksRawKVStore extends BatchRawKVStore<RocksDBOptions> {
         }
     }
 
+    /**
+     * 跳跃到 某个key
+     * @param startKey
+     * @param distance
+     * @return
+     */
     @Override
     public byte[] jumpOver(final byte[] startKey, final long distance) {
         final Timer.Context timeCtx = getTimeContext("JUMP_OVER");
@@ -1159,6 +1336,7 @@ public class RocksRawKVStore extends BatchRawKVStore<RocksDBOptions> {
                             return lastKey;
                         }
                         it.next();
+                        // 获取到 距离distance 的值
                         if (++approximateKeys >= distance) {
                             return it.key();
                         }
@@ -1175,6 +1353,11 @@ public class RocksRawKVStore extends BatchRawKVStore<RocksDBOptions> {
         }
     }
 
+    /**
+     * 初始化 token
+     * @param parentKey the fencing key of parent region
+     * @param childKey  the fencing key of new region
+     */
     @Override
     public void initFencingToken(final byte[] parentKey, final byte[] childKey) {
         final Timer.Context timeCtx = getTimeContext("INIT_FENCING_TOKEN");
@@ -1183,6 +1366,7 @@ public class RocksRawKVStore extends BatchRawKVStore<RocksDBOptions> {
         try {
             final byte[] realKey = BytesUtil.nullToEmpty(parentKey);
             final byte[] parentBytesVal = this.db.get(this.fencingHandle, realKey);
+            // 如果 初始值为 null 为什么就不处理了
             if (parentBytesVal == null) {
                 return;
             }
@@ -1452,9 +1636,16 @@ public class RocksRawKVStore extends BatchRawKVStore<RocksDBOptions> {
         }
     }
 
+    /**
+     * 启动一个 rocksDB
+     * @param opts
+     * @throws RocksDBException
+     */
     private void openRocksDB(final RocksDBOptions opts) throws RocksDBException {
         final List<ColumnFamilyHandle> cfHandles = Lists.newArrayList();
+        // 除了重启 还有什么时候会增加版本号吗???
         this.databaseVersion.incrementAndGet();
+        // 开启db
         this.db = RocksDB.open(this.options, opts.getDbPath(), this.cfDescriptors, cfHandles);
         this.defaultHandle = cfHandles.get(0);
         this.sequenceHandle = cfHandles.get(1);
@@ -1500,7 +1691,7 @@ public class RocksRawKVStore extends BatchRawKVStore<RocksDBOptions> {
     }
 
     // Creates the rocksDB options, the user must take care
-    // to close it after closing db.
+    // to close it after closing db.  生成默认配置  这里会被缓存起来
     private static DBOptions createDBOptions() {
         return StorageOptionsFactory.getRocksDBOptions(RocksRawKVStore.class) //
             .setEnv(Env.getDefault());

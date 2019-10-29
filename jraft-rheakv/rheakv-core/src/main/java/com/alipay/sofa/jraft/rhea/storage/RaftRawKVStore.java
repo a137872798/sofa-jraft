@@ -37,15 +37,24 @@ import com.alipay.sofa.jraft.util.BytesUtil;
 
 /**
  * KVStore based on RAFT replica state machine.
- *
+ * 基于 状态机的 KV 存储
  * @author jiachun.fjc
  */
 public class RaftRawKVStore implements RawKVStore {
 
     private static final Logger LOG = LoggerFactory.getLogger(RaftRawKVStore.class);
 
+    /**
+     * 该存储在哪个节点上
+     */
     private final Node          node;
+    /**
+     * 对应实际的存储层 有RocksDB 和 Memory 2种实现
+     */
     private final RawKVStore    kvStore;
+    /**
+     * 专门用于 读取index的线程池
+     */
     private final Executor      readIndexExecutor;
 
     public RaftRawKVStore(Node node, RawKVStore kvStore, Executor readIndexExecutor) {
@@ -54,6 +63,10 @@ public class RaftRawKVStore implements RawKVStore {
         this.readIndexExecutor = readIndexExecutor;
     }
 
+    /**
+     * 通过实际存储层返回迭代器
+     * @return
+     */
     @Override
     public KVIterator localIterator() {
         return this.kvStore.localIterator();
@@ -64,21 +77,32 @@ public class RaftRawKVStore implements RawKVStore {
         get(key, true, closure);
     }
 
+    /**
+     * 根据 key 查询数据 并触发回调
+     * @param key  通过key 查询数据
+     * @param readOnlySafe  true 代表保证一致性读
+     * @param closure
+     */
     @Override
     public void get(final byte[] key, final boolean readOnlySafe, final KVStoreClosure closure) {
+        // 非线程安全读取 直接 访问store 就可以
         if (!readOnlySafe) {
             this.kvStore.get(key, false, closure);
             return;
         }
+        // 获取 index 并触发回调  readIndex 就像是一个全局 协调的方法 能确保 当前集群中只有一个节点进行访问 也就做到了 readOnlySafe
         this.node.readIndex(BytesUtil.EMPTY_BYTES, new ReadIndexClosure() {
 
             @Override
             public void run(final Status status, final long index, final byte[] reqCtx) {
+                // 只有确保 成功的时候才尝试获取
                 if (status.isOk()) {
                     RaftRawKVStore.this.kvStore.get(key, true, closure);
                     return;
                 }
+                // 通过线程池 异步执行任务
                 RaftRawKVStore.this.readIndexExecutor.execute(() -> {
+                    // 判断该节点是否是 leader
                     if (isLeader()) {
                         LOG.warn("Fail to [get] with 'ReadIndex': {}, try to applying to the state machine.", status);
                         // If 'read index' read fails, try to applying to the state machine at the leader node
@@ -86,6 +110,7 @@ public class RaftRawKVStore implements RawKVStore {
                     } else {
                         LOG.warn("Fail to [get] with 'ReadIndex': {}.", status);
                         // Client will retry to leader node
+                        // 根据 返回的status触发回调
                         new KVClosureAdapter(closure, null).run(status);
                     }
                 });
@@ -98,6 +123,12 @@ public class RaftRawKVStore implements RawKVStore {
         multiGet(keys, true, closure);
     }
 
+    /**
+     * 批量拉取数据 基本同上
+     * @param keys
+     * @param readOnlySafe
+     * @param closure
+     */
     @Override
     public void multiGet(final List<byte[]> keys, final boolean readOnlySafe, final KVStoreClosure closure) {
         if (!readOnlySafe) {
@@ -286,12 +317,19 @@ public class RaftRawKVStore implements RawKVStore {
         applyOperation(KVOperation.createNodeExecutor(nodeExecutor), closure);
     }
 
+    /**
+     * 触发一个指定的操作
+     * @param op
+     * @param closure
+     */
     private void applyOperation(final KVOperation op, final KVStoreClosure closure) {
+        // 必须确保当前节点是leader
         if (!isLeader()) {
             closure.setError(Errors.NOT_LEADER);
             closure.run(new Status(RaftError.EPERM, "Not leader"));
             return;
         }
+        // 创建一个异步任务 并交由 node 来执行
         final Task task = new Task();
         task.setData(ByteBuffer.wrap(Serializers.getDefault().writeObject(op)));
         task.setDone(new KVClosureAdapter(closure, op));

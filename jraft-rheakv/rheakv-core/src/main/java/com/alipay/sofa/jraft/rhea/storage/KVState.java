@@ -17,11 +17,18 @@
 package com.alipay.sofa.jraft.rhea.storage;
 
 /**
+ * 当前kv 状态
  * @author jiachun.fjc
  */
 public class KVState {
 
+    /**
+     * 本次操作
+     */
     private final KVOperation    op;
+    /**
+     * 回调结果
+     */
     private final KVStoreClosure done;
 
     public static KVState of(final KVOperation op, final KVStoreClosure done) {

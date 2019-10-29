@@ -42,13 +42,22 @@ import com.alipay.sofa.jraft.util.Requires;
  *          // perform alternative actions
  *      }
  * </pre>
- *
+ * 分布式锁 骨架类
  * @author jiachun.fjc
  */
 public abstract class DistributedLock<T> {
 
+    /**
+     * 锁对象 由用户定义
+     */
     private final T                        internalKey;
+    /**
+     * 用于获取锁的对象
+     */
     private final Acquirer                 acquirer;
+    /**
+     * 监视器
+     */
     private final ScheduledExecutorService watchdog;
 
     private volatile Owner                 owner;
@@ -211,7 +220,7 @@ public abstract class DistributedLock<T> {
         private final String      id;
         private final long        leaseMillis;
 
-        // the time on trying to lock, it must be set by lock server
+        // the time on trying to lock, it must be set by lock server  尝试获取锁的时间戳 必须由server 来设置 可能有什么特殊含义
         private volatile long     lockingTimestamp;
         // making the lock safe with fencing token.
         //
@@ -266,26 +275,29 @@ public abstract class DistributedLock<T> {
         }
     }
 
+    /**
+     * 锁的持有者
+     */
     public static class Owner implements Serializable {
 
         private static final long serialVersionUID = 3939239434225894164L;
 
-        // locker id
+        // locker id  锁对象的 标识
         private final String      id;
-        // absolute time for this lock to expire
+        // absolute time for this lock to expire  代表还有多久锁会过期
         private final long        deadlineMillis;
-        // remainingMillis < 0 means lock successful
+        // remainingMillis < 0 means lock successful   代表 还有多久能获取到锁
         private final long        remainingMillis;
         // making the lock safe with fencing token
         //
         // is simply a number that increases (e.g. incremented by the lock service)
-        // every time a client acquires the lock.
+        // every time a client acquires the lock.   通过一个自增序列 来确保锁安全???
         private final long        fencingToken;
-        // for reentrant lock
+        // for reentrant lock  当前重入次数
         private final long        acquires;
-        // the context of current lock owner
+        // the context of current lock owner  描述当前锁的持有者信息
         private final byte[]      context;
-        // if operation success
+        // if operation success   本次获取锁的操作是否成功
         private final boolean     success;
 
         public Owner(String id, long deadlineMillis, long remainingMillis, long fencingToken, long acquires,
@@ -299,6 +311,11 @@ public abstract class DistributedLock<T> {
             this.success = success;
         }
 
+        /**
+         * 判断 尝试获取锁的2个对象是否一致  这里只要 token 和 id 一致就可以
+         * @param acquirer
+         * @return
+         */
         public boolean isSameAcquirer(final Acquirer acquirer) {
             return acquirer != null && this.fencingToken == acquirer.fencingToken
                    && Objects.equals(this.id, acquirer.id);

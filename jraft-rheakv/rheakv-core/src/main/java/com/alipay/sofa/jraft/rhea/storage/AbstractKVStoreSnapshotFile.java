@@ -40,24 +40,35 @@ import com.google.protobuf.ByteString;
 import static com.alipay.sofa.jraft.entity.LocalFileMetaOutter.LocalFileMeta;
 
 /**
+ * 快照存储文件骨架类
  * @author jiachun.fjc
  */
 public abstract class AbstractKVStoreSnapshotFile implements KVStoreSnapshotFile {
 
     private static final Logger LOG              = LoggerFactory.getLogger(AbstractKVStoreSnapshotFile.class);
 
+    /**
+     * 快照文件目录
+     */
     private static final String SNAPSHOT_DIR     = "kv";
     private static final String SNAPSHOT_ARCHIVE = "kv.zip";
 
+    /**
+     * 基于 protobuf 的序列化对象
+     */
     protected final Serializer  serializer       = Serializers.getDefault();
 
     @Override
     public void save(final SnapshotWriter writer, final Closure done, final Region region,
                      final ExecutorService executor) {
+        // 获取写入的路径
         final String writerPath = writer.getPath();
+        // 拼接路径
         final String snapshotPath = Paths.get(writerPath, SNAPSHOT_DIR).toString();
         try {
+            // 将region 存储到快照中 并返回元数据
             final LocalFileMeta meta = doSnapshotSave(snapshotPath, region);
+            // 异步压缩数据
             executor.execute(() -> compressSnapshot(writer, meta, done));
         } catch (final Throwable t) {
             LOG.error("Fail to save snapshot, path={}, file list={}, {}.", writerPath, writer.listFiles(),
@@ -87,20 +98,36 @@ public abstract class AbstractKVStoreSnapshotFile implements KVStoreSnapshotFile
         }
     }
 
+    /**
+     * 将region 存储到指定快照文件路径下
+     * @param snapshotPath
+     * @param region
+     * @return
+     * @throws Exception
+     */
     abstract LocalFileMeta doSnapshotSave(final String snapshotPath, final Region region) throws Exception;
 
     abstract void doSnapshotLoad(final String snapshotPath, final LocalFileMeta meta, final Region region)
                                                                                                           throws Exception;
 
+    /**
+     * 压缩数据
+     * @param writer
+     * @param meta
+     * @param done
+     */
     protected void compressSnapshot(final SnapshotWriter writer, final LocalFileMeta meta, final Closure done) {
         final String writerPath = writer.getPath();
+        // 获取压缩文件的输出路径
         final String outputFile = Paths.get(writerPath, SNAPSHOT_ARCHIVE).toString();
         try {
             try (final FileOutputStream fOut = new FileOutputStream(outputFile);
                     final ZipOutputStream zOut = new ZipOutputStream(fOut)) {
+                // 将压缩数据 写入到文件中
                 ZipUtil.compressDirectoryToZipFile(writerPath, SNAPSHOT_DIR, zOut);
                 fOut.getFD().sync();
             }
+            // 将映射关系 添加到 writer 中
             if (writer.addFile(SNAPSHOT_ARCHIVE, meta)) {
                 done.run(Status.OK());
             } else {
@@ -114,6 +141,11 @@ public abstract class AbstractKVStoreSnapshotFile implements KVStoreSnapshotFile
         }
     }
 
+    /**
+     * 从指定路径解压缩数据
+     * @param readerPath
+     * @throws IOException
+     */
     protected void decompressSnapshot(final String readerPath) throws IOException {
         final String sourceFile = Paths.get(readerPath, SNAPSHOT_ARCHIVE).toString();
         ZipUtil.unzipFile(sourceFile, readerPath);

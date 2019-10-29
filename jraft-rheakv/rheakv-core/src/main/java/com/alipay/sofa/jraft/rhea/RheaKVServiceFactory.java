@@ -22,7 +22,7 @@ import com.alipay.sofa.jraft.rhea.client.RheaKVCliService;
 
 /**
  * Service factory to create rheaKV services, such as RheaKVCliService etc.
- *
+ * 快捷创建 RheaKVCliService 的工厂
  * @author jiachun.fjc
  */
 public final class RheaKVServiceFactory {

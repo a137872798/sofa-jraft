@@ -191,6 +191,9 @@ public class DefaultRheaKVStore implements RheaKVStore {
         ExtSerializerSupports.init();
     }
 
+    /**
+     * 存储引擎
+     */
     private StoreEngine           storeEngine;
     private PlacementDriverClient pdClient;
     private RheaKVRpcService      rheaKVRpcService;

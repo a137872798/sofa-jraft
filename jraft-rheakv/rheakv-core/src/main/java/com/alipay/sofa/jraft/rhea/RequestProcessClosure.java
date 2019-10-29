@@ -23,7 +23,7 @@ import com.alipay.sofa.jraft.Status;
 
 /**
  * RPC request processor closure wraps request/response and network biz context.
- *
+ * 处理 req / res 的回调对象
  * @author dennis
  * @author jiachun.fjc
  */

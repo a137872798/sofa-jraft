@@ -21,7 +21,7 @@ import java.io.Serializable;
 /**
  * Self-increasing sequence, each value is globally unique,
  * range: [startValue, endValue)
- *
+ * 返回一组序列
  * @author jiachun.fjc
  */
 public class Sequence implements Serializable {

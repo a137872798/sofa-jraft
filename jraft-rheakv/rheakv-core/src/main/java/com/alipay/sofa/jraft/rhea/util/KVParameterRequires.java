@@ -24,11 +24,16 @@ import com.alipay.sofa.jraft.rhea.errors.InvalidParameterException;
 import com.alipay.sofa.jraft.rhea.metadata.RegionEpoch;
 
 /**
- *
+ * 辅助工具
  * @author jiachun.fjc
  */
 public final class KVParameterRequires {
 
+    /**
+     * 判断传入的req 对象是否与 当前region 的 描述信息一致 如果region 出现变动 比如version 变更 就不能执行正常的逻辑了
+     * @param request
+     * @param current
+     */
     public static void requireSameEpoch(final BaseRequest request, final RegionEpoch current) {
         RegionEpoch requestEpoch = request.getRegionEpoch();
         if (current.equals(requestEpoch)) {

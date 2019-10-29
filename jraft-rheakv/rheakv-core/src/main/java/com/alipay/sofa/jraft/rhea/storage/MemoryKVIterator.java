@@ -20,23 +20,36 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentNavigableMap;
 
 /**
+ * 基于内存的KV 迭代器
  * @author jiachun.fjc
  */
 public class MemoryKVIterator implements KVIterator {
 
+    /**
+     * 数据库实体 就是一个 跳表
+     */
     private final ConcurrentNavigableMap<byte[], byte[]> db;
 
+    /**
+     * 当前迭代器指向的 对象
+     */
     private Map.Entry<byte[], byte[]>                    cursorEntry;
 
     public MemoryKVIterator(ConcurrentNavigableMap<byte[], byte[]> db) {
         this.db = db;
     }
 
+    /**
+     * 检测当前指向的数据是否合法
+     */
     @Override
     public boolean isValid() {
         return this.cursorEntry != null;
     }
 
+    /**
+     * 将指针指向某个位置
+     */
     @Override
     public void seekToFirst() {
         this.cursorEntry = this.db.firstEntry();

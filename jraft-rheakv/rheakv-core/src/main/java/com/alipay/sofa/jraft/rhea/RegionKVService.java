@@ -44,21 +44,31 @@ import com.alipay.sofa.jraft.rhea.metadata.RegionEpoch;
  * A {@link StoreEngine} contains many {@link RegionKVService}s,
  * each {@link RegionKVService} corresponds to a region, and it
  * only processes request keys within its own region.
- *
+ * 有关KV 存储的服务器  以 region 为单位
  * @author jiachun.fjc
  */
 public interface RegionKVService {
 
+    /**
+     * 获取 地区信息
+     * @return
+     */
     long getRegionId();
 
+    /**
+     * 获取 region 状态
+     * @return
+     */
     RegionEpoch getRegionEpoch();
 
     /**
+     * 往server 中存放 KV  并触发回调
      * {@link BaseRequest#PUT}
      */
     void handlePutRequest(final PutRequest request, final RequestProcessClosure<BaseRequest, BaseResponse<?>> closure);
 
     /**
+     * 处理批量请求
      * {@link BaseRequest#BATCH_PUT}
      */
     void handleBatchPutRequest(final BatchPutRequest request,
