@@ -109,6 +109,7 @@ import com.lmax.disruptor.dsl.Disruptor;
  *
  * For example, the processing flow of the method {@link #scan(byte[], byte[])},
  * and the implementation principle of failover:
+ * 下面展示了 实现scan 的流程
  *
  * <pre>
  * 1. The first step is to filter out region1, region2, and region3 from the routing table.
@@ -179,7 +180,7 @@ import com.lmax.disruptor.dsl.Disruptor;
  *      This is very simple, re-acquire the latest leader of the raft-group to which the current key belongs,
  *      and then call again.
  * </pre>
- *
+ * 基于 KV 存储的默认实现
  * @author jiachun.fjc
  */
 public class DefaultRheaKVStore implements RheaKVStore {

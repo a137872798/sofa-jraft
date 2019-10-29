@@ -19,7 +19,7 @@ package com.alipay.sofa.jraft.rhea.cmd.pd;
 import com.alipay.sofa.jraft.rhea.metadata.StoreStats;
 
 /**
- *
+ * 关于 store 的心跳请求对象
  * @author jiachun.fjc
  */
 public class StoreHeartbeatRequest extends BaseRequest {

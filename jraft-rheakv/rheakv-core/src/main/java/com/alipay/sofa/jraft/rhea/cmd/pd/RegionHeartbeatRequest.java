@@ -23,7 +23,7 @@ import com.alipay.sofa.jraft.rhea.metadata.RegionStats;
 import com.alipay.sofa.jraft.rhea.util.Pair;
 
 /**
- *
+ * 针对region 的心跳请求
  * @author jiachun.fjc
  */
 public class RegionHeartbeatRequest extends BaseRequest {
@@ -31,6 +31,9 @@ public class RegionHeartbeatRequest extends BaseRequest {
     private static final long               serialVersionUID = -5149082334939576598L;
 
     private long                            storeId;
+    /**
+     * 续约的 key
+     */
     private long                            leastKeysOnSplit;
     private List<Pair<Region, RegionStats>> regionStatsList;
 

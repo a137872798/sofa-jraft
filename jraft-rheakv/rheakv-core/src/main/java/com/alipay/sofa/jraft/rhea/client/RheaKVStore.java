@@ -74,13 +74,14 @@ import com.alipay.sofa.jraft.rhea.util.concurrent.DistributedLock;
  *     │      RocksRawKVStore       │◀──────────│    KVStoreStateMachine     │◀──raft───│       RaftRawKVStore       │
  *     └────────────────────────────┘           └────────────────────────────┘          └────────────────────────────┘
  * </pre>
- *
+ * 该对象的接口 类似于一个普通的map
  * @author jiachun.fjc
  */
 public interface RheaKVStore extends Lifecycle<RheaKVStoreOptions> {
 
     /**
      * Equivalent to {@code get(key, true)}.
+     * 通过key 查询value
      */
     CompletableFuture<byte[]> get(final byte[] key);
 
@@ -129,6 +130,7 @@ public interface RheaKVStore extends Lifecycle<RheaKVStoreOptions> {
 
     /**
      * Equivalent to {@code multiGet(keys, true)}.
+     * ByteArray 就是为 byte[] 设置了 hashCode 确保能被map 正确使用
      */
     CompletableFuture<Map<ByteArray, byte[]>> multiGet(final List<byte[]> keys);
 
@@ -155,6 +157,7 @@ public interface RheaKVStore extends Lifecycle<RheaKVStoreOptions> {
 
     /**
      * Equivalent to {@code scan(startKey, endKey, true)}.
+     * 扫描给定 key 范围内的数据 region 就是以 startKey 和endKey 来作为分界线的 可能KVEntry 可以换算成 Region
      */
     CompletableFuture<List<KVEntry>> scan(final byte[] startKey, final byte[] endKey);
 

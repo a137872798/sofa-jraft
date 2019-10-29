@@ -23,14 +23,14 @@ import com.alipay.sofa.jraft.option.CliOptions;
 
 /**
  * RheaKV client command-line service.
- *
+ * RheaKV 命令行服务
  * @author jiachun.fjc
  */
 public interface RheaKVCliService extends Lifecycle<CliOptions> {
 
     /**
      * Send a split instruction to the specified region.
-     *
+     * 发送一个拆分region 的命令
      * @param regionId    region id
      * @param newRegionId id of the new region after splitting
      * @param groupId     the raft group id

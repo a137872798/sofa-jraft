@@ -62,7 +62,7 @@ public abstract class AbstractPlacementDriverClient implements PlacementDriverCl
     private static final Logger         LOG              = LoggerFactory.getLogger(AbstractPlacementDriverClient.class);
 
     /**
-     * region 路由表
+     * region 路由表  内部维护 startKey[] 与regionId    regionId 与 region 的映射关系
      */
     protected final RegionRouteTable    regionRouteTable = new RegionRouteTable();
     protected final long                clusterId;
@@ -107,11 +107,13 @@ public abstract class AbstractPlacementDriverClient implements PlacementDriverCl
             rpcOpts.setCallbackExecutorCorePoolSize(0);
             rpcOpts.setCallbackExecutorMaximumPoolSize(0);
         }
+        // 就是创建一个线程池
         if (!this.pdRpcService.init(rpcOpts)) {
             LOG.error("Fail to init [PlacementDriverRpcService].");
             return false;
         }
         // region route table
+        // 解析路由表中的数据并填充
         final List<RegionRouteTableOptions> regionRouteTableOptionsList = opts.getRegionRouteTableOptionsList();
         if (regionRouteTableOptionsList != null) {
             final String initialServerList = opts.getInitialServerList();
@@ -120,6 +122,7 @@ public abstract class AbstractPlacementDriverClient implements PlacementDriverCl
                     // if blank, extends parent's value
                     regionRouteTableOpts.setInitialServerList(initialServerList);
                 }
+                // 初始化路由表
                 initRouteTableByRegion(regionRouteTableOpts);
             }
         }
@@ -141,11 +144,24 @@ public abstract class AbstractPlacementDriverClient implements PlacementDriverCl
         return clusterId;
     }
 
+    /**
+     * 该对象相当于 对外界开放 用于获取region 的信息 而内部信息映射又是通过 regionRouteTable 和 regionTable 实现的
+     * @param regionId
+     * @return
+     */
     @Override
     public Region getRegionById(final long regionId) {
         return this.regionRouteTable.getRegionById(regionId);
     }
 
+    // 下面几个方法实际都是委托给 regionRouteTable 实现的
+
+    /**
+     * 通过某个key 查询region
+     * @param key
+     * @param forceRefresh  代表是否强制刷新
+     * @return
+     */
     @Override
     public Region findRegionByKey(final byte[] key, final boolean forceRefresh) {
         if (forceRefresh) {
@@ -191,14 +207,23 @@ public abstract class AbstractPlacementDriverClient implements PlacementDriverCl
         return regionRouteTable;
     }
 
+    /**
+     * 更换leader
+     * @param regionId
+     * @param peer
+     * @param refreshConf
+     * @return
+     */
     @Override
     public boolean transferLeader(final long regionId, final Peer peer, final boolean refreshConf) {
         Requires.requireNonNull(peer, "peer");
         Requires.requireNonNull(peer.getEndpoint(), "peer.endpoint");
         final String raftGroupId = JRaftHelper.getJRaftGroupId(this.clusterName, regionId);
         final Configuration conf = RouteTable.getInstance().getConfiguration(raftGroupId);
+        // 将region 内相关的peer 信息取出来之后通过cliService 更换leader
         final Status status = this.cliService.transferLeader(raftGroupId, conf, JRaftHelper.toJRaftPeerId(peer));
         if (status.isOk()) {
+            // 如果需要在更改完成后刷新配置
             if (refreshConf) {
                 refreshRouteConfiguration(regionId);
             }
@@ -208,12 +233,20 @@ public abstract class AbstractPlacementDriverClient implements PlacementDriverCl
         return false;
     }
 
+    /**
+     * 添加一个 副本对象
+     * @param regionId
+     * @param peer
+     * @param refreshConf
+     * @return
+     */
     @Override
     public boolean addReplica(final long regionId, final Peer peer, final boolean refreshConf) {
         Requires.requireNonNull(peer, "peer");
         Requires.requireNonNull(peer.getEndpoint(), "peer.endpoint");
         final String raftGroupId = JRaftHelper.getJRaftGroupId(this.clusterName, regionId);
         final Configuration conf = RouteTable.getInstance().getConfiguration(raftGroupId);
+        // 添加 一个副本对象 就是在 group 中增加一个 peer 节点
         final Status status = this.cliService.addPeer(raftGroupId, conf, JRaftHelper.toJRaftPeerId(peer));
         if (status.isOk()) {
             if (refreshConf) {
@@ -245,7 +278,9 @@ public abstract class AbstractPlacementDriverClient implements PlacementDriverCl
     @Override
     public Endpoint getLeader(final long regionId, final boolean forceRefresh, final long timeoutMillis) {
         final String raftGroupId = JRaftHelper.getJRaftGroupId(this.clusterName, regionId);
+        // 刷新leader
         PeerId leader = getLeader(raftGroupId, forceRefresh, timeoutMillis);
+        // 如果leader信息还不存在 且没有设置强制刷新 (因为设置了强制刷新 上面就已经重新加载过了 还是没有只能说明本身leader 还没选举完成)
         if (leader == null && !forceRefresh) {
             // Could not found leader from cache, try again and force refresh cache
             leader = getLeader(raftGroupId, true, timeoutMillis);
@@ -256,8 +291,16 @@ public abstract class AbstractPlacementDriverClient implements PlacementDriverCl
         return leader.getEndpoint();
     }
 
+    /**
+     * 获取某个组中的leader
+     * @param raftGroupId
+     * @param forceRefresh
+     * @param timeoutMillis
+     * @return
+     */
     protected PeerId getLeader(final String raftGroupId, final boolean forceRefresh, final long timeoutMillis) {
         final RouteTable routeTable = RouteTable.getInstance();
+        // 如果需要强制刷新
         if (forceRefresh) {
             final long deadline = System.currentTimeMillis() + timeoutMillis;
             final StringBuilder error = new StringBuilder();
@@ -266,6 +309,7 @@ public abstract class AbstractPlacementDriverClient implements PlacementDriverCl
             Throwable lastCause = null;
             for (;;) {
                 try {
+                    // 就是通过groupId 找到对应的conf 并为conf 中每个节点发送获取leader 的请求 一旦成功返回结果
                     final Status st = routeTable.refreshLeader(this.cliClientService, raftGroupId, 2000);
                     if (st.isOk()) {
                         break;
@@ -291,9 +335,18 @@ public abstract class AbstractPlacementDriverClient implements PlacementDriverCl
                 }
             }
         }
+        // 这里会取出 上面 refreshLeader 设置的leader
         return routeTable.selectLeader(raftGroupId);
     }
 
+    /**
+     * 推测是从peers 中通过均衡负载算法 选出一个合适的节点作为新leader
+     * @param regionId
+     * @param forceRefresh
+     * @param timeoutMillis
+     * @param unExpect  代表不需要出现的leader 应该就是本次失效的节点吧
+     * @return
+     */
     @Override
     public Endpoint getLuckyPeer(final long regionId, final boolean forceRefresh, final long timeoutMillis,
                                  final Endpoint unExpect) {
@@ -341,6 +394,7 @@ public abstract class AbstractPlacementDriverClient implements PlacementDriverCl
         if (size == 1) {
             return peerList.get(0).getEndpoint();
         }
+        // 获取均衡负载对象 从某个group 下所有的peer 中选择一个合适的
         final RoundRobinLoadBalancer balancer = RoundRobinLoadBalancer.getInstance(regionId);
         for (int i = 0; i < size; i++) {
             final PeerId candidate = balancer.select(peerList);
@@ -352,11 +406,17 @@ public abstract class AbstractPlacementDriverClient implements PlacementDriverCl
         throw new RouteTableException("have no choice in group(peers): " + raftGroupId);
     }
 
+    /**
+     * 刷新路由配置
+     * @param regionId
+     */
     @Override
     public void refreshRouteConfiguration(final long regionId) {
         final String raftGroupId = JRaftHelper.getJRaftGroupId(this.clusterName, regionId);
         try {
+            // 更新leader
             getLeader(raftGroupId, true, 5000);
+            // 根据当前leader 获取conf 信息
             RouteTable.getInstance().refreshConfiguration(this.cliClientService, raftGroupId, 5000);
         } catch (final Exception e) {
             LOG.error("Fail to refresh route configuration for {}, {}.", regionId, StackTraceUtil.stackTrace(e));
@@ -377,6 +437,10 @@ public abstract class AbstractPlacementDriverClient implements PlacementDriverCl
         return rpcClient;
     }
 
+    /**
+     * 将opts 中的映射关系添加到 regionTable 中
+     * @param opts
+     */
     protected void initRouteTableByRegion(final RegionRouteTableOptions opts) {
         final long regionId = Requires.requireNonNull(opts.getRegionId(), "opts.regionId");
         final byte[] startKey = opts.getStartKeyBytes();
@@ -388,16 +452,23 @@ public abstract class AbstractPlacementDriverClient implements PlacementDriverCl
         region.setId(regionId);
         region.setStartKey(startKey);
         region.setEndKey(endKey);
+        // 初始化本region的描述信息
         region.setRegionEpoch(new RegionEpoch(-1, -1));
         // peers
         Requires.requireTrue(Strings.isNotBlank(initialServerList), "opts.initialServerList is blank");
         conf.parse(initialServerList);
         region.setPeers(JRaftHelper.toPeerList(conf.listPeers()));
         // update raft route table
+        // 创建一个 groupId 与 conf 的映射到 routeTable中
         RouteTable.getInstance().updateConfiguration(JRaftHelper.getJRaftGroupId(clusterName, regionId), conf);
         this.regionRouteTable.addOrUpdateRegion(region);
     }
 
+    /**
+     * 从opts 中抽取信息生成 region 对象之后添加到路由表中
+     * @param opts
+     * @return
+     */
     protected Region getLocalRegionMetadata(final RegionEngineOptions opts) {
         final long regionId = Requires.requireNonNull(opts.getRegionId(), "opts.regionId");
         Requires.requireTrue(regionId >= Region.MIN_ID_WITH_MANUAL_CONF, "opts.regionId must >= "
@@ -438,5 +509,8 @@ public abstract class AbstractPlacementDriverClient implements PlacementDriverCl
         this.rpcClient = ((AbstractBoltClientService) this.cliClientService).getRpcClient();
     }
 
+    /**
+     * 刷新路由表的逻辑由子类实现 换句话说 怎么生成路由表中的数据也是子类实现
+     */
     protected abstract void refreshRouteTable();
 }

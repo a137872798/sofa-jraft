@@ -49,7 +49,13 @@ public class DefaultPlacementDriverRpcService implements PlacementDriverRpcServi
 
     private static final Logger         LOG = LoggerFactory.getLogger(DefaultPlacementDriverRpcService.class);
 
+    /**
+     * PD 客户端
+     */
     private final PlacementDriverClient pdClient;
+    /**
+     * RPC client
+     */
     private final RpcClient             rpcClient;
 
     private ThreadPoolExecutor          rpcCallbackExecutor;
@@ -68,6 +74,7 @@ public class DefaultPlacementDriverRpcService implements PlacementDriverRpcServi
             LOG.info("[DefaultPlacementDriverRpcService] already started.");
             return true;
         }
+        // 创建回调线程池
         this.rpcCallbackExecutor = createRpcCallbackExecutor(opts);
         this.rpcTimeoutMillis = opts.getRpcTimeoutMillis();
         Requires.requireTrue(this.rpcTimeoutMillis > 0, "opts.rpcTimeoutMillis must > 0");
@@ -86,15 +93,25 @@ public class DefaultPlacementDriverRpcService implements PlacementDriverRpcServi
     public <V> CompletableFuture<V> callPdServerWithRpc(final BaseRequest request, final FailoverClosure<V> closure,
                                                         final Errors lastCause) {
         final boolean forceRefresh = ErrorsHelper.isInvalidPeer(lastCause);
+        // 获取leader 的地址
         final Endpoint endpoint = this.pdClient.getPdLeader(forceRefresh, this.rpcTimeoutMillis);
+        // 通过leader 发送请求
         internalCallPdWithRpc(endpoint, request, closure);
         return closure.future();
     }
 
+    /**
+     * 内部调用rpc 时 会需要传入一个 failover 的回调
+     * @param endpoint
+     * @param request
+     * @param closure
+     * @param <V>
+     */
     private <V> void internalCallPdWithRpc(final Endpoint endpoint, final BaseRequest request,
                                            final FailoverClosure<V> closure) {
         final String address = endpoint.toString();
         final InvokeContext invokeCtx = ExtSerializerSupports.getInvokeContext();
+        // 传入一个回调对象 实现异步通信
         final InvokeCallback invokeCallback = new InvokeCallback() {
 
             @Override

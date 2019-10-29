@@ -31,7 +31,7 @@ import com.alipay.sofa.jraft.rhea.util.concurrent.DistributedLock;
 
 /**
  * Default implementation with distributed lock.
- *
+ * 默认的分布式锁实现
  * @author jiachun.fjc
  */
 class DefaultDistributedLock extends DistributedLock<byte[]> {

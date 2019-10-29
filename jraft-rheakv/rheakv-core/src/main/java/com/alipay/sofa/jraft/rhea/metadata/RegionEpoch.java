@@ -22,7 +22,7 @@ import java.util.Objects;
 import com.alipay.sofa.jraft.util.Copiable;
 
 /**
- *
+ * 可以理解为记录region 状态的???
  * @author jiachun.fjc
  */
 public class RegionEpoch implements Copiable<RegionEpoch>, Comparable<RegionEpoch>, Serializable {

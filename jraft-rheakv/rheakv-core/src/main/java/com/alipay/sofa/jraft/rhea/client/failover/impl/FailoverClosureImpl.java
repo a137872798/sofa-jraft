@@ -88,6 +88,7 @@ public final class FailoverClosureImpl<T> extends BaseKVStoreClosure implements 
             LOG.warn("[Failover] status: {}, error: {}, [{}] retries left.", status, error, this.retriesLeft);
             this.retryRunner.run(error);
         } else {
+            // 没有重试次数时
             if (this.retriesLeft <= 0) {
                 LOG.error("[InvalidEpoch-Failover] status: {}, error: {}, {} retries left.", status, error,
                     this.retriesLeft);

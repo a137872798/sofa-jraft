@@ -33,12 +33,18 @@ import com.alipay.sofa.jraft.rhea.metadata.Store;
 import com.alipay.sofa.jraft.util.Endpoint;
 
 /**
- *
+ * 元数据客户端
  * @author jiachun.fjc
  */
 public class MetadataRpcClient {
 
+    /**
+     * PD server 该对象只是定义了一个 将请求发送到某个地方的方法
+     */
     private final PlacementDriverRpcService pdRpcService;
+    /**
+     * 故障转移次数
+     */
     private final int                       failoverRetries;
 
     public MetadataRpcClient(PlacementDriverRpcService pdRpcService, int failoverRetries) {
@@ -48,6 +54,7 @@ public class MetadataRpcClient {
 
     /**
      * Returns the specified cluster information.
+     * 通过集群id 生成requestId 并通过一个携带重试机制的 回调对象 尝试获取结果
      */
     public Cluster getClusterInfo(final long clusterId) {
         final CompletableFuture<Cluster> future = new CompletableFuture<>();
@@ -55,13 +62,23 @@ public class MetadataRpcClient {
         return FutureHelper.get(future);
     }
 
+    /**
+     * 内部获取集群信息
+     * @param clusterId  当前集群id
+     * @param future  用于设置结果的 future
+     * @param retriesLeft  重试次数
+     * @param lastCause  处理哪个异常
+     */
     private void internalGetClusterInfo(final long clusterId, final CompletableFuture<Cluster> future,
                                         final int retriesLeft, final Errors lastCause) {
+        // 定义了 针对某个Error 的重试逻辑
         final RetryRunner retryRunner = retryCause -> internalGetClusterInfo(clusterId, future,
                 retriesLeft - 1, retryCause);
+        // 创建一个故障转移回调  在不断递归中如果retriesLeft <= 0 会怎么样
         final FailoverClosure<Cluster> closure = new FailoverClosureImpl<>(future, retriesLeft, retryRunner);
         final GetClusterInfoRequest request = new GetClusterInfoRequest();
         request.setClusterId(clusterId);
+        // 发送获取集群信息的请求 失败时 实际上通过回调对象在递归调用 internalGetClusterInfo
         this.pdRpcService.callPdServerWithRpc(request, closure, lastCause);
     }
 
@@ -70,6 +87,7 @@ public class MetadataRpcClient {
      * This method provides a lookup for the storeId according
      * to the host.  If there is no value, then a globally
      * unique storeId is created.
+     * 同样通过一个 重试回调来调用
      */
     public Long getOrCreateStoreId(final long clusterId, final Endpoint endpoint) {
         final CompletableFuture<Long> future = new CompletableFuture<>();
@@ -83,11 +101,14 @@ public class MetadataRpcClient {
         final RetryRunner retryRunner = retryCause -> internalGetOrCreateStoreId(clusterId, endpoint, future,
                 retriesLeft - 1, retryCause);
         final FailoverClosure<Long> closure = new FailoverClosureImpl<>(future, retriesLeft, retryRunner);
+        // 发送获取 storeId 的请求  store与 node 是什么关系???
         final GetStoreIdRequest request = new GetStoreIdRequest();
         request.setClusterId(clusterId);
         request.setEndpoint(endpoint);
         this.pdRpcService.callPdServerWithRpc(request, closure, lastCause);
     }
+
+    // 下面的方法套路类似 只是对应服务端的处理逻辑不同
 
     /**
      * Query the store information by the host.  If the result

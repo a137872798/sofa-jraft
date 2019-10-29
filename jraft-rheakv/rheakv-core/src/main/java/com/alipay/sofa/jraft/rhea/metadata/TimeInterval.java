@@ -21,16 +21,16 @@ import java.io.Serializable;
 import com.alipay.sofa.jraft.util.Copiable;
 
 /**
- *
+ * 一个时间间隔的元数据对象
  * @author jiachun.fjc
  */
 public class TimeInterval implements Copiable<TimeInterval>, Serializable {
 
     private static final long serialVersionUID = 2454987958697466235L;
 
-    // The unix timestamp in milliseconds of the start of this period.
+    // The unix timestamp in milliseconds of the start of this period.  起始时间
     private long              startTimestamp;
-    // The unix timestamp in seconds of the end of this period.
+    // The unix timestamp in seconds of the end of this period.    终止时间
     private long              endTimestamp;
 
     public TimeInterval() {

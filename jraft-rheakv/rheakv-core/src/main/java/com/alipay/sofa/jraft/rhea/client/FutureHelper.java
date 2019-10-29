@@ -54,6 +54,12 @@ public final class FutureHelper {
         return joinBooleans(futureGroup, new CompletableFuture<>());
     }
 
+    /**
+     * 必须确保所有future 都返回true 否则设置成false  出现异常的话 走正常流程
+     * @param futureGroup
+     * @param future
+     * @return
+     */
     public static CompletableFuture<Boolean> joinBooleans(final FutureGroup<Boolean> futureGroup,
                                                           final CompletableFuture<Boolean> future) {
         CompletableFuture.allOf(futureGroup.toArray()).whenComplete((ignored, throwable) -> {

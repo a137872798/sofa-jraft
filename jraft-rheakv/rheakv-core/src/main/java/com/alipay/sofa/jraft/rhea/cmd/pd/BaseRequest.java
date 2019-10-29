@@ -20,7 +20,7 @@ import java.io.Serializable;
 
 /**
  * RPC request header
- *
+ * 请求基类 包含了请求头
  * @author jiachun.fjc
  */
 public abstract class BaseRequest implements Serializable {
@@ -35,6 +35,9 @@ public abstract class BaseRequest implements Serializable {
     public static final byte  GET_STORE_ID     = 0x06;
     public static final byte  CREATE_REGION_ID = 0x07;
 
+    /**
+     * 代表本对象来源于哪个 集群
+     */
     private long              clusterId;
 
     public long getClusterId() {

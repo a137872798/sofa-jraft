@@ -76,7 +76,7 @@ import com.codahale.metrics.Slf4jReporter;
 /**
  * Storage engine, there is only one instance in a node,
  * containing one or more {@link RegionEngine}.
- *
+ * 存储引擎  一个节点中只有一个  内部包含一个或多个 RegionEngine
  * @author jiachun.fjc
  */
 public class StoreEngine implements Lifecycle<StoreEngineOptions> {
@@ -441,6 +441,12 @@ public class StoreEngine implements Lifecycle<StoreEngineOptions> {
         return splitting.get();
     }
 
+    /**
+     * 进行拆分
+     * @param regionId
+     * @param newRegionId
+     * @param closure
+     */
     public void applySplit(final Long regionId, final Long newRegionId, final KVStoreClosure closure) {
         Requires.requireNonNull(regionId, "regionId");
         Requires.requireNonNull(newRegionId, "newRegionId");

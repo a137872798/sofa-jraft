@@ -94,10 +94,21 @@ public class RegionRouteTable {
      */
     private static final Comparator<byte[]>  keyBytesComparator = BytesUtil.getDefaultByteArrayComparator();
 
+    /**
+     * 读写锁
+     */
     private final StampedLock                stampedLock        = new StampedLock();
+    /**
+     * key: startKey[]  value: regionId
+     */
     private final NavigableMap<byte[], Long> rangeTable         = new TreeMap<>(keyBytesComparator);
     private final Map<Long, Region>          regionTable        = Maps.newHashMap();
 
+    /**
+     * 通过 regionId 获取 region
+     * @param regionId
+     * @return
+     */
     public Region getRegionById(final long regionId) {
         final StampedLock stampedLock = this.stampedLock;
         long stamp = stampedLock.tryOptimisticRead();
@@ -105,6 +116,7 @@ public class RegionRouteTable {
         // load instructions inside a block of tryOptimisticRead() / validate(),
         // because it is meant to the a read-only operation, and therefore, it is fine
         // to use the loadFence() function to avoid re-ordering.
+        // 从map中获取 并通过深拷贝的方式复制数据
         Region region = safeCopy(this.regionTable.get(regionId));
         if (!stampedLock.validate(stamp)) {
             stamp = stampedLock.readLock();
@@ -117,21 +129,34 @@ public class RegionRouteTable {
         return region;
     }
 
+    /**
+     * 更新或 首次添加region 到map 中   每个 region 都对应一个 jraft组
+     * @param region
+     */
     public void addOrUpdateRegion(final Region region) {
         Requires.requireNonNull(region, "region");
         Requires.requireNonNull(region.getRegionEpoch(), "regionEpoch");
+        // 获得本地区id
         final long regionId = region.getId();
+        // 获取开始的 key 数组
         final byte[] startKey = BytesUtil.nullToEmpty(region.getStartKey());
         final StampedLock stampedLock = this.stampedLock;
         final long stamp = stampedLock.writeLock();
         try {
             this.regionTable.put(regionId, region.copy());
+            // 这里使用了红黑树来保存regionId
             this.rangeTable.put(startKey, regionId);
         } finally {
             stampedLock.unlockWrite(stamp);
         }
     }
 
+
+    /**
+     * 拆分地区
+     * @param leftId  对应某个region 的 startKey
+     * @param right
+     */
     public void splitRegion(final long leftId, final Region right) {
         Requires.requireNonNull(right, "right");
         Requires.requireNonNull(right.getRegionEpoch(), "right.regionEpoch");
@@ -140,6 +165,7 @@ public class RegionRouteTable {
         try {
             final Region left = this.regionTable.get(leftId);
             Requires.requireNonNull(left, "left");
+            // 获取2个region的 左右 key[]
             final byte[] leftStartKey = BytesUtil.nullToEmpty(left.getStartKey());
             final byte[] leftEndKey = left.getEndKey();
             final long rightId = right.getId();
@@ -148,6 +174,7 @@ public class RegionRouteTable {
             Requires.requireNonNull(rightStartKey, "rightStartKey");
             Requires.requireTrue(BytesUtil.compare(leftStartKey, rightStartKey) < 0,
                 "leftStartKey must < rightStartKey");
+            // 这里的意思是 右侧 region 的 end 必须和左侧一致
             if (leftEndKey == null || rightEndKey == null) {
                 Requires.requireTrue(leftEndKey == rightEndKey, "leftEndKey must == rightEndKey");
             } else {
@@ -155,8 +182,11 @@ public class RegionRouteTable {
                 Requires.requireTrue(BytesUtil.compare(rightStartKey, rightEndKey) < 0,
                     "rightStartKey must < rightEndKey");
             }
+            // 看作是 region 的一个状态描述对象
             final RegionEpoch leftEpoch = left.getRegionEpoch();
+            // 当region 分裂或者 融合的时候 会将version+1
             leftEpoch.setVersion(leftEpoch.getVersion() + 1);
+            // 将左边的region 的终止位置更新为 right 的startKey
             left.setEndKey(rightStartKey);
             this.regionTable.put(rightId, right.copy());
             this.rangeTable.put(rightStartKey, rightId);
@@ -165,6 +195,11 @@ public class RegionRouteTable {
         }
     }
 
+    /**
+     * 从regionTable 和 rangeTable 中移除数据
+     * @param regionId
+     * @return
+     */
     public boolean removeRegion(final long regionId) {
         final StampedLock stampedLock = this.stampedLock;
         final long stamp = stampedLock.writeLock();
@@ -194,6 +229,11 @@ public class RegionRouteTable {
         }
     }
 
+    /**
+     * 根据startKey 找到region id 之后去 regionTable 找到region
+     * @param key
+     * @return
+     */
     private Region findRegionByKeyWithoutLock(final byte[] key) {
         // return the greatest key less than or equal to the given key
         final Map.Entry<byte[], Long> entry = this.rangeTable.floorEntry(key);
@@ -206,6 +246,7 @@ public class RegionRouteTable {
 
     /**
      * Returns the list of regions to which the keys belongs.
+     * 将key 对应的region 作为 返回map的 key
      */
     public Map<Region, List<byte[]>> findRegionsByKeys(final List<byte[]> keys) {
         Requires.requireNonNull(keys, "keys");
@@ -225,6 +266,7 @@ public class RegionRouteTable {
 
     /**
      * Returns the list of regions to which the keys belongs.
+     * 看来 KVEntry 中的 key[] 就等同于 region的 startKey[]
      */
     public Map<Region, List<KVEntry>> findRegionsByKvEntries(final List<KVEntry> kvEntries) {
         Requires.requireNonNull(kvEntries, "kvEntries");
@@ -244,6 +286,7 @@ public class RegionRouteTable {
 
     /**
      * Returns the list of regions covered by startKey and endKey.
+     * 根据范围锁定一组region    某个region的 endKey[] 实际上对应另一个 region的startKey[]
      */
     public List<Region> findRegionsByKeyRange(final byte[] startKey, final byte[] endKey) {
         final StampedLock stampedLock = this.stampedLock;
@@ -251,12 +294,15 @@ public class RegionRouteTable {
         try {
             final byte[] realStartKey = BytesUtil.nullToEmpty(startKey);
             final NavigableMap<byte[], Long> subRegionMap;
+            // 下面2个方法都没有包含startKey 对应的 region
             if (endKey == null) {
+                // 代表返回一颗子树
                 subRegionMap = this.rangeTable.tailMap(realStartKey, false);
             } else {
                 subRegionMap = this.rangeTable.subMap(realStartKey, false, endKey, true);
             }
             final List<Region> regionList = Lists.newArrayListWithCapacity(subRegionMap.size() + 1);
+            // 找到 startKey 对应的region
             final Map.Entry<byte[], Long> headEntry = this.rangeTable.floorEntry(realStartKey);
             if (headEntry == null) {
                 reportFail(startKey);
@@ -280,6 +326,7 @@ public class RegionRouteTable {
         final StampedLock stampedLock = this.stampedLock;
         long stamp = stampedLock.tryOptimisticRead();
         // get the least key strictly greater than the given key
+        // 找到 比传入key 大的 下个 region的 startkey
         byte[] nextStartKey = this.rangeTable.higherKey(key);
         if (!stampedLock.validate(stamp)) {
             stamp = stampedLock.readLock();

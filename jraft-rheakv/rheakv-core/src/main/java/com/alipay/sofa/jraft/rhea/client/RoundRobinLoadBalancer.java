@@ -23,13 +23,19 @@ import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
 import com.alipay.sofa.jraft.rhea.util.Maps;
 
 /**
- *
+ * 默认的均衡负载实现
  * @author jiachun.fjc
  */
 public class RoundRobinLoadBalancer implements LoadBalancer {
 
+    /**
+     * 均衡负载 对象以 region为单位 所以每个regionId 都对应一个负载对象
+     */
     private static final ConcurrentMap<Long, RoundRobinLoadBalancer>       container    = Maps.newConcurrentMapLong();
 
+    /**
+     * CAS 更新index
+     */
     private static final AtomicIntegerFieldUpdater<RoundRobinLoadBalancer> indexUpdater = AtomicIntegerFieldUpdater
                                                                                             .newUpdater(
                                                                                                 RoundRobinLoadBalancer.class,
@@ -38,6 +44,11 @@ public class RoundRobinLoadBalancer implements LoadBalancer {
     @SuppressWarnings("unused")
     private volatile int                                                   index        = 0;
 
+    /**
+     * 均衡负载
+     * @param regionId
+     * @return
+     */
     public static RoundRobinLoadBalancer getInstance(final long regionId) {
         RoundRobinLoadBalancer instance = container.get(regionId);
         if (instance == null) {

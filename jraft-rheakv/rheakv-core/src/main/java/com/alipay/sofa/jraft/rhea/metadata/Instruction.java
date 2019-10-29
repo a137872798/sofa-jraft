@@ -22,16 +22,28 @@ import com.alipay.sofa.jraft.util.Endpoint;
 
 /**
  * Instruction of the placement driver server.
- *
+ * 在PD server 中的命令对象
  * @author jiachun.fjc
  */
 public class Instruction implements Serializable {
 
     private static final long serialVersionUID = 2675841162817080976L;
 
+    /**
+     * 该命令是针对哪个 region
+     */
     private Region            region;
+    /**
+     * 代表该命令是更新节点的
+     */
     private ChangePeer        changePeer;
+    /**
+     * 更换leader
+     */
     private TransferLeader    transferLeader;
+    /**
+     * 对区域进行拆分
+     */
     private RangeSplit        rangeSplit;
 
     public Region getRegion() {
@@ -79,11 +91,17 @@ public class Instruction implements Serializable {
         // TODO support add/update peer
     }
 
+    /**
+     * 代表更换leader 的指令
+     */
     public static class TransferLeader implements Serializable {
 
         private static final long serialVersionUID = 7483209239871846301L;
 
         private long              moveToStoreId;
+        /**
+         * 最新的leader 所在的 endpoint
+         */
         private Endpoint          moveToEndpoint;
 
         public long getMoveToStoreId() {
@@ -108,10 +126,16 @@ public class Instruction implements Serializable {
         }
     }
 
+    /**
+     * 拆分区域指令
+     */
     public static class RangeSplit implements Serializable {
 
         private static final long serialVersionUID = -3451109819719367744L;
 
+        /**
+         * 这个参数是干嘛用的???
+         */
         private Long              newRegionId;
 
         public Long getNewRegionId() {

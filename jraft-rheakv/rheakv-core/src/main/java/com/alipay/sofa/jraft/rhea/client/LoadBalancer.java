@@ -19,7 +19,7 @@ package com.alipay.sofa.jraft.rhea.client;
 import java.util.List;
 
 /**
- *
+ * 均衡负载对象
  * @author jiachun.fjc
  */
 public interface LoadBalancer {

@@ -20,6 +20,7 @@ import java.util.NoSuchElementException;
 
 /**
  * An iterator over RheaKVStore.
+ * 针对 RheaKVStore 的迭代器
  *
  * @param <E> the type of elements returned by this iterator
  *

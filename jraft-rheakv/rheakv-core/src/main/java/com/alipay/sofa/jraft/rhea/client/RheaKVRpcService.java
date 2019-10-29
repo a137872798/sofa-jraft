@@ -26,13 +26,14 @@ import com.alipay.sofa.jraft.rhea.options.RpcOptions;
 
 /**
  * RheaKV's rpc client for sending kv requests and receiving kv responses.
- *
+ * 通过RPC 调用 RheaVK client 的api
  * @author jiachun.fjc
  */
 public interface RheaKVRpcService extends Lifecycle<RpcOptions> {
 
     /**
      * @see #callAsyncWithRpc(BaseRequest, FailoverClosure, Errors, boolean)
+     * 这里只是定义了一个模板 实际如何处理是根据 request 的类型
      */
     <V> CompletableFuture<V> callAsyncWithRpc(final BaseRequest request, final FailoverClosure<V> closure,
                                               final Errors lastCause);

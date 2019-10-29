@@ -52,14 +52,20 @@ import com.codahale.metrics.Slf4jReporter;
 
 /**
  * Minimum execution/copy unit of RheaKVStore.
- *
+ * 一个最小的 执行/复制单位
  * @author jiachun.fjc
  */
 public class RegionEngine implements Lifecycle<RegionEngineOptions> {
 
     private static final Logger LOG = LoggerFactory.getLogger(RegionEngine.class);
 
+    /**
+     * 该引擎对应的 region
+     */
     private final Region        region;
+    /**
+     * 存储引擎
+     */
     private final StoreEngine   storeEngine;
 
     private RaftRawKVStore      raftRawKVStore;

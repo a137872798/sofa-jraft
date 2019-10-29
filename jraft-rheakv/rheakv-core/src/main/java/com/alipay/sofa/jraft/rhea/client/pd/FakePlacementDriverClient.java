@@ -61,6 +61,9 @@ public class FakePlacementDriverClient extends AbstractPlacementDriverClient {
         LOG.info("[FakePlacementDriverClient] shutdown successfully.");
     }
 
+    /**
+     * 实际上刷新不需要做任何操作 因为始终是单机环境
+     */
     @Override
     protected void refreshRouteTable() {
         // NO-OP
@@ -68,11 +71,13 @@ public class FakePlacementDriverClient extends AbstractPlacementDriverClient {
 
     @Override
     public Store getStoreMetadata(final StoreEngineOptions opts) {
+        // store 内部包含 一组region  而每个 region 又对应到多个同属一个group的 peer
         final Store store = new Store();
         final List<RegionEngineOptions> rOptsList = opts.getRegionEngineOptionsList();
         final List<Region> regionList = Lists.newArrayListWithCapacity(rOptsList.size());
         store.setId(-1);
         store.setEndpoint(opts.getServerAddress());
+        // 将每个opts 恢复成region 并设置到路由表中 最后将list 设置到 store 中
         for (final RegionEngineOptions rOpts : rOptsList) {
             regionList.add(getLocalRegionMetadata(rOpts));
         }
