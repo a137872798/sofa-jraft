@@ -60,6 +60,9 @@ public abstract class DistributedLock<T> {
      */
     private final ScheduledExecutorService watchdog;
 
+    /**
+     * 用于描述当前获得锁的对象  实际上也是通过 在KVStore 中 设置一个 分布式环境的唯一对象 并标识该对象是由谁来持有
+     */
     private volatile Owner                 owner;
 
     protected DistributedLock(T target, long lease, TimeUnit unit, ScheduledExecutorService watchdog) {
@@ -116,6 +119,7 @@ public abstract class DistributedLock<T> {
      * @param unit    the time unit of the {@code time} argument
      * @return {@code true} if the lock was acquired and {@code false}
      * if the waiting time elapsed before the lock was acquired
+     * 以 ctx 作为 锁的key 尝试加锁 timeout 代表最大等待锁时间
      */
     public boolean tryLock(final byte[] ctx, final long timeout, final TimeUnit unit) {
         final long timeoutNs = unit.toNanos(timeout);
@@ -124,18 +128,21 @@ public abstract class DistributedLock<T> {
         try {
             for (;;) {
                 final Owner owner = internalTryLock(ctx);
+                // 代表获取锁成功
                 if (owner.isSuccess()) {
                     return true;
                 }
+                // 超过尝试获取锁的最大时间
                 if (System.nanoTime() - startNs >= timeoutNs) {
                     break;
                 }
+                // 该值 相当于一个睡眠的时间
                 if (attempts < 8) {
                     attempts++;
                 }
                 final long remaining = Math.max(0, owner.getRemainingMillis());
                 // TODO optimize with notify?
-                // avoid liveLock
+                // avoid liveLock  每次睡眠的时间都会延长 有点类似网络重连的间隔延长 这里是在避免活锁
                 Thread.sleep(Math.min(remaining, 2 << attempts));
             }
         } catch (final Throwable t) {
@@ -191,6 +198,11 @@ public abstract class DistributedLock<T> {
         return new OwnerBuilder();
     }
 
+    /**
+     * 尝试获取 对应key 的 锁对象 owner 代表本对象获取锁的信息 内部包含一个 success 属性 用于判断本次申请锁是否成功
+     * @param ctx
+     * @return
+     */
     protected abstract Owner internalTryLock(final byte[] ctx);
 
     protected T withInternalKey(final T target) {

@@ -687,10 +687,18 @@ public class MemoryRawKVStore extends BatchRawKVStore<MemoryDBOptions> {
         }
     }
 
+    /**
+     * 将 堆中的数据 转移到 文件中
+     * @param snapshotFile
+     * @param snapshotPath
+     * @param region
+     * @throws Exception
+     */
     void doSnapshotSave(final MemoryKVStoreSnapshotFile snapshotFile, final String snapshotPath, final Region region)
                                                                                                                      throws Exception {
         final Timer.Context timeCtx = getTimeContext("SNAPSHOT_SAVE");
         try {
+            // 按照类型保存到不同的文件
             snapshotFile.writeToFile(snapshotPath, "sequenceDB", new SequenceDB(subRangeMap(this.sequenceDB, region)));
             snapshotFile.writeToFile(snapshotPath, "fencingKeyDB",
                 new FencingKeyDB(subRangeMap(this.fencingKeyDB, region)));
@@ -701,6 +709,7 @@ public class MemoryRawKVStore extends BatchRawKVStore<MemoryDBOptions> {
             final byte[] realStartKey = BytesUtil.nullToEmpty(region.getStartKey());
             final byte[] endKey = region.getEndKey();
             final NavigableMap<byte[], byte[]> subMap;
+            // 截取部分数据
             if (endKey == null) {
                 subMap = this.defaultDB.tailMap(realStartKey);
             } else {
@@ -709,10 +718,12 @@ public class MemoryRawKVStore extends BatchRawKVStore<MemoryDBOptions> {
             for (final Map.Entry<byte[], byte[]> entry : subMap.entrySet()) {
                 segment.add(Pair.of(entry.getKey(), entry.getValue()));
                 if (segment.size() >= size) {
+                    // 以segment 为单位存储数据
                     snapshotFile.writeToFile(snapshotPath, "segment" + index++, new Segment(segment));
                     segment.clear();
                 }
             }
+            // 剩余的部分单独写入
             if (!segment.isEmpty()) {
                 snapshotFile.writeToFile(snapshotPath, "segment" + index++, new Segment(segment));
             }
@@ -722,6 +733,12 @@ public class MemoryRawKVStore extends BatchRawKVStore<MemoryDBOptions> {
         }
     }
 
+    /**
+     * 从对应文件加载数据并保存到内存中
+     * @param snapshotFile
+     * @param snapshotPath
+     * @throws Exception
+     */
     void doSnapshotLoad(final MemoryKVStoreSnapshotFile snapshotFile, final String snapshotPath) throws Exception {
         final Timer.Context timeCtx = getTimeContext("SNAPSHOT_LOAD");
         try {
@@ -751,6 +768,13 @@ public class MemoryRawKVStore extends BatchRawKVStore<MemoryDBOptions> {
         }
     }
 
+    /**
+     * 将 region 范围内的 数据取出来 设置到 output中
+     * @param input
+     * @param region
+     * @param <V>
+     * @return
+     */
     static <V> Map<ByteArray, V> subRangeMap(final Map<ByteArray, V> input, final Region region) {
         if (RegionHelper.isSingleGroup(region)) {
             return input;

@@ -23,31 +23,51 @@ import com.alipay.sofa.jraft.rhea.util.RegionHelper;
 import static com.alipay.sofa.jraft.entity.LocalFileMetaOutter.LocalFileMeta;
 
 /**
- *
+ * 基于 rocksDB 的快照文件存储
  * @author jiachun.fjc
  */
 public class RocksKVStoreSnapshotFile extends AbstractKVStoreSnapshotFile {
 
+    /**
+     * 快照存储对象
+     */
     private final RocksRawKVStore kvStore;
 
     RocksKVStoreSnapshotFile(RocksRawKVStore kvStore) {
         this.kvStore = kvStore;
     }
 
+    /**
+     * 存储快照
+     * @param snapshotPath
+     * @param region
+     * @return
+     * @throws Exception
+     */
     @Override
     LocalFileMeta doSnapshotSave(final String snapshotPath, final Region region) throws Exception {
         if (RegionHelper.isMultiGroup(region)) {
+            // 多组 写入到 sst 中 sst是 rocksDB 的一个概念
             this.kvStore.writeSstSnapshot(snapshotPath, region);
             return buildMetadata(region);
         }
+        // 如果要求是 快速快照 就生成一个普通的快照
         if (this.kvStore.isFastSnapshot()) {
             this.kvStore.writeSnapshot(snapshotPath);
             return null;
         }
+        // 生成备份数据
         final RocksDBBackupInfo backupInfo = this.kvStore.backupDB(snapshotPath);
         return buildMetadata(backupInfo);
     }
 
+    /**
+     * 跟上面类似 获取快照信息
+     * @param snapshotPath
+     * @param meta
+     * @param region
+     * @throws Exception
+     */
     @Override
     void doSnapshotLoad(final String snapshotPath, final LocalFileMeta meta, final Region region) throws Exception {
         if (RegionHelper.isMultiGroup(region)) {

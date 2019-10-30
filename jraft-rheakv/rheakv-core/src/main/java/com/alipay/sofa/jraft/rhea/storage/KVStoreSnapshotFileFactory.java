@@ -19,7 +19,7 @@ package com.alipay.sofa.jraft.rhea.storage;
 import com.alipay.sofa.jraft.util.Requires;
 
 /**
- *
+ * 根据store 类型返回不同的 storeSnapshotFile
  * @author jiachun.fjc
  */
 public final class KVStoreSnapshotFileFactory {

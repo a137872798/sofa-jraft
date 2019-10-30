@@ -81,7 +81,7 @@ public interface RheaKVStore extends Lifecycle<RheaKVStoreOptions> {
 
     /**
      * Equivalent to {@code get(key, true)}.
-     * 通过key 查询value
+     * 通过key 查询value  异步获取过程 返回一个future对象
      */
     CompletableFuture<byte[]> get(final byte[] key);
 

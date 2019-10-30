@@ -78,8 +78,15 @@ public abstract class AbstractKVStoreSnapshotFile implements KVStoreSnapshotFile
         }
     }
 
+    /**
+     * 加载数据
+     * @param reader snapshot reader  通过reader对象读取数据
+     * @param region the region to load snapshot  针对哪个region读取快照
+     * @return
+     */
     @Override
     public boolean load(final SnapshotReader reader, final Region region) {
+        // 之前 在 writer中保存了 fileName 与 meta 的映射 这里就可以直接获取到 meta 对象
         final LocalFileMeta meta = (LocalFileMeta) reader.getFileMeta(SNAPSHOT_ARCHIVE);
         final String readerPath = reader.getPath();
         if (meta == null) {
@@ -88,7 +95,9 @@ public abstract class AbstractKVStoreSnapshotFile implements KVStoreSnapshotFile
         }
         final String snapshotPath = Paths.get(readerPath, SNAPSHOT_DIR).toString();
         try {
+            // 这里是定位到压缩文件路径 之后会选择一个解压缩的路径 并将目标文件解压缩
             decompressSnapshot(readerPath);
+            // 从快照路径加载数据
             doSnapshotLoad(snapshotPath, meta, region);
             return true;
         } catch (final Throwable t) {
@@ -107,6 +116,13 @@ public abstract class AbstractKVStoreSnapshotFile implements KVStoreSnapshotFile
      */
     abstract LocalFileMeta doSnapshotSave(final String snapshotPath, final Region region) throws Exception;
 
+    /**
+     * 从指定快照路径加载文件
+     * @param snapshotPath
+     * @param meta
+     * @param region
+     * @throws Exception
+     */
     abstract void doSnapshotLoad(final String snapshotPath, final LocalFileMeta meta, final Region region)
                                                                                                           throws Exception;
 

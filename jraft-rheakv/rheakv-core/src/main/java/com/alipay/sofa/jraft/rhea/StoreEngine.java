@@ -126,6 +126,7 @@ public class StoreEngine implements Lifecycle<StoreEngineOptions> {
 
     // Shared executor services
     private ExecutorService                            readIndexExecutor;
+    // 状态变更对应的线程池
     private ExecutorService                            raftStateTrigger;
     private ExecutorService                            snapshotExecutor;
     private ExecutorService                            cliRpcExecutor;

@@ -1394,6 +1394,12 @@ public class RocksRawKVStore extends BatchRawKVStore<RocksDBOptions> {
         return Requires.requireNonNull(this.opts, "opts").isFastSnapshot();
     }
 
+    /**
+     * 创建 sst 文件   (这个概念是 RocksDB 独有的)
+     * @param sstFileTable
+     * @param startKey
+     * @param endKey
+     */
     void createSstFiles(final EnumMap<SstColumnFamily, File> sstFileTable, final byte[] startKey, final byte[] endKey) {
         final Timer.Context timeCtx = getTimeContext("CREATE_SST_FILE");
         final Lock readLock = this.readWriteLock.readLock();
@@ -1474,6 +1480,12 @@ public class RocksRawKVStore extends BatchRawKVStore<RocksDBOptions> {
         }
     }
 
+    /**
+     * 生成备份数据
+     * @param backupDBPath
+     * @return
+     * @throws IOException
+     */
     RocksDBBackupInfo backupDB(final String backupDBPath) throws IOException {
         final Timer.Context timeCtx = getTimeContext("BACKUP_DB");
         FileUtils.forceMkdir(new File(backupDBPath));
@@ -1481,6 +1493,7 @@ public class RocksRawKVStore extends BatchRawKVStore<RocksDBOptions> {
         writeLock.lock();
         try (final BackupableDBOptions backupOpts = createBackupDBOptions(backupDBPath);
              final BackupEngine backupEngine = BackupEngine.open(this.options.getEnv(), backupOpts)) {
+            // 创建一个备份引擎
             backupEngine.createNewBackup(this.db, true);
             final List<BackupInfo> backupInfoList = backupEngine.getBackupInfo();
             if (backupInfoList.isEmpty()) {
@@ -1572,18 +1585,27 @@ public class RocksRawKVStore extends BatchRawKVStore<RocksDBOptions> {
         }
     }
 
+    /**
+     * 写入 sst快照
+     * @param snapshotPath
+     * @param region
+     */
     void writeSstSnapshot(final String snapshotPath, final Region region) {
         final Timer.Context timeCtx = getTimeContext("WRITE_SST_SNAPSHOT");
         final Lock readLock = this.readWriteLock.readLock();
         readLock.lock();
         try {
+            // 先生成一个临时文件夹
             final String tempPath = snapshotPath + "_temp";
             final File tempFile = new File(tempPath);
             FileUtils.deleteDirectory(tempFile);
             FileUtils.forceMkdir(tempFile);
 
+            // 目标文件夹下有多个文件 每个文件对标一种枚举
             final EnumMap<SstColumnFamily, File> sstFileTable = getSstFileTable(tempPath);
+            // 推测从 startKey 到 endKey 的数据全部读取出来并根据类型写入到对应的文件中
             createSstFiles(sstFileTable, region.getStartKey(), region.getEndKey());
+            // 删除原来的快照文件 并将temp 变更为 快照文件
             final File snapshotFile = new File(snapshotPath);
             FileUtils.deleteDirectory(snapshotFile);
             if (!tempFile.renameTo(snapshotFile)) {

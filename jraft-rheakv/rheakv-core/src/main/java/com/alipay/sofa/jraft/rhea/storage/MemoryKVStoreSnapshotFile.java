@@ -40,7 +40,7 @@ import com.alipay.sofa.jraft.util.Bits;
 import static com.alipay.sofa.jraft.entity.LocalFileMetaOutter.LocalFileMeta;
 
 /**
- *
+ * 基于内存的快照文件
  * @author jiachun.fjc
  */
 public class MemoryKVStoreSnapshotFile extends AbstractKVStoreSnapshotFile {
@@ -60,6 +60,13 @@ public class MemoryKVStoreSnapshotFile extends AbstractKVStoreSnapshotFile {
         return buildMetadata(region);
     }
 
+    /**
+     * 从指定文件读取数据
+     * @param snapshotPath
+     * @param meta
+     * @param region
+     * @throws Exception
+     */
     @Override
     void doSnapshotLoad(final String snapshotPath, final LocalFileMeta meta, final Region region) throws Exception {
         final File file = new File(snapshotPath);
@@ -73,6 +80,14 @@ public class MemoryKVStoreSnapshotFile extends AbstractKVStoreSnapshotFile {
         this.kvStore.doSnapshotLoad(this, snapshotPath);
     }
 
+    /**
+     * 将内存中的数据写入到目标文件
+     * @param rootPath
+     * @param fileName
+     * @param persist
+     * @param <T>
+     * @throws Exception
+     */
     <T> void writeToFile(final String rootPath, final String fileName, final Persistence<T> persist) throws Exception {
         final Path path = Paths.get(rootPath, fileName);
         try (final FileOutputStream out = new FileOutputStream(path.toFile());

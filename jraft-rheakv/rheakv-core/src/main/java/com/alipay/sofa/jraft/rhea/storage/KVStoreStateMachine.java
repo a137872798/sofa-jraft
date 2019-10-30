@@ -53,19 +53,37 @@ import static com.alipay.sofa.jraft.rhea.metrics.KVMetricNames.STATE_MACHINE_BAT
 
 /**
  * Rhea KV store state machine
- * 基于 Rhea KV 存储
+ * 基于 Rhea KV存储的状态机
  * @author jiachun.fjc
  */
 public class KVStoreStateMachine extends StateMachineAdapter {
 
     private static final Logger       LOG        = LoggerFactory.getLogger(KVStoreStateMachine.class);
 
+    /**
+     * 一组状态监听器对象
+     */
     private final List<StateListener> listeners  = new CopyOnWriteArrayList<>();
+    /**
+     * 当前任期
+     */
     private final AtomicLong          leaderTerm = new AtomicLong(-1L);
     private final Serializer          serializer = Serializers.getDefault();
+    /**
+     * 状态机是以region 为单位吗
+     */
     private final Region              region;
+    /**
+     * 该对象内部包含多个regionEngine
+     */
     private final StoreEngine         storeEngine;
+    /**
+     * 批量存储对象
+     */
     private final BatchRawKVStore<?>  rawKVStore;
+    /**
+     * 快照文件存储
+     */
     private final KVStoreSnapshotFile storeSnapshotFile;
     private final Meter               applyMeter;
     private final Histogram           batchWriteHistogram;
@@ -80,20 +98,28 @@ public class KVStoreStateMachine extends StateMachineAdapter {
         this.batchWriteHistogram = KVMetrics.histogram(STATE_MACHINE_BATCH_WRITE, regionStr);
     }
 
+    /**
+     * 状态机处理一组批量任务
+     * @param it
+     */
     @Override
     public void onApply(final Iterator it) {
         int index = 0;
         int applied = 0;
         try {
+            // 创建一个存放输出结果的list
             KVStateOutputList kvStates = KVStateOutputList.newInstance();
             while (it.hasNext()) {
                 KVOperation kvOp;
+                // 该回调对象内部维护了一个 oper
                 final KVClosureAdapter done = (KVClosureAdapter) it.done();
                 if (done != null) {
                     kvOp = done.getOperation();
                 } else {
+
                     final ByteBuffer buf = it.getData();
                     try {
+                        // 基于 heap 内存 还是 direct内存
                         if (buf.hasArray()) {
                             kvOp = this.serializer.readObject(buf.array(), KVOperation.class);
                         } else {
@@ -104,7 +130,10 @@ public class KVStoreStateMachine extends StateMachineAdapter {
                         throw new StoreCodecException("Decode operation error", t);
                     }
                 }
+                // 获取首个元素
                 final KVState first = kvStates.getFirstElement();
+                // 这里是 批量处理 op 的逻辑 如果一组数据他们的op 都相同不会直接处理而是设置到 kvStates 中 一旦发现 下个op 与 已经保存的op 不同就通过batchApply 处理数据
+                // 以及 重置 kvStates
                 if (first != null && !first.isSameOp(kvOp)) {
                     applied += batchApplyAndRecycle(first.getOpByte(), kvStates);
                     kvStates = KVStateOutputList.newInstance();
@@ -128,6 +157,12 @@ public class KVStoreStateMachine extends StateMachineAdapter {
         }
     }
 
+    /**
+     * 批量处理任务
+     * @param opByte  代表操作类型
+     * @param kvStates   列表中的数据都按照该操作类型执行
+     * @return
+     */
     private int batchApplyAndRecycle(final byte opByte, final KVStateOutputList kvStates) {
         try {
             final int size = kvStates.size();
@@ -155,6 +190,11 @@ public class KVStoreStateMachine extends StateMachineAdapter {
         }
     }
 
+    /**
+     * 批量处理任务
+     * @param opType
+     * @param kvStates
+     */
     private void batchApply(final byte opType, final KVStateOutputList kvStates) {
         switch (opType) {
             case KVOperation.PUT:
@@ -208,6 +248,7 @@ public class KVStoreStateMachine extends StateMachineAdapter {
             case KVOperation.RESET_SEQUENCE:
                 this.rawKVStore.batchResetSequence(kvStates);
                 break;
+            // 拆分数据
             case KVOperation.RANGE_SPLIT:
                 doSplit(kvStates);
                 break;
@@ -216,6 +257,10 @@ public class KVStoreStateMachine extends StateMachineAdapter {
         }
     }
 
+    /**
+     * 拆分数据
+     * @param kvStates
+     */
     private void doSplit(final KVStateOutputList kvStates) {
         final byte[] parentKey = this.region.getStartKey();
         for (final KVState kvState : kvStates) {
@@ -254,9 +299,14 @@ public class KVStoreStateMachine extends StateMachineAdapter {
         return this.storeSnapshotFile.load(reader, this.region.copy());
     }
 
+    /**
+     * 监听该对象由follower 变成leader
+     * @param term
+     */
     @Override
     public void onLeaderStart(final long term) {
         super.onLeaderStart(term);
+        // 更新任期
         this.leaderTerm.set(term);
         // Because of the raft state machine must be a sequential commit, in order to prevent the user
         // doing something (needs to go through the raft state machine) in the listeners, we need

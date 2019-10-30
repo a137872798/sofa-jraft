@@ -25,6 +25,11 @@ import com.alipay.sofa.jraft.util.BytesUtil;
  */
 public final class RegionHelper {
 
+    /**
+     * 判断该region 内部是否有多个组   1个node -> 1个group -> 一个region  范围级别在递增
+     * @param region
+     * @return
+     */
     public static boolean isSingleGroup(final Region region) {
         return BytesUtil.nullToEmpty(region.getStartKey()).length == 0
                && BytesUtil.nullToEmpty(region.getEndKey()).length == 0;

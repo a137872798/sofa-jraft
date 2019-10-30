@@ -29,7 +29,13 @@ public class KVClosureAdapter implements KVStoreClosure {
 
     private static final Logger  LOG = LoggerFactory.getLogger(KVClosureAdapter.class);
 
+    /**
+     * 内部包含的真正回调对象
+     */
     private final KVStoreClosure done;
+    /**
+     * 本次操作
+     */
     private final KVOperation    operation;
 
     public KVClosureAdapter(final KVStoreClosure done, final KVOperation operation) {
