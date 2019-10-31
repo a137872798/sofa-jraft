@@ -20,13 +20,14 @@ import java.util.concurrent.Executor;
 
 /**
  * Task message dispatcher.
- *
+ * 任务消息分发器
  * @author jiachun.fjc
  */
 public interface Dispatcher<T> extends Executor {
 
     /**
      * Dispatch a task message.
+     * 分发消息
      */
     boolean dispatch(final T message);
 

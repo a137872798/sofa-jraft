@@ -30,13 +30,14 @@ import com.alipay.sofa.jraft.rhea.util.Pair;
 import com.alipay.sofa.jraft.util.Endpoint;
 
 /**
- *
+ * 元数据存储
  * @author jiachun.fjc
  */
 public interface MetadataStore {
 
     /**
      * Returns the specified cluster information.
+     * 根据集群id 获取集群信息
      */
     Cluster getClusterInfo(final long clusterId);
 
@@ -45,6 +46,7 @@ public interface MetadataStore {
      * This method provides a lookup for the storeId according
      * to the endpoint.  If there is no value, then a globally
      * unique storeId is created.
+     * 根据集群和 地址创建一个 store id
      */
     Long getOrCreateStoreId(final long clusterId, final Endpoint endpoint);
 
@@ -52,6 +54,7 @@ public interface MetadataStore {
      * Query the store information by the storeId.  If the result
      * is a empty instance, the caller needs to use its own local
      * configuration.
+     * 根据集群地址 和store id 获取 store 对象
      */
     Store getStoreInfo(final long clusterId, final long storeId);
 
@@ -59,6 +62,7 @@ public interface MetadataStore {
      * Query the store information by the endpoint.  If the result
      * is a empty instance, the caller needs to use its own local
      * configuration.
+     *
      */
     Store getStoreInfo(final long clusterId, final Endpoint endpoint);
 

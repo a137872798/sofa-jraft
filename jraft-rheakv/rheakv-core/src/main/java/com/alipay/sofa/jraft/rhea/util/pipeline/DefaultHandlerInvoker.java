@@ -28,13 +28,16 @@ import com.alipay.sofa.jraft.rhea.util.pipeline.event.OutboundMessageEvent;
 import com.alipay.sofa.jraft.util.ExecutorServiceHelper;
 
 /**
- *
+ * 默认执行器 内部有自己的线程池对象
  * @author jiachun.fjc
  */
 public class DefaultHandlerInvoker implements HandlerInvoker {
 
     private static final Logger   LOG = LoggerFactory.getLogger(DefaultHandlerInvoker.class);
 
+    /**
+     * 线程池对象
+     */
     private final ExecutorService executor;
 
     public DefaultHandlerInvoker() {
@@ -53,8 +56,10 @@ public class DefaultHandlerInvoker implements HandlerInvoker {
     @Override
     public void invokeInbound(final HandlerContext ctx, final InboundMessageEvent<?> event) {
         if (this.executor == null) {
+            // 代表在业务线程中执行
             HandlerInvokerUtil.invokeInboundNow(ctx, event);
         } else {
+            // 在线程池中执行
             this.executor.execute(() -> HandlerInvokerUtil.invokeInboundNow(ctx, event));
         }
     }

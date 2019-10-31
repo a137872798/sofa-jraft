@@ -32,7 +32,7 @@ import com.alipay.sofa.jraft.util.Requires;
  * This is a ThreadFactory which assigns threads based the strategies provided.
  *
  * If no strategies are provided AffinityStrategies.ANY is used.
- *
+ * 亲和的线程工厂
  * @author jiachun.fjc
  */
 public class AffinityNamedThreadFactory implements ThreadFactory {
@@ -44,6 +44,9 @@ public class AffinityNamedThreadFactory implements ThreadFactory {
     private final boolean            daemon;
     private final int                priority;
     private final ThreadGroup        group;
+    /**
+     * 一组亲和策略
+     */
     private final AffinityStrategy[] strategies;
     private AffinityLock             lastAffinityLock = null;
 
@@ -65,6 +68,7 @@ public class AffinityNamedThreadFactory implements ThreadFactory {
         this.priority = priority;
         final SecurityManager s = System.getSecurityManager();
         this.group = (s == null) ? Thread.currentThread().getThreadGroup() : s.getThreadGroup();
+        // 默认使用一个 any亲和  该对象 match 总是返回true 也就是不加限制
         this.strategies = strategies.length == 0 ? new AffinityStrategy[] { AffinityStrategies.ANY } : strategies;
     }
 
@@ -81,6 +85,7 @@ public class AffinityNamedThreadFactory implements ThreadFactory {
             public void run() {
                 AffinityLock al = null;
                 try {
+                    // 这步先不管
                     al = acquireLockBasedOnLast();
                 } catch (final Throwable ignored) {
                     // Defensive: ignored error on acquiring lock
@@ -99,6 +104,7 @@ public class AffinityNamedThreadFactory implements ThreadFactory {
             }
         };
 
+        // 实际就是生成一个 thread 对象 应该是开放给子类的钩子
         final Thread t = wrapThread(this.group, r3, name2);
 
         try {

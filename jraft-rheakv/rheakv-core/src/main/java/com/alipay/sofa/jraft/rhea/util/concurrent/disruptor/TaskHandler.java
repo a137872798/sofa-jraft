@@ -27,13 +27,15 @@ import com.lmax.disruptor.WorkHandler;
 /**
  * Callback interface to be implemented for processing events
  * as they become available in the RingBuffer.
- *
+ * 任务处理器
  * @author jiachun.fjc
  */
 public class TaskHandler implements EventHandler<MessageEvent<Runnable>>, WorkHandler<MessageEvent<Runnable>>,
                         TimeoutHandler, LifecycleAware {
 
     private static final Logger LOG = LoggerFactory.getLogger(TaskHandler.class);
+
+    // 委托给message执行任务
 
     @Override
     public void onEvent(final MessageEvent<Runnable> event, final long sequence, final boolean endOfBatch)

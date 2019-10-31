@@ -64,17 +64,29 @@ import com.alipay.sofa.jraft.util.Requires;
 import com.alipay.sofa.jraft.util.ThreadPoolUtil;
 
 /**
- *
+ * 默认的 PD service  看来该对象也是专门抽取出来用于做其他事的
  * @author jiachun.fjc
  */
 public class DefaultPlacementDriverService implements PlacementDriverService, LeaderStateListener {
 
     private static final Logger LOG = LoggerFactory.getLogger(DefaultPlacementDriverService.class);
 
+    /**
+     * kv存储对象 可以访问到 RocksDB
+     */
     private final RheaKVStore   rheaKVStore;
 
+    /**
+     * 抽象出来专门获取 store cluster region 相关信息的
+     */
     private MetadataStore       metadataStore;
+    /**
+     * 责任链上每一环节的处理器
+     */
     private HandlerInvoker      pipelineInvoker;
+    /**
+     * 责任链模式处理任务
+     */
     private Pipeline            pipeline;
     private volatile boolean    isLeader;
 
@@ -84,6 +96,11 @@ public class DefaultPlacementDriverService implements PlacementDriverService, Le
         this.rheaKVStore = rheaKVStore;
     }
 
+    /**
+     * 初始化
+     * @param opts
+     * @return
+     */
     @Override
     public synchronized boolean init(final PlacementDriverServerOptions opts) {
         if (this.started) {
@@ -91,13 +108,16 @@ public class DefaultPlacementDriverService implements PlacementDriverService, Le
             return true;
         }
         Requires.requireNonNull(opts, "placementDriverServerOptions");
+        // 初始化元数据存储对象 他们共用一个 kvStore
         this.metadataStore = new DefaultMetadataStore(this.rheaKVStore);
+        // 创建 责任链
         final ThreadPoolExecutor threadPool = createPipelineExecutor(opts);
         if (threadPool != null) {
             this.pipelineInvoker = new DefaultHandlerInvoker(threadPool);
         }
         this.pipeline = new DefaultPipeline(); //
         initPipeline(this.pipeline);
+
         LOG.info("[DefaultPlacementDriverService] start successfully, options: {}.", opts);
         return this.started = true;
     }
@@ -337,6 +357,11 @@ public class DefaultPlacementDriverService implements PlacementDriverService, Le
         ClusterStatsManager.invalidCache();
     }
 
+    /**
+     * 创建责任链专用的 线程池
+     * @param opts
+     * @return
+     */
     private ThreadPoolExecutor createPipelineExecutor(final PlacementDriverServerOptions opts) {
         final int corePoolSize = opts.getPipelineCorePoolSize();
         final int maximumPoolSize = opts.getPipelineMaximumPoolSize();

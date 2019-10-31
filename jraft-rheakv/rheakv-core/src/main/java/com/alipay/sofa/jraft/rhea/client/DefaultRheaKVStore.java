@@ -269,6 +269,7 @@ public class DefaultRheaKVStore implements RheaKVStore {
 
             @Override
             public Endpoint getLeader(final long regionId, final boolean forceRefresh, final long timeoutMillis) {
+                // 首先尝试从regionEngine中获取leader 如果有就不需要与pd 通信了
                 final Endpoint leader = getLeaderByRegionEngine(regionId);
                 if (leader != null) {
                     return leader;
@@ -276,6 +277,7 @@ public class DefaultRheaKVStore implements RheaKVStore {
                 return super.getLeader(regionId, forceRefresh, timeoutMillis);
             }
         };
+        // 初始化 kvRpcService  这里为 rpcService 创建了一个线程池
         if (!this.rheaKVRpcService.init(rpcOpts)) {
             LOG.error("Fail to init [RheaKVRpcService].");
             return false;
@@ -283,15 +285,19 @@ public class DefaultRheaKVStore implements RheaKVStore {
         this.failoverRetries = opts.getFailoverRetries();
         this.futureTimeoutMillis = opts.getFutureTimeoutMillis();
         this.onlyLeaderRead = opts.isOnlyLeaderRead();
+        // 如果使用并行执行器
         if (opts.isUseParallelKVExecutor()) {
             final int numWorkers = Utils.cpus();
             final int bufSize = numWorkers << 4;
             final String name = "parallel-kv-executor";
+            // 根据情况生成不同的 线程工厂  这里生成的是守护线程
             final ThreadFactory threadFactory = Constants.THREAD_AFFINITY_ENABLED
                     ? new AffinityNamedThreadFactory(name, true) : new NamedThreadFactory(name, true);
+            // 使用线程工厂构建任务选择器 内部利用了 disruptorr
             this.kvDispatcher = new TaskDispatcher(bufSize, numWorkers, WaitStrategyType.LITE_BLOCKING_WAIT, threadFactory);
         }
         this.batchingOpts = opts.getBatchingOptions();
+        // 初始化批量对象
         if (this.batchingOpts.isAllowBatching()) {
             this.getBatching = new GetBatching(KeyEvent::new, "get_batching",
                     new GetBatchingHandler("get", false));
@@ -349,8 +355,10 @@ public class DefaultRheaKVStore implements RheaKVStore {
      *         it.close();
      *     }
      * <pre/>
+     * 将数据 包装成一个迭代器
      */
     public KVIterator unsafeLocalIterator() {
+        // 确保当前服务器在启动状态
         checkState();
         if (this.pdClient instanceof RemotePlacementDriverClient) {
             throw new UnsupportedOperationException("unsupported operation on multi-region");
@@ -382,6 +390,11 @@ public class DefaultRheaKVStore implements RheaKVStore {
         return get(BytesUtil.writeUtf8(key), readOnlySafe);
     }
 
+    /**
+     * blockget 阻塞获取
+     * @param key
+     * @return
+     */
     @Override
     public byte[] bGet(final byte[] key) {
         return FutureHelper.get(get(key), this.futureTimeoutMillis);
@@ -402,33 +415,57 @@ public class DefaultRheaKVStore implements RheaKVStore {
         return FutureHelper.get(get(key, readOnlySafe), this.futureTimeoutMillis);
     }
 
+    /**
+     * 尝试获取某个 key 对应的数据 将结果设置到 future 中并返回
+     * @param key
+     * @param readOnlySafe
+     * @param future
+     * @param tryBatching
+     * @return
+     */
     private CompletableFuture<byte[]> get(final byte[] key, final boolean readOnlySafe,
                                           final CompletableFuture<byte[]> future, final boolean tryBatching) {
         checkState();
         Requires.requireNonNull(key, "key");
         if (tryBatching) {
+            // 发布一个 拉取数据的任务到 disruptor 中
             final GetBatching getBatching = readOnlySafe ? this.getBatchingOnlySafe : this.getBatching;
             if (getBatching != null && getBatching.apply(key, future)) {
                 return future;
             }
         }
+        // 如果不是批量任务
         internalGet(key, readOnlySafe, future, this.failoverRetries, null, this.onlyLeaderRead);
         return future;
     }
 
+    /**
+     * 非批量任务  通过key 查找数据落在哪个region  每个region 通过 startKey 和 endKey 来划分
+     * @param key
+     * @param readOnlySafe
+     * @param future
+     * @param retriesLeft
+     * @param lastCause
+     * @param requireLeader
+     */
     private void internalGet(final byte[] key, final boolean readOnlySafe, final CompletableFuture<byte[]> future,
                              final int retriesLeft, final Errors lastCause, final boolean requireLeader) {
         final Region region = this.pdClient.findRegionByKey(key, ErrorsHelper.isInvalidEpoch(lastCause));
+        // require 必须确保regionEngine 对应的node 是 leader  在内部的table 有维护region 与regionEngine 的关系
         final RegionEngine regionEngine = getRegionEngine(region.getId(), requireLeader);
-        // require leader on retry
+        // require leader on retry  这里定义了重试的逻辑 失败则 使用 requireLeader == true 再执行一次
         final RetryRunner retryRunner = retryCause -> internalGet(key, readOnlySafe, future, retriesLeft - 1,
                 retryCause, true);
+        // 将结果填充到future 中
         final FailoverClosure<byte[]> closure = new FailoverClosureImpl<>(future, retriesLeft, retryRunner);
         if (regionEngine != null) {
+            // 这里是在比较 region 和 regionEngine 的 regionEpoch 是否相同
             if (ensureOnValidEpoch(region, regionEngine, closure)) {
+                // 拉取数据 并触发回调 这里会将 结果设置到future中如果失败 就会重新调用internalGet
                 getRawKVStore(regionEngine).get(key, readOnlySafe, closure);
             }
         } else {
+            // 如果没有找到 regionEngine  使用rpc 服务进行异步调用
             final GetRequest request = new GetRequest();
             request.setKey(key);
             request.setReadOnlySafe(readOnlySafe);
@@ -462,8 +499,17 @@ public class DefaultRheaKVStore implements RheaKVStore {
         return FutureHelper.get(multiGet(keys, readOnlySafe), this.futureTimeoutMillis);
     }
 
+    /**
+     * 拉取多个数据
+     * @param keys
+     * @param readOnlySafe
+     * @param retriesLeft
+     * @param lastCause
+     * @return
+     */
     private FutureGroup<Map<ByteArray, byte[]>> internalMultiGet(final List<byte[]> keys, final boolean readOnlySafe,
                                                                  final int retriesLeft, final Throwable lastCause) {
+        // 从 映射表中找到 key 对应的region 并返回 多个key 可能会对应同一个region
         final Map<Region, List<byte[]>> regionMap = this.pdClient
                 .findRegionsByKeys(keys, ApiExceptionHelper.isInvalidEpoch(lastCause));
         final List<CompletableFuture<Map<ByteArray, byte[]>>> futures = Lists.newArrayListWithCapacity(regionMap.size());
@@ -471,18 +517,31 @@ public class DefaultRheaKVStore implements RheaKVStore {
         for (final Map.Entry<Region, List<byte[]>> entry : regionMap.entrySet()) {
             final Region region = entry.getKey();
             final List<byte[]> subKeys = entry.getValue();
+            // 生成 重试的回调
             final RetryCallable<Map<ByteArray, byte[]>> retryCallable = retryCause -> internalMultiGet(subKeys,
                     readOnlySafe, retriesLeft - 1, retryCause);
             final MapFailoverFuture<ByteArray, byte[]> future = new MapFailoverFuture<>(retriesLeft, retryCallable);
+            // 执行批量拉取任务 并返回相关的future 客户只需要 调用get 等待数据被设置就可以
             internalRegionMultiGet(region, subKeys, readOnlySafe, future, retriesLeft, lastError, this.onlyLeaderRead);
             futures.add(future);
         }
         return new FutureGroup<>(futures);
     }
 
+    /**
+     * 批量get 数据
+     * @param region
+     * @param subKeys
+     * @param readOnlySafe
+     * @param future
+     * @param retriesLeft
+     * @param lastCause
+     * @param requireLeader
+     */
     private void internalRegionMultiGet(final Region region, final List<byte[]> subKeys, final boolean readOnlySafe,
                                         final CompletableFuture<Map<ByteArray, byte[]>> future, final int retriesLeft,
                                         final Errors lastCause, final boolean requireLeader) {
+        // 这个引擎到底是干嘛的
         final RegionEngine regionEngine = getRegionEngine(region.getId(), requireLeader);
         // require leader on retry
         final RetryRunner retryRunner = retryCause -> internalRegionMultiGet(region, subKeys, readOnlySafe, future,
@@ -491,10 +550,12 @@ public class DefaultRheaKVStore implements RheaKVStore {
                 false, retriesLeft, retryRunner);
         if (regionEngine != null) {
             if (ensureOnValidEpoch(region, regionEngine, closure)) {
+                // 获取统计对象 忽略
                 final RawKVStore rawKVStore = getRawKVStore(regionEngine);
                 if (this.kvDispatcher == null) {
                     rawKVStore.multiGet(subKeys, readOnlySafe, closure);
                 } else {
+                    // 使用disruptor 执行任务  批量拉取数据并保存到future 中
                     this.kvDispatcher.execute(() -> rawKVStore.multiGet(subKeys, readOnlySafe, closure));
                 }
             }
@@ -504,9 +565,13 @@ public class DefaultRheaKVStore implements RheaKVStore {
             request.setReadOnlySafe(readOnlySafe);
             request.setRegionId(region.getId());
             request.setRegionEpoch(region.getRegionEpoch());
+            // 否则使用rpc  调用 为什么要分成2种获取方式 ???  哦 可能 store 意味着在本机的某个地方持久化了数据 如果没有找到持久化对象
+            // 那么就使用rpc 框架拉取远端数据
             this.rheaKVRpcService.callAsyncWithRpc(request, closure, lastCause, requireLeader);
         }
     }
+
+    // 下面的方法都差不多 实际上本对象作为一个入口 最后会调用store 的对应api
 
     @Override
     public CompletableFuture<List<KVEntry>> scan(final byte[] startKey, final byte[] endKey) {
@@ -1491,12 +1556,20 @@ public class DefaultRheaKVStore implements RheaKVStore {
         return engine;
     }
 
+    /**
+     * 尝试根据regionEngine 来获取leader
+     * @param regionId
+     * @return
+     */
     private Endpoint getLeaderByRegionEngine(final long regionId) {
+        // 从storeEngine 的 table 中找到 regionId 对应的 regionEngine对象
         final RegionEngine regionEngine = getRegionEngine(regionId);
         if (regionEngine != null) {
+            // 访问 regionEngine关联的node 的leaderId
             final PeerId leader = regionEngine.getLeaderId();
             if (leader != null) {
                 final String raftGroupId = JRaftHelper.getJRaftGroupId(this.pdClient.getClusterName(), regionId);
+                // 更新GroupConf 的 leader
                 RouteTable.getInstance().updateLeader(raftGroupId, leader);
                 return leader.getEndpoint();
             }

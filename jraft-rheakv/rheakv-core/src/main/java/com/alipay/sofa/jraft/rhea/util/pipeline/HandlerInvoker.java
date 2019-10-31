@@ -26,7 +26,7 @@ import com.alipay.sofa.jraft.rhea.util.pipeline.event.OutboundMessageEvent;
 /**
  * Most of the code references the pipeline design of
  * <a href="https://github.com/netty/netty">Netty</a>.
- *
+ * 调用链 仿照netty pipeline
  * @author jiachun.fjc
  */
 public interface HandlerInvoker {

@@ -22,9 +22,14 @@ package com.alipay.sofa.jraft.rhea.storage;
  */
 public abstract class LongSequence {
 
+    /**
+     * 基础偏移量???
+     */
     private final long base;
 
+    // 序列对象有一个 start 和 end 属性 标明一段范围
     private Sequence   sequence;
+    // 该序列的值
     private long       value;
 
     public LongSequence() {

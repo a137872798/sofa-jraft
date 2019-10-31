@@ -33,7 +33,7 @@ import com.alipay.sofa.jraft.rhea.util.pipeline.future.PipelineFuture;
 /**
  * Most of the code references the pipeline design of
  * <a href="https://github.com/netty/netty">Netty</a>.
- *
+ * 模仿netty 的责任链
  * @author jiachun.fjc
  */
 public final class DefaultPipeline implements Pipeline {
@@ -42,6 +42,7 @@ public final class DefaultPipeline implements Pipeline {
 
     private static final ThreadLocal<Map<Class<?>, String>> nameCaches = ThreadLocal.withInitial(WeakHashMap::new);
 
+    // 首尾节点
     final AbstractHandlerContext                            head;
     final AbstractHandlerContext                            tail;
 
@@ -60,7 +61,9 @@ public final class DefaultPipeline implements Pipeline {
 
     @Override
     public Pipeline addFirst(HandlerInvoker invoker, String name, Handler handler) {
+        // 确保名字唯一
         name = filterName(name, handler);
+        // 标准链表操作
         addFirst0(new DefaultHandlerContext(this, invoker, name, handler));
         return this;
     }
@@ -74,6 +77,7 @@ public final class DefaultPipeline implements Pipeline {
         head.next = newCtx;
         nextCtx.prev = newCtx;
 
+        // 触发钩子
         callHandlerAdded(newCtx);
     }
 
@@ -85,6 +89,7 @@ public final class DefaultPipeline implements Pipeline {
     @Override
     public Pipeline addLast(HandlerInvoker invoker, String name, Handler handler) {
         name = filterName(name, handler);
+        // 将invoker 包装成一个上下文 连接到 pipeline 中
         addLast0(new DefaultHandlerContext(this, invoker, name, handler));
         return this;
     }
@@ -101,6 +106,8 @@ public final class DefaultPipeline implements Pipeline {
         callHandlerAdded(newCtx);
     }
 
+    // 追加指定handler的前面
+
     @Override
     public Pipeline addBefore(String baseName, String name, Handler handler) {
         return addBefore(null, baseName, name, handler);
@@ -108,6 +115,7 @@ public final class DefaultPipeline implements Pipeline {
 
     @Override
     public Pipeline addBefore(HandlerInvoker invoker, String baseName, String name, Handler handler) {
+        // 查找指定名字的handler 如果不存在 抛出异常
         AbstractHandlerContext ctx = getContextOrDie(baseName);
         name = filterName(name, handler);
         addBefore0(ctx, new DefaultHandlerContext(this, invoker, name, handler));
@@ -381,6 +389,9 @@ public final class DefaultPipeline implements Pipeline {
         }
     }
 
+    // 上面基本都是一些链表操作
+
+    // 传播inbound事件
     @Override
     public Pipeline fireInbound(InboundMessageEvent<?> event) {
         head.fireInbound(event);
@@ -399,6 +410,7 @@ public final class DefaultPipeline implements Pipeline {
         return this;
     }
 
+    // 这里应该是 netty 没有的
     @Override
     public <R, M> PipelineFuture<R> invoke(InboundMessageEvent<M> event) {
         return invoke(event, -1);
@@ -505,6 +517,11 @@ public final class DefaultPipeline implements Pipeline {
         }
     }
 
+    /**
+     * 为每个handler对象生成专有名字
+     * @param handler
+     * @return
+     */
     private String generateName(Handler handler) {
         Map<Class<?>, String> cache = nameCaches.get();
         Class<?> handlerType = handler.getClass();
@@ -517,7 +534,9 @@ public final class DefaultPipeline implements Pipeline {
         synchronized (this) {
             // It's not very likely for a user to put more than one handler of the same type, but make sure to avoid
             // any name conflicts.  Note that we don't cache the names generated here.
+            // 代表某个 handler 重复了
             if (context0(name) != null) {
+                // 修改成一个新名字
                 String baseName = name.substring(0, name.length() - 1); // Strip the trailing '0'.
                 for (int i = 1;; i ++) {
                     String newName = baseName + i;
@@ -574,6 +593,9 @@ public final class DefaultPipeline implements Pipeline {
     }
 
     // A special catch-all handler that handles both messages.
+    /**
+     * 用于处理 inbound 未设置逻辑的默认情况
+     */
     static final class TailContext extends AbstractHandlerContext implements InboundHandler {
 
         private static final String TAIL_NAME = generateName0(TailContext.class);

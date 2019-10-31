@@ -27,7 +27,7 @@ import org.slf4j.LoggerFactory;
 import com.alipay.sofa.jraft.rhea.util.Maps;
 
 /**
- *
+ * 该对象 加强了 CompletableFuture 代表可以给一个异步结果提前设置各种加工逻辑
  * @author jiachun.fjc
  */
 public class DefaultPipelineFuture<V> extends CompletableFuture<V> implements PipelineFuture<V> {
@@ -38,6 +38,9 @@ public class DefaultPipelineFuture<V> extends CompletableFuture<V> implements Pi
     private static final long                                          DEFAULT_TIMEOUT_NANOSECONDS = TimeUnit.SECONDS
                                                                                                        .toNanos(30);
 
+    /**
+     * key: ???  value: future
+     */
     private static final ConcurrentMap<Long, DefaultPipelineFuture<?>> futures                     = Maps
                                                                                                        .newConcurrentMapLong();
 

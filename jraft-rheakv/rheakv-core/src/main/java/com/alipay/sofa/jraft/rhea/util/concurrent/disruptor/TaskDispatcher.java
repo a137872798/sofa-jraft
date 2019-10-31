@@ -68,21 +68,35 @@ import com.lmax.disruptor.dsl.ProducerType;
  * environment. This wait strategy should only be used if the number of Event Handler threads is smaller than the number
  * of physical cores on the box. E.g. hyper-threading should be disabled
  *
- *
+ * 任务分发器
  * @author jiachun.fjc
  */
 public class TaskDispatcher implements Dispatcher<Runnable> {
 
+    /**
+     * 生产者
+     */
     private static final EventFactory<MessageEvent<Runnable>> eventFactory = MessageEvent::new;
 
+    /**
+     * 高性能并发队列
+     */
     private final Disruptor<MessageEvent<Runnable>> disruptor;
 
+    /**
+     * 初始化任务分发器
+     * @param bufSize
+     * @param numWorkers
+     * @param waitStrategyType
+     * @param threadFactory
+     */
     public TaskDispatcher(int bufSize, int numWorkers, WaitStrategyType waitStrategyType, ThreadFactory threadFactory) {
         Requires.requireTrue(bufSize > 0, "bufSize must be larger than 0");
         if (!Ints.isPowerOfTwo(bufSize)) {
             bufSize = Ints.roundToPowerOfTwo(bufSize);
         }
         WaitStrategy waitStrategy;
+        // 这里对应消费者无数据消费时采用的阻塞策略
         switch (waitStrategyType) {
             case BLOCKING_WAIT:
                 waitStrategy = new BlockingWaitStrategy();
@@ -111,29 +125,41 @@ public class TaskDispatcher implements Dispatcher<Runnable> {
             default:
                 throw new UnsupportedOperationException(waitStrategyType.toString());
         }
+        // 代表以多生产者方式初始化 并发队列
         this.disruptor = new Disruptor<>(eventFactory, bufSize, threadFactory, ProducerType.MULTI, waitStrategy);
         this.disruptor.setDefaultExceptionHandler(new LoggingExceptionHandler());
         if (numWorkers == 1) {
+            // 使用单个任务处理器  实际上就是调用message.run()
             this.disruptor.handleEventsWith(new TaskHandler());
         } else {
+            // 生成多个消费者
             final TaskHandler[] handlers = new TaskHandler[numWorkers];
             for (int i = 0; i < numWorkers; i++) {
                 handlers[i] = new TaskHandler();
             }
+            // 以一个工作者池分摊任务  这里多个消费者 CAS 修改偏移量 成功的那个就按照那个偏移量消费任务
             this.disruptor.handleEventsWithWorkerPool(handlers);
         }
         this.disruptor.start();
     }
 
+    /**
+     * 处理任务的逻辑
+     * @param message
+     * @return
+     */
     @Override
     public boolean dispatch(final Runnable message) {
         final RingBuffer<MessageEvent<Runnable>> ringBuffer = disruptor.getRingBuffer();
         try {
+            // 获取生产者的偏移量
             final long sequence = ringBuffer.tryNext();
             try {
                 final MessageEvent<Runnable> event = ringBuffer.get(sequence);
+                // 设置事件
                 event.setMessage(message);
             } finally {
+                // 发布事件唤醒消费者
                 ringBuffer.publish(sequence);
             }
             return true;
@@ -144,6 +170,10 @@ public class TaskDispatcher implements Dispatcher<Runnable> {
         }
     }
 
+    /**
+     * 执行某条消息 优先发布到 disruptor 失败的情况下 直接处理message
+     * @param message
+     */
     @Override
     public void execute(final Runnable message) {
         if (!dispatch(message)) {

@@ -45,7 +45,7 @@ public class Store implements Copiable<Store>, Serializable {
      */
     private StoreState        state;                                  // store's state
     /**
-     * 内部包含的一组region
+     * 内部包含的一组region   可能代表着 该store 记录了多少个region 的信息吧
      */
     private List<Region>      regions;                                // list of included regions
     /**

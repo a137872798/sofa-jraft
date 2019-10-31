@@ -49,7 +49,7 @@ import com.alipay.sofa.jraft.util.BytesUtil;
 import com.alipay.sofa.jraft.util.Endpoint;
 
 /**
- *
+ * 默认元数据存储对象
  * @author jiachun.fjc
  */
 public class DefaultMetadataStore implements MetadataStore {
@@ -59,67 +59,103 @@ public class DefaultMetadataStore implements MetadataStore {
 
     private final ConcurrentMap<String, LongSequence> storeSequenceMap     = Maps.newConcurrentMap();
     private final ConcurrentMap<String, LongSequence> regionSequenceMap    = Maps.newConcurrentMap();
+    /**
+     * key clusterId  value  storeIdSet
+     */
     private final ConcurrentMap<Long, Set<Long>>      clusterStoreIdsCache = Maps.newConcurrentMapLong();
     private final Serializer                          serializer           = Serializers.getDefault();
+    /**
+     * 内部包含一个 store 对象 该对象用于协调内部的多个组件
+     */
     private final RheaKVStore                         rheaKVStore;
 
     public DefaultMetadataStore(RheaKVStore rheaKVStore) {
         this.rheaKVStore = rheaKVStore;
     }
 
+    /**
+     * 通过 集群id 查询集群对象
+     * @param clusterId
+     * @return
+     */
     @Override
     public Cluster getClusterInfo(final long clusterId) {
+        // 从 映射容器中找到一组对应的storeId
         final Set<Long> storeIds = getClusterIndex(clusterId);
         if (storeIds == null) {
             return null;
         }
         final List<byte[]> storeKeys = Lists.newArrayList();
         for (final Long storeId : storeIds) {
+            // 集群id 和storeId 组成了 storeKey
             final String storeInfoKey = MetadataKeyHelper.getStoreInfoKey(clusterId, storeId);
             storeKeys.add(BytesUtil.writeUtf8(storeInfoKey));
         }
+        // 通过kvstore 对象 将对应的数据拉取出来  最终就是委托到 RocksDB 对象 该对象本身就具备批量拉取数据的能力
         final Map<ByteArray, byte[]> storeInfoBytes = this.rheaKVStore.bMultiGet(storeKeys);
         final List<Store> stores = Lists.newArrayListWithCapacity(storeInfoBytes.size());
         for (final byte[] storeBytes : storeInfoBytes.values()) {
+            // 将数据反序列化成store  ByteArray 就是 将key[] 包装后的对象  同时在RocksDB 中 key value 都是byte[]
             final Store store = this.serializer.readObject(storeBytes, Store.class);
             stores.add(store);
         }
         return new Cluster(clusterId, stores);
     }
 
+    /**
+     * 根据 集群id 和 地址构建 key 并去db 对象中找到storeId  (key 对应的值就是 storeId)
+     * @param clusterId
+     * @param endpoint
+     * @return
+     */
     @Override
     public Long getOrCreateStoreId(final long clusterId, final Endpoint endpoint) {
+        // 生成格式化数据
         final String storeIdKey = MetadataKeyHelper.getStoreIdKey(clusterId, endpoint);
+        // 获取对应的value
         final byte[] bytesVal = this.rheaKVStore.bGet(storeIdKey);
+        // 代表需要创建一个store 对象
         if (bytesVal == null) {
             final String storeSeqKey = MetadataKeyHelper.getStoreSeqKey(clusterId);
+            // 记录当前store 对应的序列值
             LongSequence storeSequence = this.storeSequenceMap.get(storeSeqKey);
             if (storeSequence == null) {
                 final LongSequence newStoreSequence = new LongSequence() {
 
                     @Override
                     public Sequence getNextSequence() {
+                        // 这里将 key 原来对应的位置向后推移了 32位 并将 原来的值 和延后 的值包装成一个Sequence 并返回
                         return rheaKVStore.bGetSequence(storeSeqKey, 32);
                     }
                 };
+                // 将当前序列设置进去
                 storeSequence = this.storeSequenceMap.putIfAbsent(storeSeqKey, newStoreSequence);
                 if (storeSequence == null) {
                     storeSequence = newStoreSequence;
                 }
             }
+            // 首次调用 会通过 getNextSequence 获取序列值
             final long newStoreId = storeSequence.next();
             final byte[] newBytesVal = new byte[8];
             Bits.putLong(newBytesVal, 0, newStoreId);
+            // 将数据保存到 db 中
             final byte[] oldBytesVal = this.rheaKVStore.bPutIfAbsent(storeIdKey, newBytesVal);
             if (oldBytesVal != null) {
                 return Bits.getLong(oldBytesVal, 0);
             } else {
+                // 该值代表新的storeId 对象
                 return newStoreId;
             }
         }
         return Bits.getLong(bytesVal, 0);
     }
 
+    /**
+     * 获取 store 信息   clusterId 和 storeId 去 DB 上获取 就是 store了 如果是 clusterId 和 endpoint 就是获取到 storeId
+     * @param clusterId
+     * @param storeId
+     * @return
+     */
     @Override
     public Store getStoreInfo(final long clusterId, final long storeId) {
         final String storeInfoKey = MetadataKeyHelper.getStoreInfoKey(clusterId, storeId);
@@ -138,17 +174,26 @@ public class DefaultMetadataStore implements MetadataStore {
         return getStoreInfo(clusterId, storeId);
     }
 
+    /**
+     * 更新 store 信息
+     * @param clusterId
+     * @param store
+     * @return
+     */
     @Override
     public CompletableFuture<Store> updateStoreInfo(final long clusterId, final Store store) {
         final long storeId = store.getId();
         final String storeInfoKey = MetadataKeyHelper.getStoreInfoKey(clusterId, storeId);
         final byte[] bytes = this.serializer.writeObject(store);
         final CompletableFuture<Store> future = new CompletableFuture<>();
+        // 将数据写入到 db 后 触发
         this.rheaKVStore.getAndPut(storeInfoKey, bytes).whenComplete((prevBytes, getPutThrowable) -> {
             if (getPutThrowable == null) {
                 if (prevBytes != null) {
+                    // 正常插入 如果之前已经存在过某个 store 将该对象存入到future 中
                     future.complete(serializer.readObject(prevBytes, Store.class));
                 } else {
+                    // 代表该store 是新插入的 那么将 storeId 追加到 clusterId 对应的数据内
                     mergeClusterIndex(clusterId, storeId).whenComplete((ignored, mergeThrowable) -> {
                         if (mergeThrowable == null) {
                             future.complete(null);
@@ -164,13 +209,17 @@ public class DefaultMetadataStore implements MetadataStore {
         return future;
     }
 
+
     @Override
     public Long createRegionId(final long clusterId) {
+        // 生成查询 region 的key
         final String regionSeqKey = MetadataKeyHelper.getRegionSeqKey(clusterId);
+        // 获取 region 序列
         LongSequence regionSequence = this.regionSequenceMap.get(regionSeqKey);
         if (regionSequence == null) {
             final LongSequence newRegionSequence = new LongSequence(Region.MAX_ID_WITH_MANUAL_CONF) {
 
+                // 通过key 获取到 偏移量 并 继续推进32 返回 起始值 和终点 作为 sequence
                 @Override
                 public Sequence getNextSequence() {
                     return rheaKVStore.bGetSequence(regionSeqKey, 32);
@@ -232,6 +281,11 @@ public class DefaultMetadataStore implements MetadataStore {
         return this.rheaKVStore.put(entries);
     }
 
+    /**
+     * 通过集群id 查询 storeIds
+     * @param clusterId
+     * @return
+     */
     @Override
     public Set<Long> unsafeGetStoreIds(final long clusterId) {
         Set<Long> storeIds = this.clusterStoreIdsCache.get(clusterId);
@@ -243,6 +297,12 @@ public class DefaultMetadataStore implements MetadataStore {
         return storeIds;
     }
 
+    /**
+     * 通过端点 查询 storeId
+     * @param clusterId
+     * @param endpoints
+     * @return
+     */
     @Override
     public Map<Long, Endpoint> unsafeGetStoreIdsByEndpoints(final long clusterId, final List<Endpoint> endpoints) {
         if (endpoints == null || endpoints.isEmpty()) {
@@ -270,8 +330,14 @@ public class DefaultMetadataStore implements MetadataStore {
         this.clusterStoreIdsCache.clear();
     }
 
+    /**
+     * 通过集群 id 查询storeId
+     * @param clusterId
+     * @return
+     */
     private Set<Long> getClusterIndex(final long clusterId) {
         final String key = MetadataKeyHelper.getClusterInfoKey(clusterId);
+        // 看来 cluster 对应的 value是多个 storeId 以 "," 拼接的字符串
         final byte[] indexBytes = this.rheaKVStore.bGet(key);
         if (indexBytes == null) {
             return null;
@@ -289,12 +355,16 @@ public class DefaultMetadataStore implements MetadataStore {
     }
 
     private CompletableFuture<Boolean> mergeClusterIndex(final long clusterId, final long storeId) {
+        // 生成获取 cluster 信息的 key
         final String key = MetadataKeyHelper.getClusterInfoKey(clusterId);
+        // 应该是将 storeId 加入到该cluster 中
         final CompletableFuture<Boolean> future = this.rheaKVStore.merge(key, String.valueOf(storeId));
         future.whenComplete((ignored, throwable) -> {
             if (throwable != null) {
                 LOG.error("Fail to merge cluster index, {}, {}.", key, StackTraceUtil.stackTrace(throwable));
             }
+            // 因为插入了新数据 缓存已经失效了 但是换句话说 这里还是有一定的延时的可能会读到旧数据
+            // 如果反过来先删除缓存 那么 可能在merge前 又读了 旧数据 那么之后也不会再删除旧缓存了
             clusterStoreIdsCache.clear();
         });
         return future;

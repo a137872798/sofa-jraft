@@ -24,14 +24,20 @@ import com.alipay.sofa.jraft.rhea.util.Lists;
 import com.alipay.sofa.jraft.util.Copiable;
 
 /**
- *
+ * 描述集群信息
  * @author jiachun.fjc
  */
 public class Cluster implements Copiable<Cluster>, Serializable {
 
     private static final long serialVersionUID = 3291666486933960310L;
 
+    /**
+     * 集群唯一标识
+     */
     private long              clusterId;
+    /**
+     * 一组存储对象
+     */
     private List<Store>       stores;
 
     public Cluster(long clusterId, List<Store> stores) {

@@ -64,6 +64,8 @@ public class NamedThreadFactory implements ThreadFactory {
         Requires.requireNonNull(r, "runnable");
 
         final String name2 = this.name + this.id.getAndIncrement();
+
+        // 这2个 wrap 方法 实际都没做什么操作
         final Runnable r2 = wrapRunnable(r);
         final Thread t = wrapThread(this.group, r2, name2);
 

@@ -23,14 +23,16 @@ import com.alipay.sofa.jraft.rhea.util.pipeline.event.OutboundMessageEvent;
 /**
  * Most of the code references the pipeline design of
  * <a href="https://github.com/netty/netty">Netty</a>.
- *
+ * 在责任链上的每一环上下文信息
  * @author jiachun.fjc
  */
 abstract class AbstractHandlerContext implements HandlerContext {
 
+    // 上游和下游
     volatile AbstractHandlerContext next;
     volatile AbstractHandlerContext prev;
 
+    // 代表该context 绑定的handler 是in 或者 out
     private final boolean           inbound;
     private final boolean           outbound;
     private final DefaultPipeline   pipeline;
@@ -91,6 +93,7 @@ abstract class AbstractHandlerContext implements HandlerContext {
 
     @Override
     public HandlerContext fireOutbound(final OutboundMessageEvent<?> event) {
+        // 在整个链中找到下个 outbound
         final AbstractHandlerContext next = findContextOutbound();
         next.invoker().invokeOutbound(next, event);
         return this;
