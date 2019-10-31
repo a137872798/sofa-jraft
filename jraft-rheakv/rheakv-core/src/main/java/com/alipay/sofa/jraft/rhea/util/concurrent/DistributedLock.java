@@ -119,7 +119,7 @@ public abstract class DistributedLock<T> {
      * @param unit    the time unit of the {@code time} argument
      * @return {@code true} if the lock was acquired and {@code false}
      * if the waiting time elapsed before the lock was acquired
-     * 以 ctx 作为 锁的key 尝试加锁 timeout 代表最大等待锁时间
+     * ctx 作为上下文信息是由用户传入的 使用byte[] 是为了符合RocksDB 的要求  实际上使用的key 是 internalKey
      */
     public boolean tryLock(final byte[] ctx, final long timeout, final TimeUnit unit) {
         final long timeoutNs = unit.toNanos(timeout);
@@ -166,6 +166,7 @@ public abstract class DistributedLock<T> {
      *
      * Is simply a number that increases (e.g. incremented by the lock
      * service) every time a client acquires the lock.
+     * 每当某个client 获取锁该值就会+1
      */
     public long getFencingToken() {
         return this.acquirer.getFencingToken();
@@ -173,6 +174,7 @@ public abstract class DistributedLock<T> {
 
     /**
      * Returns the 'lock-context' of current lock owner.
+     * 获取当前锁持有者的上下文信息
      */
     public byte[] getOwnerContext() {
         return getOwner().getContext();

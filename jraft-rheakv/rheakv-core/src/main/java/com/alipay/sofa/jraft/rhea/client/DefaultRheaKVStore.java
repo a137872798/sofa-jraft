@@ -180,7 +180,7 @@ import com.lmax.disruptor.dsl.Disruptor;
  *      This is very simple, re-acquire the latest leader of the raft-group to which the current key belongs,
  *      and then call again.
  * </pre>
- * 基于 KV 存储的默认实现
+ * 基于 KV 存储的默认实现   看来store 对应所有region 的整体 要查询的数据可能会落在多个region中 会将查询转换成对多个region的查询
  * @author jiachun.fjc
  */
 public class DefaultRheaKVStore implements RheaKVStore {
@@ -195,16 +195,31 @@ public class DefaultRheaKVStore implements RheaKVStore {
      * 存储引擎
      */
     private StoreEngine           storeEngine;
+    /**
+     * 管理region 的客户端
+     */
     private PlacementDriverClient pdClient;
+    /**
+     * 发起rpc 请求的服务
+     */
     private RheaKVRpcService      rheaKVRpcService;
     private RheaKVStoreOptions    opts;
     private int                   failoverRetries;
     private long                  futureTimeoutMillis;
     private boolean               onlyLeaderRead;
+    /**
+     * 请求分发器 线程模型是模仿 netty 的
+     */
     private Dispatcher            kvDispatcher;
     private BatchingOptions       batchingOpts;
+    /**
+     * 批量获取
+     */
     private GetBatching           getBatching;
     private GetBatching           getBatchingOnlySafe;
+    /**
+     * 批量添加
+     */
     private PutBatching           putBatching;
 
     private volatile boolean      started;
@@ -216,7 +231,7 @@ public class DefaultRheaKVStore implements RheaKVStore {
             return true;
         }
         this.opts = opts;
-        // init placement driver
+        // init placement driver  初始化 PD 驱动
         final PlacementDriverOptions pdOpts = opts.getPlacementDriverOptions();
         final String clusterName = opts.getClusterName();
         Requires.requireNonNull(pdOpts, "opts.placementDriverOptions");
@@ -225,11 +240,13 @@ public class DefaultRheaKVStore implements RheaKVStore {
             // if blank, extends parent's value
             pdOpts.setInitialServerList(opts.getInitialServerList());
         }
+        // 生成 本地 or remote PD驱动客户端
         if (pdOpts.isFake()) {
             this.pdClient = new FakePlacementDriverClient(opts.getClusterId(), clusterName);
         } else {
             this.pdClient = new RemotePlacementDriverClient(opts.getClusterId(), clusterName);
         }
+        // 将集群中所有 region 和store 信息拉取下来保存在本地
         if (!this.pdClient.init(pdOpts)) {
             LOG.error("Fail to init [PlacementDriverClient].");
             return false;
@@ -238,6 +255,7 @@ public class DefaultRheaKVStore implements RheaKVStore {
         final StoreEngineOptions stOpts = opts.getStoreEngineOptions();
         if (stOpts != null) {
             stOpts.setInitialServerList(opts.getInitialServerList());
+            // 初始化存储引擎
             this.storeEngine = new StoreEngine(this.pdClient);
             if (!this.storeEngine.init(stOpts)) {
                 LOG.error("Fail to init [StoreEngine].");
@@ -1363,6 +1381,12 @@ public class DefaultRheaKVStore implements RheaKVStore {
         }
     }
 
+    /**
+     * 通过 key 和 acq 对象释放锁
+     * @param key
+     * @param acquirer
+     * @return
+     */
     public CompletableFuture<DistributedLock.Owner> releaseLockWith(final byte[] key,
                                                                     final DistributedLock.Acquirer acquirer) {
         checkState();
@@ -1499,6 +1523,9 @@ public class DefaultRheaKVStore implements RheaKVStore {
         return region.getRegionEpoch().equals(engine.getRegion().getRegionEpoch());
     }
 
+    /**
+     * 批量获取数据
+     */
     private class GetBatching extends Batching<KeyEvent, byte[], byte[]> {
 
         public GetBatching(EventFactory<KeyEvent> factory, String name, EventHandler<KeyEvent> handler) {
@@ -1531,8 +1558,14 @@ public class DefaultRheaKVStore implements RheaKVStore {
         }
     }
 
+    /**
+     * 批量拉取数据 处理器
+     */
     private class GetBatchingHandler extends AbstractBatchingHandler<KeyEvent> {
 
+        /**
+         * 判断是否要在获取了 readIndex 后才允许读取
+         */
         private final boolean readOnlySafe;
 
         private GetBatchingHandler(String metricsName, boolean readOnlySafe) {
@@ -1540,12 +1573,22 @@ public class DefaultRheaKVStore implements RheaKVStore {
             this.readOnlySafe = readOnlySafe;
         }
 
+        /**
+         * 处理批量拉取事件
+         * @param event
+         * @param sequence
+         * @param endOfBatch  推测 如果该值为false 就先存储事件 当执行到默认时批量执行 这个套路可以理解为Disruptor 的最佳实践吧
+         * @throws Exception
+         */
         @SuppressWarnings("unchecked")
         @Override
         public void onEvent(final KeyEvent event, final long sequence, final boolean endOfBatch) throws Exception {
+            // 在接受到事件后存储到对列中
             this.events.add(event);
+            // 增加当前缓存的长度
             this.cachedBytes += event.key.length;
             final int size = this.events.size();
+            // 没有达到最大缓存上限 且endOfBatch 为false 时 代表此时生产者 囤积了很多任务 这里可以批量执行
             if (!endOfBatch && size < batchingOpts.getBatchSize() && this.cachedBytes < batchingOpts.getMaxReadBytes()) {
                 return;
             }
@@ -1553,6 +1596,7 @@ public class DefaultRheaKVStore implements RheaKVStore {
             if (size == 1) {
                 reset();
                 try {
+                    // 执行单个任务并将结果设置到 future 中
                     get(event.key, this.readOnlySafe, event.future, false);
                 } catch (final Throwable t) {
                     exceptionally(t, event.future);
@@ -1567,6 +1611,7 @@ public class DefaultRheaKVStore implements RheaKVStore {
                 }
                 reset();
                 try {
+                    // 批量获取 同时在完成任务时 将结果设置到future 中
                     multiGet(keys, this.readOnlySafe).whenComplete((result, throwable) -> {
                         if (throwable == null) {
                             for (int i = 0; i < futures.length; i++) {
@@ -1584,6 +1629,9 @@ public class DefaultRheaKVStore implements RheaKVStore {
         }
     }
 
+    /**
+     * 批量拉取数据的任务
+     */
     private class PutBatchingHandler extends AbstractBatchingHandler<KVEvent> {
 
         public PutBatchingHandler(String metricsName) {
@@ -1634,11 +1682,18 @@ public class DefaultRheaKVStore implements RheaKVStore {
         }
     }
 
+    /**
+     * 批量任务 处理器骨架类  包含批量拉取 和 设置
+     * @param <T>
+     */
     private abstract class AbstractBatchingHandler<T> implements EventHandler<T> {
 
         protected final Histogram histogramWithKeys;
         protected final Histogram histogramWithBytes;
 
+        /**
+         * 初始化 与 最多执行批量任务数等大的列表
+         */
         protected final List<T>   events      = Lists.newArrayListWithCapacity(batchingOpts.getBatchSize());
         protected int             cachedBytes = 0;
 
@@ -1647,6 +1702,11 @@ public class DefaultRheaKVStore implements RheaKVStore {
             this.histogramWithBytes = KVMetrics.histogram(KVMetricNames.SEND_BATCHING, metricsName + "_bytes");
         }
 
+        /**
+         * 使用指定的异常触发所有 future
+         * @param t
+         * @param futures
+         */
         public void exceptionally(final Throwable t, final CompletableFuture<?>... futures) {
             for (int i = 0; i < futures.length; i++) {
                 futures[i].completeExceptionally(t);
@@ -1662,6 +1722,9 @@ public class DefaultRheaKVStore implements RheaKVStore {
         }
     }
 
+    /**
+     * 用key 来标识一个 future 对象
+     */
     private static class KeyEvent {
 
         private byte[]                    key;
@@ -1684,10 +1747,24 @@ public class DefaultRheaKVStore implements RheaKVStore {
         }
     }
 
+    /**
+     * @param <T>
+     * @param <E>
+     * @param <F>
+     */
     private static abstract class Batching<T, E, F> {
 
+        /**
+         * 标识该批量任务
+         */
         protected final String        name;
+        /**
+         * 并发队列
+         */
         protected final Disruptor<T>  disruptor;
+        /**
+         * 环形缓冲区
+         */
         protected final RingBuffer<T> ringBuffer;
 
         @SuppressWarnings("unchecked")
@@ -1695,10 +1772,17 @@ public class DefaultRheaKVStore implements RheaKVStore {
             this.name = name;
             this.disruptor = new Disruptor<>(factory, bufSize, new NamedThreadFactory(name, true));
             this.disruptor.handleEventsWith(handler);
+            // 该异常处理器 在发现异常时打印日志
             this.disruptor.setDefaultExceptionHandler(new LogExceptionHandler<Object>(name));
             this.ringBuffer = this.disruptor.start();
         }
 
+        /**
+         * 将message 以及对应的 future 发布到ringBuffer 中
+         * @param message
+         * @param future
+         * @return
+         */
         public abstract boolean apply(final E message, final CompletableFuture<F> future);
 
         public void shutdown() {

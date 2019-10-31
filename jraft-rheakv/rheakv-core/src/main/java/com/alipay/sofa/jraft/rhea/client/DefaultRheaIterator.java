@@ -26,20 +26,35 @@ import com.alipay.sofa.jraft.rhea.storage.KVEntry;
 import com.alipay.sofa.jraft.util.BytesUtil;
 
 /**
- *
+ * Rhea 迭代器
  * @author jiachun.fjc
  */
 public class DefaultRheaIterator implements RheaIterator<KVEntry> {
 
+    /**
+     * kv 存储仓库
+     */
     private final DefaultRheaKVStore    rheaKVStore;
+    /**
+     * 内部包含region 信息
+     */
     private final PlacementDriverClient pdClient;
     private final byte[]                startKey;
     private final byte[]                endKey;
+    /**
+     * 设置该标识 会需要先调用readIndex  成功后才允许获取数据
+     */
     private final boolean               readOnlySafe;
     private final boolean               returnValue;
     private final int                   bufSize;
+    /**
+     * 迭代器中存在的数据
+     */
     private final Queue<KVEntry>        buf;
 
+    /**
+     * 当前指向的key
+     */
     private byte[]                      cursorKey;
 
     public DefaultRheaIterator(DefaultRheaKVStore rheaKVStore, byte[] startKey, byte[] endKey, int bufSize,
@@ -55,19 +70,26 @@ public class DefaultRheaIterator implements RheaIterator<KVEntry> {
         this.cursorKey = this.startKey;
     }
 
+    /**
+     * 判断是否有下个元素
+     * @return
+     */
     @Override
     public synchronized boolean hasNext() {
         if (this.buf.isEmpty()) {
             while (this.endKey == null || BytesUtil.compare(this.cursorKey, this.endKey) < 0) {
+                // 扫描单个 region 并返回一组KVEntry
                 final List<KVEntry> kvEntries = this.rheaKVStore.singleRegionScan(this.cursorKey, this.endKey,
                     this.bufSize, this.readOnlySafe, this.returnValue);
                 if (kvEntries.isEmpty()) {
-                    // cursorKey jump to next region's startKey
+                    // cursorKey jump to next region's startKey   如果找不到数据就去下个 region 查找
                     this.cursorKey = this.pdClient.findStartKeyOfNextRegion(this.cursorKey, false);
+                    // 代表之后没有数据了
                     if (cursorKey == null) { // current is the last region
                         break;
                     }
                 } else {
+                    // 将拉取的数据全部存入 buf
                     final KVEntry last = kvEntries.get(kvEntries.size() - 1);
                     this.cursorKey = BytesUtil.nextBytes(last.getKey()); // cursorKey++
                     this.buf.addAll(kvEntries);
@@ -79,6 +101,10 @@ public class DefaultRheaIterator implements RheaIterator<KVEntry> {
         return true;
     }
 
+    /**
+     * 从buf 中拉取下个元素
+     * @return
+     */
     @Override
     public synchronized KVEntry next() {
         if (this.buf.isEmpty()) {

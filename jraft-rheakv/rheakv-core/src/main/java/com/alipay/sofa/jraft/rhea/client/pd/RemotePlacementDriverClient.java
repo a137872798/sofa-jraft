@@ -66,7 +66,7 @@ public class RemotePlacementDriverClient extends AbstractPlacementDriverClient {
             LOG.info("[RemotePlacementDriverClient] already started.");
             return true;
         }
-        // 父类初始化会 填充路由表
+        // 父类初始化会 填充路由表  PD 中就是维护了 每个region 以及他们的边界 (startKey endKey)
         super.init(opts);
         this.pdGroupId = opts.getPdGroupId();
         if (Strings.isBlank(this.pdGroupId)) {

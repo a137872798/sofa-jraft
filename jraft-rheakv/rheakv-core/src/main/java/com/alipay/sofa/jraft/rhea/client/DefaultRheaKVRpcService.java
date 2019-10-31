@@ -45,7 +45,7 @@ import com.alipay.sofa.jraft.util.Requires;
 import com.alipay.sofa.jraft.util.ThreadPoolUtil;
 
 /**
- *
+ * 通过远程调用传输命令
  * @author jiachun.fjc
  */
 public class DefaultRheaKVRpcService implements RheaKVRpcService {
@@ -54,8 +54,14 @@ public class DefaultRheaKVRpcService implements RheaKVRpcService {
 
     private final PlacementDriverClient pdClient;
     private final RpcClient             rpcClient;
+    /**
+     * 代表本节点的端点信息
+     */
     private final Endpoint              selfEndpoint;
 
+    /**
+     * 回调通过线程池执行
+     */
     private ThreadPoolExecutor          rpcCallbackExecutor;
     private int                         rpcTimeoutMillis;
 
@@ -96,7 +102,9 @@ public class DefaultRheaKVRpcService implements RheaKVRpcService {
     @Override
     public <V> CompletableFuture<V> callAsyncWithRpc(final BaseRequest request, final FailoverClosure<V> closure,
                                                      final Errors lastCause, final boolean requireLeader) {
+        // 判断返回的异常是否是 invalid 相关的
         final boolean forceRefresh = ErrorsHelper.isInvalidPeer(lastCause);
+        // 可以考虑从 leader 或者众多 peer中的某个
         final Endpoint endpoint = getRpcEndpoint(request.getRegionId(), forceRefresh, this.rpcTimeoutMillis,
             requireLeader);
         internalCallAsyncWithRpc(endpoint, request, closure);
@@ -111,6 +119,14 @@ public class DefaultRheaKVRpcService implements RheaKVRpcService {
         return this.pdClient.getLuckyPeer(regionId, forceRefresh, timeoutMillis, this.selfEndpoint);
     }
 
+    /**
+     * 获取某个端点的地址  都是委托给 pdClient
+     * @param regionId
+     * @param forceRefresh
+     * @param timeoutMillis
+     * @param requireLeader
+     * @return
+     */
     public Endpoint getRpcEndpoint(final long regionId, final boolean forceRefresh, final long timeoutMillis,
                                    final boolean requireLeader) {
         if (requireLeader) {
@@ -120,9 +136,17 @@ public class DefaultRheaKVRpcService implements RheaKVRpcService {
         }
     }
 
+    /**
+     * 通过rpc 异步调用
+     * @param endpoint
+     * @param request
+     * @param closure
+     * @param <V>
+     */
     private <V> void internalCallAsyncWithRpc(final Endpoint endpoint, final BaseRequest request,
                                               final FailoverClosure<V> closure) {
         final String address = endpoint.toString();
+        // 默认标识 protobuf 为序列化方式 以及 关闭crc
         final InvokeContext invokeCtx = ExtSerializerSupports.getInvokeContext();
         final InvokeCallback invokeCallback = new InvokeCallback() {
 
@@ -143,6 +167,10 @@ public class DefaultRheaKVRpcService implements RheaKVRpcService {
                 closure.failure(t);
             }
 
+            /**
+             * 回调会通过 该线程池执行
+             * @return
+             */
             @Override
             public Executor getExecutor() {
                 return rpcCallbackExecutor;

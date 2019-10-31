@@ -116,6 +116,7 @@ public abstract class AbstractPlacementDriverClient implements PlacementDriverCl
         // 解析路由表中的数据并填充
         final List<RegionRouteTableOptions> regionRouteTableOptionsList = opts.getRegionRouteTableOptionsList();
         if (regionRouteTableOptionsList != null) {
+            // 这里将 serverList 填充到每个 regionRouteTable 为空的 opts 中
             final String initialServerList = opts.getInitialServerList();
             for (final RegionRouteTableOptions regionRouteTableOpts : regionRouteTableOptionsList) {
                 if (Strings.isBlank(regionRouteTableOpts.getInitialServerList())) {
@@ -344,7 +345,7 @@ public abstract class AbstractPlacementDriverClient implements PlacementDriverCl
      * @param regionId
      * @param forceRefresh
      * @param timeoutMillis
-     * @param unExpect  代表不需要出现的leader 应该就是本次失效的节点吧
+     * @param unExpect  代表本节点不在考虑范围内
      * @return
      */
     @Override
@@ -359,6 +360,7 @@ public abstract class AbstractPlacementDriverClient implements PlacementDriverCl
             // or in the 'leader-transfer' state, it needs to be re-tried
             for (;;) {
                 try {
+                    // 通过访问 leader 节点拉取peerList
                     final Status st = routeTable.refreshConfiguration(this.cliClientService, raftGroupId, 5000);
                     if (st.isOk()) {
                         break;

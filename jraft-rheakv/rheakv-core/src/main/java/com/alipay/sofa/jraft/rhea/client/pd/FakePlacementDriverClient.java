@@ -71,7 +71,7 @@ public class FakePlacementDriverClient extends AbstractPlacementDriverClient {
 
     @Override
     public Store getStoreMetadata(final StoreEngineOptions opts) {
-        // store 内部包含 一组region  而每个 region 又对应到多个同属一个group的 peer
+        // store 内部包含 一组region
         final Store store = new Store();
         final List<RegionEngineOptions> rOptsList = opts.getRegionEngineOptionsList();
         final List<Region> regionList = Lists.newArrayListWithCapacity(rOptsList.size());

@@ -35,7 +35,7 @@ import com.alipay.sofa.jraft.rpc.impl.AbstractBoltClientService;
 import com.alipay.sofa.jraft.util.Requires;
 
 /**
- *
+ * RheaKV 命令行工具
  * @author jiachun.fjc
  */
 public class DefaultRheaKVCliService implements RheaKVCliService {
@@ -43,6 +43,9 @@ public class DefaultRheaKVCliService implements RheaKVCliService {
     private static final Logger LOG = LoggerFactory.getLogger(DefaultRheaKVCliService.class);
 
     private RpcClient           rpcClient;
+    /**
+     * 实际操作委托给该类  该对象内部包含一个 client  通过与server连接 并发出对应的请求来修改集群信息
+     */
     private CliService          cliService;
     private CliOptions          opts;
 
@@ -54,6 +57,7 @@ public class DefaultRheaKVCliService implements RheaKVCliService {
             LOG.info("[DefaultRheaKVRpcService] already started.");
             return true;
         }
+        // 初始化 命令行服务
         initCli(opts);
         LOG.info("[DefaultRheaKVCliService] start successfully, options: {}.", opts);
         return this.started = true;
@@ -68,9 +72,18 @@ public class DefaultRheaKVCliService implements RheaKVCliService {
         LOG.info("[DefaultRheaKVCliService] shutdown successfully.");
     }
 
+    /**
+     * 拆分指定的region 并以newRegion来命名
+     * @param regionId    region id
+     * @param newRegionId id of the new region after splitting
+     * @param groupId     the raft group id
+     * @param conf        current configuration
+     * @return
+     */
     @Override
     public Status rangeSplit(final long regionId, final long newRegionId, final String groupId, final Configuration conf) {
         final PeerId leaderId = new PeerId();
+        // 查询leader 信息并填充到 leaderId 中
         final Status st = this.cliService.getLeader(groupId, conf, leaderId);
         if (!st.isOk()) {
             throw new IllegalStateException(st.getErrorMsg());
@@ -91,6 +104,10 @@ public class DefaultRheaKVCliService implements RheaKVCliService {
         }
     }
 
+    /**
+     * 初始化 cli 服务
+     * @param cliOpts
+     */
     private void initCli(CliOptions cliOpts) {
         if (cliOpts == null) {
             cliOpts = new CliOptions();
@@ -98,7 +115,9 @@ public class DefaultRheaKVCliService implements RheaKVCliService {
             cliOpts.setMaxRetry(3);
         }
         this.opts = cliOpts;
+        // 返回一个 cliServiceImpl 对象
         this.cliService = RaftServiceFactory.createAndInitCliService(cliOpts);
+        // 获取客户端对象
         final CliClientService cliClientService = ((CliServiceImpl) this.cliService).getCliClientService();
         Requires.requireNonNull(cliClientService, "cliClientService");
         this.rpcClient = ((AbstractBoltClientService) cliClientService).getRpcClient();
