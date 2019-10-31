@@ -43,7 +43,7 @@ import com.alipay.sofa.jraft.util.SPI;
 
 /**
  * Trying to balance the number of leaders in each store.
- *
+ * 试图平衡每个 store 的leader 数量
  * @author jiachun.fjc
  */
 @SPI(name = "regionLeaderBalance", priority = 60)
@@ -52,6 +52,12 @@ public class RegionLeaderBalanceHandler extends InboundHandlerAdapter<RegionPing
 
     private static final Logger LOG = LoggerFactory.getLogger(RegionLeaderBalanceHandler.class);
 
+    /**
+     * 每次 region 和 store 发出的命令都是在心跳请求中携带过来的
+     * @param ctx
+     * @param event
+     * @throws Exception
+     */
     @Override
     public void readMessage(final HandlerContext ctx, final RegionPingEvent event) throws Exception {
         if (event.isReady()) {

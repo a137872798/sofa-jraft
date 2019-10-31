@@ -39,6 +39,7 @@ abstract class AbstractHandlerContext implements HandlerContext {
     private final String            name;
     private boolean                 removed;
 
+    // 该context 关联的 处理器
     final HandlerInvoker            invoker;
 
     public AbstractHandlerContext(DefaultPipeline pipeline, HandlerInvoker invoker, String name, boolean inbound,

@@ -29,7 +29,7 @@ import com.alipay.sofa.jraft.rhea.util.pipeline.event.MessageEvent;
  */
 public abstract class HandlerAdapter implements Handler {
 
-    // Not using volatile because it's used only for a sanity check.
+    // Not using volatile because it's used only for a sanity check.  默认情况下一个 handler 只能调用一次add 除非设置了 @Sharable
     boolean                                               added;
 
     private static final ConcurrentMap<Class<?>, Boolean> cache = Maps.newConcurrentMap();

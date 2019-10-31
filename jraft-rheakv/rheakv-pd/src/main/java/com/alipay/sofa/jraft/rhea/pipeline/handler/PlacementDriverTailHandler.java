@@ -25,6 +25,7 @@ import com.alipay.sofa.jraft.rhea.util.pipeline.InboundHandlerAdapter;
 import com.alipay.sofa.jraft.rhea.util.pipeline.event.InboundMessageEvent;
 
 /**
+ * 责任链最后一环
  * @author jiachun.fjc
  */
 @Handler.Sharable
@@ -35,6 +36,7 @@ public class PlacementDriverTailHandler extends InboundHandlerAdapter<PingEvent<
         if (isAcceptable(event)) {
             // to outbound
             PingEvent<?> ping = (PingEvent<?>) event;
+            // 接受ping 并生成一个pong 事件往上传播
             ctx.fireOutbound(new PongEvent(ping.getInvokeId(), Lists.newArrayList(ping.getInstructions())));
         }
     }

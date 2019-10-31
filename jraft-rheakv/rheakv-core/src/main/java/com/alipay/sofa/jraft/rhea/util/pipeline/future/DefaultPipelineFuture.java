@@ -39,15 +39,25 @@ public class DefaultPipelineFuture<V> extends CompletableFuture<V> implements Pi
                                                                                                        .toNanos(30);
 
     /**
-     * key: ???  value: future
+     * key: invokeId  value: future  该对象应该是封装了 pipeline 的所有future
      */
     private static final ConcurrentMap<Long, DefaultPipelineFuture<?>> futures                     = Maps
                                                                                                        .newConcurrentMapLong();
 
+    /**
+     * 代表当前future 的invokeId
+     */
     private final long                                                 invokeId;
     private final long                                                 timeout;
     private final long                                                 startTime                   = System.nanoTime();
 
+    /**
+     * 创建一个新的future 对象
+     * @param invokeId
+     * @param timeoutMillis
+     * @param <T>
+     * @return
+     */
     public static <T> DefaultPipelineFuture<T> with(final long invokeId, final long timeoutMillis) {
         return new DefaultPipelineFuture<>(invokeId, timeoutMillis);
     }
@@ -72,6 +82,10 @@ public class DefaultPipelineFuture<V> extends CompletableFuture<V> implements Pi
         return get(timeout, TimeUnit.NANOSECONDS);
     }
 
+    /**
+     * 将 结果设置到 future中
+     * @param response
+     */
     @SuppressWarnings("unchecked")
     private void doReceived(final Object response) {
         if (response instanceof Throwable) {
@@ -81,7 +95,7 @@ public class DefaultPipelineFuture<V> extends CompletableFuture<V> implements Pi
         }
     }
 
-    // timeout scanner
+    // timeout scanner  该对象定时扫描 future中的过期任务 并设置过期异常以唤醒阻塞线程 类似于RocketMq 的 通信池
     @SuppressWarnings("all")
     private static class TimeoutScanner implements Runnable {
 

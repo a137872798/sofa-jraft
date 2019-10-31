@@ -200,6 +200,10 @@ public class PlacementDriverServer implements Lifecycle<PlacementDriverServerOpt
         return endpoint != null;
     }
 
+    /**
+     * 将PD 相关的处理器 注册到 RpcServer 中
+     * @param rpcServer
+     */
     private void addPlacementDriverProcessor(final RpcServer rpcServer) {
         rpcServer.registerUserProcessor(new PlacementDriverProcessor<>(RegionHeartbeatRequest.class,
             this.placementDriverService, this.pdExecutor));

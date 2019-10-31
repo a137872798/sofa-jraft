@@ -391,13 +391,14 @@ public final class DefaultPipeline implements Pipeline {
 
     // 上面基本都是一些链表操作
 
-    // 传播inbound事件
+    // 通过head 传播inbound事件
     @Override
     public Pipeline fireInbound(InboundMessageEvent<?> event) {
         head.fireInbound(event);
         return this;
     }
 
+    // 通过tail 传播outbound事件
     @Override
     public Pipeline fireOutbound(OutboundMessageEvent<?> event) {
         tail.fireOutbound(event);
@@ -418,6 +419,7 @@ public final class DefaultPipeline implements Pipeline {
 
     @Override
     public <R, M> PipelineFuture<R> invoke(InboundMessageEvent<M> event, long timeoutMillis) {
+        // 将消息包装成一个future 对象并触发责任链返回future对象
         PipelineFuture<R> future = DefaultPipelineFuture.with(event.getInvokeId(), timeoutMillis);
         head.fireInbound(event);
         return future;
@@ -633,6 +635,9 @@ public final class DefaultPipeline implements Pipeline {
         }
     }
 
+    /**
+     * 头节点 作为 outbound 的默认实现
+     */
     static final class HeadContext extends AbstractHandlerContext implements OutboundHandler {
 
         private static final String HEAD_NAME = generateName0(HeadContext.class);
@@ -662,6 +667,12 @@ public final class DefaultPipeline implements Pipeline {
             return this;
         }
 
+        /**
+         * 代表处理完 out后将结果设置到 pipelineFuture 中
+         * @param ctx   the context object for this handler.
+         * @param event the outbound event to process or intercept.
+         * @throws Exception
+         */
         @Override
         public void handleOutbound(HandlerContext ctx, OutboundMessageEvent<?> event) throws Exception {
             if (event != null) {

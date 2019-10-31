@@ -50,7 +50,7 @@ import com.alipay.sofa.jraft.util.Requires;
  *      only the region-leader can report the 'Region' information, and
  *      the flower cant not.
  * </pre>
- *
+ * 用户自定义的处理器  作为通信端接受请求 并分发处理
  * @author jiachun.fjc
  */
 public class PlacementDriverProcessor<T extends BaseRequest> extends AsyncUserProcessor<T> {

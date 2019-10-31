@@ -115,7 +115,8 @@ public class DefaultPlacementDriverService implements PlacementDriverService, Le
         if (threadPool != null) {
             this.pipelineInvoker = new DefaultHandlerInvoker(threadPool);
         }
-        this.pipeline = new DefaultPipeline(); //
+        // 创建责任链
+        this.pipeline = new DefaultPipeline();
         initPipeline(this.pipeline);
 
         LOG.info("[DefaultPlacementDriverService] start successfully, options: {}.", opts);
@@ -131,6 +132,7 @@ public class DefaultPlacementDriverService implements PlacementDriverService, Le
             if (this.pipelineInvoker != null) {
                 this.pipelineInvoker.shutdown();
             }
+            // 清除 clusterId  -> set<storeId> 缓存
             invalidLocalCache();
         } finally {
             this.started = false;
@@ -138,20 +140,27 @@ public class DefaultPlacementDriverService implements PlacementDriverService, Le
         }
     }
 
+    /**
+     * 处理心跳请求
+     * @param request
+     * @param closure
+     */
     @Override
     public void handleStoreHeartbeatRequest(final StoreHeartbeatRequest request,
                                             final RequestProcessClosure<BaseRequest, BaseResponse> closure) {
         final StoreHeartbeatResponse response = new StoreHeartbeatResponse();
         response.setClusterId(request.getClusterId());
+        // 必须是leader 节点
         if (!this.isLeader) {
             response.setError(Errors.NOT_LEADER);
             closure.sendResponse(response);
             return;
         }
         try {
-            // Only save the data
+            // Only save the data  代表接受到了一个心跳事件 发布到 pipeline 中
             final StorePingEvent storePingEvent = new StorePingEvent(request, this.metadataStore);
             final PipelineFuture<Object> future = this.pipeline.invoke(storePingEvent);
+            // 提前定义了 结果的执行流程
             future.whenComplete((ignored, throwable) -> {
                 if (throwable != null) {
                     LOG.error("Failed to handle: {}, {}.", request, StackTraceUtil.stackTrace(throwable));
@@ -166,6 +175,11 @@ public class DefaultPlacementDriverService implements PlacementDriverService, Le
         }
     }
 
+    /**
+     * 处理 来自 region的心跳请求
+     * @param request
+     * @param closure
+     */
     @Override
     public void handleRegionHeartbeatRequest(final RegionHeartbeatRequest request,
                                              final RequestProcessClosure<BaseRequest, BaseResponse> closure) {
@@ -197,6 +211,11 @@ public class DefaultPlacementDriverService implements PlacementDriverService, Le
         }
     }
 
+    /**
+     * 处理获取集群信息的请求 直接从 metaStore 获取数据 而没有借助 pipeline
+     * @param request
+     * @param closure
+     */
     @Override
     public void handleGetClusterInfoRequest(final GetClusterInfoRequest request,
                                             final RequestProcessClosure<BaseRequest, BaseResponse> closure) {
@@ -327,6 +346,7 @@ public class DefaultPlacementDriverService implements PlacementDriverService, Le
     }
 
     protected void initPipeline(final Pipeline pipeline) {
+        // 将所有 Handler 追加到 pipeline 中  这个相当于是向用户做拓展
         final List<Handler> sortedHandlers = JRaftServiceLoader.load(Handler.class) //
             .sort();
 
