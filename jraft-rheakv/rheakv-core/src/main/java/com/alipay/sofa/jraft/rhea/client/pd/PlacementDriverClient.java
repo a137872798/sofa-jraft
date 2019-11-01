@@ -31,7 +31,7 @@ import com.alipay.sofa.jraft.util.Endpoint;
 
 /**
  * Placement driver client
- * 安置驱动的客户端
+ * 安置驱动的客户端   非必须存在 此时会使用一个 fakePdClient
  * @author jiachun.fjc
  */
 public interface PlacementDriverClient extends Lifecycle<PlacementDriverOptions> {

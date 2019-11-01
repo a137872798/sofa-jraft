@@ -389,6 +389,11 @@ public abstract class DistributedLock<T> {
         private String     id;
         private long       deadlineMillis;
         private long       remainingMillis;
+        /**
+         * 每一个锁 会有 自己的 fencingToken 用于避免续约锁 因为其他原因长时间阻塞 导致锁失效在 非锁保护下执行某些代码 而使用的一种保障措施
+         * 比如 存储层 通过记录 fencingToken 记录当前插入数据的client 持有的锁的版本 如果某个持有过期锁的client 在提交数据时 发现 fencingToken 太旧了 代表该client持有的锁已经
+         * 过期了 就拒绝本次请求
+         */
         private long       fencingToken;
         private long       acquires;
         private byte[]     context;

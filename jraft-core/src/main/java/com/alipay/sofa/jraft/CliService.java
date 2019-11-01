@@ -38,7 +38,7 @@ public interface CliService extends Lifecycle<CliOptions> {
      * return OK status when success.
      * 为raftGroup 增加一个新的 peer 节点
      * @param groupId the raft group id
-     * @param conf    current configuration
+     * @param conf    current configuration   代表当前集群的节点信息  需要传入该参数是因为 需要从当前集群中找到leader 每个节点都包含获取leader的api 之后通过向leader 发送增加peer 的请求
      * @param peer    peer to add
      * @return operation status
      */

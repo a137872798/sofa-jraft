@@ -68,6 +68,9 @@ public class LocalSnapshotStorage implements SnapshotStorage {
      * 节点的地址 被抽象成一个 Endpoint 对象
      */
     private Endpoint                                 addr;
+    /**
+     * 代表将数据拷贝到远端前要做过滤
+     */
     private boolean                                  filterBeforeCopyRemote;
     /**
      * 代表快照文件的 下标 而不是某个 偏移量

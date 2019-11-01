@@ -53,7 +53,7 @@ import static com.alipay.sofa.jraft.rhea.metrics.KVMetricNames.STATE_MACHINE_BAT
 
 /**
  * Rhea KV store state machine
- * 基于 Rhea KV存储的状态机
+ * 基于 Rhea KV存储的状态机  该对象是 raft 内部定义的 状态机对象  想要使用raft 的集群复制 和 分布式一致性 就是通过自定义状态机的相关方法并启动 rheakv 实现
  * @author jiachun.fjc
  */
 public class KVStoreStateMachine extends StateMachineAdapter {

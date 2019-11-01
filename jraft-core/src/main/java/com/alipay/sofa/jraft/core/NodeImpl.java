@@ -122,7 +122,14 @@ import com.lmax.disruptor.dsl.ProducerType;
 
 /**
  * The raft replica node implementation.
- * node节点的默认实现  TODO  这个类 最后看
+ * node节点的默认实现
+ * 在 raft 集群中 可以向 leader 或者follower 读取数据 因为follower 是通过同步 logEntry 来生成数据的 必然能保证一致性 只是存在脏读 也就是读取到过期的数据
+ * 写操作只能针对 leader 节点 这个概念应该跟rocketMq 的 概念是一致的 只能往 主 broker 写入 可以从副节点读取 只是同步存在时间差 可能读取不到最新消息
+ * 当单点发生故障时 这里有2种情况 leader or follower
+ * 如果是 leader 出现问题 在 下次选举前不可写只能读取 数据 同时数据同步也会暂停 那么就会出现大量脏读 对应到 CP
+ * 如果是 follower 出现问题 没有影响 只是针对该节点读取失败 需要配合重试机制从其他节点读取
+ * 当超过半数节点故障时 整个group 不具备可用性 少数节点提供只读服务 但是数量不足以选举出新的leader  可以通过resetPeers 重置集群节点数量 一般不推荐使用
+ * 当节点出现故障在重启时  如果开启快照 会从快照中加载数据 如果没有开启快照 通过重放本地所有日志恢复数据
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Apr-03 4:26:51 PM
@@ -150,6 +157,9 @@ public class NodeImpl implements Node, RaftServerService {
     // Max retry times when applying tasks.
     private static final int                                               MAX_APPLY_RETRY_TIMES    = 3;
 
+    /**
+     * 代表全局范围内的活跃节点 单机 下可以创建多个node
+     */
     public static final AtomicInteger                                      GLOBAL_NUM_NODES         = new AtomicInteger(
                                                                                                         0);
 
@@ -249,26 +259,28 @@ public class NodeImpl implements Node, RaftServerService {
 
     /**
      * Event handler.
-     * 专门处理 LogEntryAndClosure事件
+     * 外部传来的task 都会被封装成  LogEntryAndClosure 对象
      * @author boyan (boyan@alibaba-inc.com)
      *
      * 2018-Apr-03 4:30:07 PM
      */
     private class LogEntryAndClosureHandler implements EventHandler<LogEntryAndClosure> {
-        // task list for batch
+        // task list for batch  内部存储了一组任务 在 生产者堆积任务时 会批量执行
         private final List<LogEntryAndClosure> tasks = new ArrayList<>(NodeImpl.this.raftOptions.getApplyBatch());
 
         @Override
         public void onEvent(final LogEntryAndClosure event, final long sequence, final boolean endOfBatch)
                                                                                                           throws Exception {
-            // 如果设置了闭锁 代表该任务是想要强制执行所有任务
+            // 如果设置了闭锁 代表该任务是调用 shutdown 发布的事件
             if (event.shutdownLatch != null) {
                 if (!this.tasks.isEmpty()) {
                     // 执行队列中所有任务
                     executeApplyingTasks(this.tasks);
                 }
+                // 在全局范围内 将活跃节点数量减少
                 final int num = GLOBAL_NUM_NODES.decrementAndGet();
                 LOG.info("The number of active nodes decrement to {}.", num);
+                // 唤醒join 的主线程
                 event.shutdownLatch.countDown();
                 return;
             }
@@ -1180,14 +1192,14 @@ public class NodeImpl implements Node, RaftServerService {
     }
 
     /**
-     * 执行队列中所有任务
+     * 执行队列中所有任务 (一般是 生产者堆积了大量未处理任务)
      * @param tasks
      */
     private void executeApplyingTasks(final List<LogEntryAndClosure> tasks) {
         this.writeLock.lock();
         try {
             final int size = tasks.size();
-            // 如果本节点不是 leader  不允许写入LogEntry
+            // 因为 只有leader 才允许写入事件
             if (this.state != State.STATE_LEADER) {
                 final Status st = new Status();
                 if (this.state != State.STATE_TRANSFERRING) {
@@ -1316,7 +1328,7 @@ public class NodeImpl implements Node, RaftServerService {
     }
 
     /**
-     * Handle read index request.
+     * Handle read index request.  处理readIndex 请求
      */
     @Override
     public void handleReadIndexRequest(final ReadIndexRequest request, final RpcResponseClosure<ReadIndexResponse> done) {
@@ -1420,6 +1432,10 @@ public class NodeImpl implements Node, RaftServerService {
                     this.replicatorGroup.sendHeartbeat(peer, heartbeatDone);
                 }
                 break;
+            // 代表进一步追求性能 使用 续约机制
+            // 原本 每个节点通过转发到leader 获取 readIndex 时 leader 需要向每个节点发送心跳确保自己仍是leader 而基于续约时间的策略代表
+            // 每个 follower 是在一定时间内没有收到leader 的心跳自动升级为 candidator 那么 可以变相理解为每个leader 在上次发送心跳到 最短的follower检测心跳时间内
+            // 自身都还会是 leader  那么就可以节省一次往其他follower 发送心跳的开销
             case ReadOnlyLeaseBased:
                 // Responses to followers and local node.
                 respBuilder.setSuccess(true);
@@ -1441,17 +1457,21 @@ public class NodeImpl implements Node, RaftServerService {
         }
         Requires.requireNonNull(task, "Null task");
 
+        // 提交的每个任务都会被封装成 LogEntry 写入到LogManager中 同时复制机 会将数据同步到其他节点
         final LogEntry entry = new LogEntry();
         entry.setData(task.getData());
         int retryTimes = 0;
         try {
+            // 将 LogEntry 和 回调对象包装成一个对象
             final EventTranslator<LogEntryAndClosure> translator = (event, sequence) -> {
+                // 因为 Disruptor 使用的对象并没有被回收 所以一般要配合 reset 将该对象重置 再设置必备的参数
                 event.reset();
                 event.done = task.getDone();
                 event.entry = entry;
                 event.expectedTerm = task.getExpectedTerm();
             };
             while (true) {
+                // 往环形缓冲区中插入任务对象
                 if (this.applyQueue.tryPublishEvent(translator)) {
                     break;
                 } else {
@@ -2511,6 +2531,8 @@ public class NodeImpl implements Node, RaftServerService {
                 if (this.rpcService != null) {
                     this.rpcService.shutdown();
                 }
+                // 如果发现了 环形缓冲区还存在 这里添加一个携带闭锁的event 对象 使得node 可以阻塞直到全部任务被处理完
+                // 如果不使用闭锁 无法预测 ringBuffer 中的任务什么时候被处理完
                 if (this.applyQueue != null) {
                     Utils.runInThread(() -> {
                         this.shutdownLatch = new CountDownLatch(1);
@@ -2768,7 +2790,7 @@ public class NodeImpl implements Node, RaftServerService {
     }
 
     /**
-     * 生成一次快照 并将结果通知到 closure
+     * 主动生成一次快照 并将结果通知到 closure   如果用户没有主动去创建快照 那么就会通过后台任务来生成快照
      * @param done callback
      */
     @Override

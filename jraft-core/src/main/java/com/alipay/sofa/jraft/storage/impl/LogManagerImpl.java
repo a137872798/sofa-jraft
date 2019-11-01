@@ -410,7 +410,7 @@ public class LogManagerImpl implements LogManager {
     }
 
     /**
-     * 操控 logManager  将一组LogEntry 通过该对象存储到 LogStorage (当然对外该对象是不可见的)
+     * 操控 logManager  将一组LogEntry 通过该对象存储到 LogStorage
      * @param entries log entries
      * @param done    callback
      */

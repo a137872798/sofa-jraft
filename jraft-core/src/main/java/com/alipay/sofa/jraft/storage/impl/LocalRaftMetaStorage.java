@@ -39,7 +39,7 @@ import com.alipay.sofa.jraft.util.Utils;
 
 /**
  * Raft meta storage,it's not thread-safe.
- * 本地存储元数据
+ * 记录本节点当前所在任期 以及投票给了哪个节点
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Mar-26 7:30:36 PM
@@ -112,7 +112,7 @@ public class LocalRaftMetaStorage implements RaftMetaStorage {
     private boolean load() {
         final ProtoBufFile pbFile = newPbFile();
         try {
-            // 尝试加载 this.path + File.separator + RAFT_META 路径下文件的数据
+            // 尝试加载 this.path + File.separator + RAFT_META 路径下文件的数据  持久化时 将任期和 投票对象 序列化成StablePBMeta 并存入到 文件中
             final StablePBMeta meta = pbFile.load();
             if (meta != null) {
                 this.term = meta.getTerm();
@@ -175,7 +175,7 @@ public class LocalRaftMetaStorage implements RaftMetaStorage {
         if (!this.isInited) {
             return;
         }
-        // 关闭时先保存数据
+        // 关闭时先将当前信息 格式化后存入文件 对应到 init() 方法中的load()
         save();
         this.isInited = false;
     }

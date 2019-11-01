@@ -33,7 +33,7 @@ import com.alipay.sofa.jraft.util.Utils;
 
 /**
  * Raft nodes manager.
- * 节点的管理对象 每个创建的节点对象都应该交由它来管理
+ * 节点的管理对象 每个创建的节点对象都应该交由它来管理  维护了本进程能通信的 服务列表  基于堆内存
  *
  * @author boyan (boyan@alibaba-inc.com)
  *

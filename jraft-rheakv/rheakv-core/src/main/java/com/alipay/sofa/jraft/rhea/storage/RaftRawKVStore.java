@@ -318,13 +318,14 @@ public class RaftRawKVStore implements RawKVStore {
     }
 
     /**
-     * 触发一个指定的操作
+     * 触发一个指定的操作  当向jraft 写入任务时 必须确保当前写入的节点是 leader
      * @param op
      * @param closure
      */
     private void applyOperation(final KVOperation op, final KVStoreClosure closure) {
         // 必须确保当前节点是leader
         if (!isLeader()) {
+            // 注意客户端是如何处理这种error的
             closure.setError(Errors.NOT_LEADER);
             closure.run(new Status(RaftError.EPERM, "Not leader"));
             return;
@@ -333,6 +334,7 @@ public class RaftRawKVStore implements RawKVStore {
         final Task task = new Task();
         task.setData(ByteBuffer.wrap(Serializers.getDefault().writeObject(op)));
         task.setDone(new KVClosureAdapter(closure, op));
+        // 将任务提交到节点中
         this.node.apply(task);
     }
 

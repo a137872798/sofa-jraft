@@ -44,6 +44,7 @@ public class NodeOptions extends RpcOptions implements Copiable<NodeOptions> {
     // from the leader in |election_timeout_ms| milliseconds
     // Default: 1000 (1s)
     // 一个follower 如果在这么长的时间内没有收到 leader 的 任何消息(包含心跳) 那么该节点将会变成候选者
+    // 由leader 向follower 发送心跳 如果follower 长时间没有收到则将自身变成candidate
     private int                             electionTimeoutMs      = 1000;                                         // follower to candidate timeout
 
     // Leader lease time's ratio of electionTimeoutMs,

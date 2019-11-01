@@ -123,7 +123,7 @@ public interface Node extends Lifecycle<NodeOptions>, Describer {
      * such as request id etc.) and closure.  The closure will be called when the
      * request is completed, and user can read data from state machine if the result
      * status is OK.
-     *
+     * 先行一致性读
      * @param requestContext the context of request
      * @param done           callback
      *

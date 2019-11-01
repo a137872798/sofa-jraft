@@ -27,7 +27,7 @@ import com.alipay.sofa.jraft.util.Describer;
 
 /**
  * Executing Snapshot related stuff.
- * 生成自身的快照
+ * 该对象内部包含针对快照的相关方法 包含 安装到本地 和 存储
  * Describer 代表该对象具备生成自己的描述信息
  * @author boyan (boyan@alibaba-inc.com)
  *

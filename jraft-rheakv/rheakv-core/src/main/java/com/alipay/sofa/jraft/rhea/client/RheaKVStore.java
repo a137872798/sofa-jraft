@@ -81,7 +81,7 @@ public interface RheaKVStore extends Lifecycle<RheaKVStoreOptions> {
 
     /**
      * Equivalent to {@code get(key, true)}.
-     * 通过key 查询value  异步获取过程 返回一个future对象
+     * 通过key 查询value  异步获取过程 返回一个future对象  不传入 readOnlySafe 代表该参数默认为true 也就是默认使用线性一致读
      */
     CompletableFuture<byte[]> get(final byte[] key);
 
@@ -233,6 +233,8 @@ public interface RheaKVStore extends Lifecycle<RheaKVStoreOptions> {
      */
     List<KVEntry> bScan(final String startKey, final String endKey, final boolean readOnlySafe,
                         final boolean returnValue);
+
+    // iterator 会返回一个包装对象内部包含了 从pd 拉取数据的逻辑 只有在调用hasNext时才会触发 对应懒汉模式
 
     /**
      * Equivalent to {@code iterator(startKey, endKey, bufSize, true)}.

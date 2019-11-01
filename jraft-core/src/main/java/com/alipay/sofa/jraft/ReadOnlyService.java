@@ -21,7 +21,7 @@ import com.alipay.sofa.jraft.option.ReadOnlyServiceOptions;
 
 /**
  * The read-only query service.
- * 用于查询的服务
+ * 处理获取 readIndex 相关的请求
  * @author dennis
  *
  */

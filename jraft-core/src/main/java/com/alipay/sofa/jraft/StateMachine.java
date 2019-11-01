@@ -101,7 +101,7 @@ public interface StateMachine {
      * This method is called when a critical error was encountered, after this
      * point, no any further modification is allowed to applied to this node
      * until the error is fixed and this node restarts.
-     * 当处理任务发生异常
+     * 当处理任务发生异常  当发生错误后 不再接受新的任务直接节点被重启
      * @param e raft error message
      */
     void onError(final RaftException e);

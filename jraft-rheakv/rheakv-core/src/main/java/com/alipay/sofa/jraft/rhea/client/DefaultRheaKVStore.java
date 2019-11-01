@@ -644,6 +644,16 @@ public class DefaultRheaKVStore implements RheaKVStore {
         return FutureHelper.get(scan(startKey, endKey, readOnlySafe, returnValue), this.futureTimeoutMillis);
     }
 
+    /**
+     * 针对 跨越多个 region 的 scan 会先找到 startKey endKey 包含的region 区间 之后为每个region 分开调用scan 并将多个 Completable 合并成FutureGroup
+     * @param startKey
+     * @param endKey
+     * @param readOnlySafe
+     * @param returnValue
+     * @param retriesLeft
+     * @param lastCause
+     * @return
+     */
     private FutureGroup<List<KVEntry>> internalScan(final byte[] startKey, final byte[] endKey,
                                                     final boolean readOnlySafe, final boolean returnValue,
                                                     final int retriesLeft, final Throwable lastCause) {
@@ -668,6 +678,18 @@ public class DefaultRheaKVStore implements RheaKVStore {
         return new FutureGroup<>(futures);
     }
 
+    /**
+     * 扫描某个区域的数据   region epoch 代表着该region 是否发生分裂  如果发生分裂要重新拉取 数据 并进一步 分解 请求
+     * @param region
+     * @param subStartKey
+     * @param subEndKey
+     * @param readOnlySafe
+     * @param returnValue
+     * @param future
+     * @param retriesLeft
+     * @param lastCause
+     * @param requireLeader
+     */
     private void internalRegionScan(final Region region, final byte[] subStartKey, final byte[] subEndKey,
                                     final boolean readOnlySafe, final boolean returnValue,
                                     final CompletableFuture<List<KVEntry>> future, final int retriesLeft,
@@ -1357,7 +1379,7 @@ public class DefaultRheaKVStore implements RheaKVStore {
         }
     }
 
-    // internal api
+    // internal api  传入一个 executor 本次执行结果 会同步到raft 所有节点  由用户实现
     public CompletableFuture<Boolean> execute(final long regionId, final NodeExecutor executor) {
         checkState();
         Requires.requireNonNull(executor, "executor");
