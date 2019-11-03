@@ -41,7 +41,7 @@ import com.alipay.sofa.jraft.util.Utils;
 public class IteratorImpl {
 
     /**
-     * 状态机对象
+     * 该迭代器内部维护了 被提交到的 状态机对象
      */
     private final StateMachine  fsm;
     /**
@@ -49,13 +49,22 @@ public class IteratorImpl {
      */
     private final LogManager    logManager;
     /**
-     * 内部存放一组待处理的对象
+     * 内部存放一组待处理的对象  实际就是被迭代的实体
      */
     private final List<Closure> closures;
     private final long          firstClosureIndex;
+    /**
+     * 当前指针指向迭代器的哪个位置
+     */
     private long                currentIndex;
     private final long          committedIndex;
+    /**
+     * 该对象记录了当前被迭代到的位置
+     */
     private LogEntry            currEntry = new LogEntry(); // blank entry
+    /**
+     * 等同于currentIndex
+     */
     private final AtomicLong    applyingIndex;
     private RaftException       error;
 
@@ -64,9 +73,9 @@ public class IteratorImpl {
      * @param fsm   状态机
      * @param logManager   保存LogEntry 的对象
      * @param closures   一组待处理的回调对象
-     * @param firstClosureIndex  代表从哪个下标开始的回调对象
-     * @param lastAppliedIndex 当前LogStorage 写入的下标 (或者说上次 caller 写入的index )
-     * @param committedIndex  代表要commit 的目标下标
+     * @param firstClosureIndex  代表从哪个下标开始有回调对象  看来不是每个数据体都会包含回调 也许有些任务是不需要回调的
+     * @param lastAppliedIndex 代表从哪里开始
+     * @param committedIndex  代表 允许提交的最大偏移量 从0 ~ committedIndex 的任务都可以被提交到状态机中
      * @param applyingIndex
      */
     public IteratorImpl(final StateMachine fsm, final LogManager logManager, final List<Closure> closures,
@@ -109,7 +118,7 @@ public class IteratorImpl {
 
     /**
      * Move to next
-     * 初始化后触发  等下 调用该方法时  LogManager 已经写入数据了 那么commited 实际上是代表 leader 写入到其他follower
+     * 该对应一般是用户传入到状态机中使用的
      */
     public void next() {
         this.currEntry = null; //release current entry
@@ -118,10 +127,10 @@ public class IteratorImpl {
             ++this.currentIndex;
             if (this.currentIndex <= this.committedIndex) {
                 try {
-                    // 获取指定index 对应的log 实体  内部借助第三方框架 先不看
+                    // 该迭代器的数据一开始就是存放在 logManager 中的??? 那么是什么时候设置进去的
                     this.currEntry = this.logManager.getEntry(this.currentIndex);
                     if (this.currEntry == null) {
-                        // 初始化error 属性
+                        // 初始化error 属性 这样当调用迭代器的 hasNext 时会返回false
                         getOrCreateError().setType(EnumOutter.ErrorType.ERROR_TYPE_LOG);
                         getOrCreateError().getStatus().setError(-1,
                             "Fail to get entry at index=%d while committed_index=%d", this.currentIndex,
@@ -146,6 +155,7 @@ public class IteratorImpl {
         if (this.currentIndex < this.firstClosureIndex) {
             return null;
         }
+        // 返回 List<Closure> 中对应的元素
         return this.closures.get((int) (this.currentIndex - this.firstClosureIndex));
     }
 

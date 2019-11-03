@@ -31,7 +31,7 @@ import com.alipay.sofa.jraft.conf.Configuration;
 public class Ballot {
 
     /**
-     * 查找PeerId 的 线索对象
+     * 查找PeerId 的 线索对象  该对象应该是推测当前经过了第几个节点 因为投票需要经过所有节点
      */
     public static final class PosHint {
         /**
@@ -45,7 +45,7 @@ public class Ballot {
     }
 
     /**
-     * 未找到的节点
+     * 未找到的节点  (代表某个节点失效了吗???)
      */
     public static class UnfoundPeerId {
         /**
@@ -74,7 +74,7 @@ public class Ballot {
      */
     private final List<UnfoundPeerId> peers    = new ArrayList<>();
     /**
-     * 法定人数 (有效投票人数???)
+     * 法定人数 (该值要超过半数)
      */
     private int                       quorum;
     private final List<UnfoundPeerId> oldPeers = new ArrayList<>();
@@ -91,6 +91,7 @@ public class Ballot {
         // 清除 Ballot的 旧数据
         this.peers.clear();
         this.oldPeers.clear();
+        // 新旧集群的成功数都为0
         quorum = oldQuorum = 0;
         int index = 0;
         if (conf != null) {
@@ -100,7 +101,7 @@ public class Ballot {
             }
         }
 
-        // 计算选举成功需要的人数 不是说要半数以上吗这里可能会计算出半数的值
+        // 计算选举成功需要的人数 需要超过半数
         this.quorum = this.peers.size() / 2 + 1;
         if (oldConf == null) {
             return true;
@@ -138,21 +139,20 @@ public class Ballot {
     }
 
     /**
-     * 为给定的节点投票
+     * 代表该投票对象在 peerId 对应的节点上以及提交成功了 当超过半数 也就是 quorum 变成0 的时候 代表在集群范围内提交成功
      * @param peerId
      * @param hint  大多数情况 hint 是一个无效的值 之后通过找到某个 peerId 然后赋值到hint上
      * @return
      */
     public PosHint grant(PeerId peerId, PosHint hint) {
-        // 找到给定的 PeerId
+        // unfound 是一组记录集群中是否找到节点的对象
         UnfoundPeerId peer = findPeer(peerId, peers, hint.pos0);
         if (peer != null) {
             if (!peer.found) {
                 peer.found = true;
-                // 啥意思???
+                // 代表待确认票数减少1
                 this.quorum--;
             }
-            // index 就是该元素的下标 这样设置有什么意义吗???
             hint.pos0 = peer.index;
         } else {
             hint.pos0 = -1;
@@ -161,7 +161,7 @@ public class Ballot {
             hint.pos1 = -1;
             return hint;
         }
-        // 基本同上
+        // 在接到任务时可能当前集群已经更换了  那么就只能从oldConf 中找到对应节点并修改待确认票数
         peer = findPeer(peerId, oldPeers, hint.pos1);
         if (peer != null) {
             if (!peer.found) {

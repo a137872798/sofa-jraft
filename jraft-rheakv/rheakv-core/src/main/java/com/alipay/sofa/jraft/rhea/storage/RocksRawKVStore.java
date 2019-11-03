@@ -255,6 +255,7 @@ public class RocksRawKVStore extends BatchRawKVStore<RocksDBOptions> {
         final Lock readLock = this.readWriteLock.readLock();
         readLock.lock();
         try {
+            // 包装RocksDB 的迭代器 便于用户使用
             return new RocksKVIterator(this, this.db.newIterator(), readLock, getDatabaseVersion());
         } finally {
             readLock.unlock();

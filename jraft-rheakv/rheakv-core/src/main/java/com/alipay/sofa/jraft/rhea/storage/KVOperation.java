@@ -26,7 +26,7 @@ import com.alipay.sofa.jraft.util.Requires;
 
 /**
  * The KV store operation
- * 针对 KV store 的操作
+ * rhea 模块业务端允许发出的全部操作  状态机将会根据这些状态来触发对应的任务
  * @author jiachun.fjc
  */
 public class KVOperation implements Serializable {
@@ -101,6 +101,7 @@ public class KVOperation implements Serializable {
         VALID_OPS[17] = DELETE_LIST;
     }
 
+    // 该operation 对象的 kv  触发store 相关方法就是将 kv 存入到 store中
     private byte[]              key;                                    // also startKey for DELETE_RANGE
     private byte[]              value;                                  // also endKey for DELETE_RANGE
     private Object              attach;

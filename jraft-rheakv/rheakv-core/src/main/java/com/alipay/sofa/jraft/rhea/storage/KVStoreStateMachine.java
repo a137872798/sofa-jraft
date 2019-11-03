@@ -53,7 +53,7 @@ import static com.alipay.sofa.jraft.rhea.metrics.KVMetricNames.STATE_MACHINE_BAT
 
 /**
  * Rhea KV store state machine
- * 基于 Rhea KV存储的状态机  该对象是 raft 内部定义的 状态机对象  想要使用raft 的集群复制 和 分布式一致性 就是通过自定义状态机的相关方法并启动 rheakv 实现
+ * core 包决定了只要业务方写入自己的逻辑实现状态机执行的任务就具备了分布式一致性
  * @author jiachun.fjc
  */
 public class KVStoreStateMachine extends StateMachineAdapter {
@@ -61,16 +61,19 @@ public class KVStoreStateMachine extends StateMachineAdapter {
     private static final Logger       LOG        = LoggerFactory.getLogger(KVStoreStateMachine.class);
 
     /**
-     * 一组状态监听器对象
+     * 一组状态监听器对象   实际上 raft群组复制就是通过 实现该接口做到的
      */
     private final List<StateListener> listeners  = new CopyOnWriteArrayList<>();
     /**
      * 当前任期
      */
     private final AtomicLong          leaderTerm = new AtomicLong(-1L);
+    /**
+     * 业务方传入的数据一般要做序列化处理
+     */
     private final Serializer          serializer = Serializers.getDefault();
     /**
-     * 状态机是以region 为单位吗
+     * 在kv store 中 每个store 对象会对应到一个 region
      */
     private final Region              region;
     /**
@@ -88,6 +91,11 @@ public class KVStoreStateMachine extends StateMachineAdapter {
     private final Meter               applyMeter;
     private final Histogram           batchWriteHistogram;
 
+    /**
+     * 该状态机对象通过一个engine 进行初始化
+     * @param region
+     * @param storeEngine
+     */
     public KVStoreStateMachine(Region region, StoreEngine storeEngine) {
         this.region = region;
         this.storeEngine = storeEngine;
@@ -100,26 +108,31 @@ public class KVStoreStateMachine extends StateMachineAdapter {
 
     /**
      * 状态机处理一组批量任务
-     * @param it
+     * 理解整个jraft 框架是怎么使用的 用户通过创建一组任务并提交到jraft 中 会在大部分节点通过请求后 触发成功回调
+     * 而群发则是通过group 实现的 该框架是一个纯异步框架 用户通过closure 获取结果
+     * @param it  在迭代器中可以存在2种数据体 一种是conf 记录当前集群的状态 一种是用户提交的任务
      */
     @Override
     public void onApply(final Iterator it) {
         int index = 0;
         int applied = 0;
         try {
-            // 创建一个存放输出结果的list
+            // 该对象是 经过优化后的list (ArrayList + Recycle)
             KVStateOutputList kvStates = KVStateOutputList.newInstance();
+            // 迭代用户传入的任务
             while (it.hasNext()) {
                 KVOperation kvOp;
-                // 该回调对象内部维护了一个 oper
+                // KVClosureAdapter 对象是 KVStore 定制的 所以允许进行强转
+                // it 对应 IteratorImpl 对象 通过 done 获取到某个回调对象 (默认有一组列表)
                 final KVClosureAdapter done = (KVClosureAdapter) it.done();
+                //  回调对象允许为空 如果不为空 会携带一个operation 对象
                 if (done != null) {
                     kvOp = done.getOperation();
                 } else {
-
+                    // 这里代表没有获取到回调对象
                     final ByteBuffer buf = it.getData();
                     try {
-                        // 基于 heap 内存 还是 direct内存
+                        // 获取 IteratorImpl 的 data 属性  如果是 byte[] 进行序列化  反之直接序列化整个buf
                         if (buf.hasArray()) {
                             kvOp = this.serializer.readObject(buf.array(), KVOperation.class);
                         } else {
@@ -130,18 +143,23 @@ public class KVStoreStateMachine extends StateMachineAdapter {
                         throw new StoreCodecException("Decode operation error", t);
                     }
                 }
-                // 获取首个元素
+                // 上面就是从中获取到operation对象
+
+                // ==  arrayList.get(0)
                 final KVState first = kvStates.getFirstElement();
-                // 这里是 批量处理 op 的逻辑 如果一组数据他们的op 都相同不会直接处理而是设置到 kvStates 中 一旦发现 下个op 与 已经保存的op 不同就通过batchApply 处理数据
-                // 以及 重置 kvStates
+                // 应该是上次残留的任务 TODO  思考一下 什么时候会残留任务  应该是使用recycle 的副作用
+                // 当op类型不同时代表必须区别处理 所以按照first的类型将 之前余留的任务委托给kvStore 实现
                 if (first != null && !first.isSameOp(kvOp)) {
+                    // 这里根据 op类型 委托 kvStore执行全部任务
                     applied += batchApplyAndRecycle(first.getOpByte(), kvStates);
                     kvStates = KVStateOutputList.newInstance();
                 }
+                // 正常情况下 会将 kvop 和回调对象包装成 kvState 并添加到列表中 (转移迭代器的任务到kvStore中)
                 kvStates.add(KVState.of(kvOp, done));
                 ++index;
                 it.next();
             }
+            // 将任务提交到 kvStore
             if (!kvStates.isEmpty()) {
                 final KVState first = kvStates.getFirstElement();
                 assert first != null;
@@ -176,12 +194,14 @@ public class KVStoreStateMachine extends StateMachineAdapter {
             }
 
             // metrics: op qps
+            // 测量的先跳过
             final Meter opApplyMeter = KVMetrics.meter(STATE_MACHINE_APPLY_QPS, String.valueOf(this.region.getId()),
                 KVOperation.opName(opByte));
             opApplyMeter.mark(size);
             this.batchWriteHistogram.update(size);
 
             // do batch apply
+            // 根据 op 确认本次操作请求 并将 kvState中所有任务都委托给kvStore执行
             batchApply(opByte, kvStates);
 
             return size;
@@ -191,13 +211,14 @@ public class KVStoreStateMachine extends StateMachineAdapter {
     }
 
     /**
-     * 批量处理任务
+     * 委托给  KVStore 执行任务
      * @param opType
      * @param kvStates
      */
     private void batchApply(final byte opType, final KVStateOutputList kvStates) {
         switch (opType) {
             case KVOperation.PUT:
+                // 将kvStates 中所有任务都通过put方法设置到rawKVStore 中
                 this.rawKVStore.batchPut(kvStates);
                 break;
             case KVOperation.PUT_IF_ABSENT:

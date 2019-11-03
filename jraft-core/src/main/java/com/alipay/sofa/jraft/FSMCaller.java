@@ -55,7 +55,7 @@ public interface FSMCaller extends Lifecycle<FSMCallerOptions>, Describer {
 
     /**
      * Called when log entry committed
-     * 当logEntry 在本地提交时
+     * 当 一组logEntry 写入到超过半数的LogManager中 后触发
      * @param committedIndex committed log indexx
      */
     boolean onCommitted(final long committedIndex);
@@ -104,7 +104,7 @@ public interface FSMCaller extends Lifecycle<FSMCallerOptions>, Describer {
 
     /**
      * Called when error happens.
-     *
+     * 当写入数据时发生异常 比如写入ConfManager 失败
      * @param error error info
      */
     boolean onError(final RaftException error);

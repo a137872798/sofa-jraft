@@ -69,7 +69,7 @@ import com.google.protobuf.ZeroByteStringHelper;
 /**
  * Replicator for replicating log entry from leader to followers.
  * @author boyan (boyan@alibaba-inc.com)
- * 该对象负责将 数据从leader 复制到follower
+ * 该对象负责将 数据从leader 复制到follower 当触发LogManager.appendEntries 后 就会通过触发所有的waitMeta 对象 该对象也就是waitMeta的实现
  * 2018-Apr-04 10:32:02 AM
  */
 @ThreadSafe
@@ -78,7 +78,7 @@ public class Replicator implements ThreadId.OnError {
     private static final Logger              LOG                    = LoggerFactory.getLogger(Replicator.class);
 
     /**
-     * client 对象
+     * leader 作为client 访问其他node
      */
     private final RaftClientService          rpcService;
     // Next sending log index
@@ -1525,7 +1525,7 @@ public class Replicator implements ThreadId.OnError {
     }
 
     /**
-     * 写入数据体
+     * 写入数据体 TODO 该方法是在什么时候调用的 应该只有在调用该方法后 向LogManager写入数据才能触发 复制啊
      * @param nextWaitIndex
      */
     private void waitMoreEntries(final long nextWaitIndex) {
@@ -1534,6 +1534,7 @@ public class Replicator implements ThreadId.OnError {
             if (this.waitId >= 0) {
                 return;
             }
+            // 向logManager 中写入等待对象 当指定位置的 数据被写入时触发回调
             this.waitId = this.options.getLogManager().wait(nextWaitIndex - 1,
                 (arg, errorCode) -> continueSending((ThreadId) arg, errorCode), this.id);
             this.statInfo.runningState = RunningState.IDLE;

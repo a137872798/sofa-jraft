@@ -20,7 +20,7 @@ import com.alipay.sofa.jraft.Closure;
 import com.alipay.sofa.jraft.rhea.errors.Errors;
 
 /**
- * 基于KV 的 回调
+ * rhea 模块自定义的回调对象
  * @author jiachun.fjc
  */
 public interface KVStoreClosure extends Closure {

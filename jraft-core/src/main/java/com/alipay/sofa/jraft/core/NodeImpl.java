@@ -169,6 +169,9 @@ public class NodeImpl implements Node, RaftServerService {
                                                                                                         .writeLock();
     protected final Lock                                                   readLock                 = this.readWriteLock
                                                                                                         .readLock();
+    /**
+     * 标记当前节点的状态 包含 是leader 正在重新选举  是 follower etc..
+     */
     private volatile State                                                 state;
     private volatile CountDownLatch                                        shutdownLatch;
     private long                                                           currTerm;
@@ -183,6 +186,9 @@ public class NodeImpl implements Node, RaftServerService {
     private final String                                                   groupId;
     private NodeOptions                                                    options;
     private RaftOptions                                                    raftOptions;
+    /**
+     * 作为 端点的地址
+     */
     private final PeerId                                                   serverId;
     /** Other services */
     private final ConfigurationCtx                                         confCtx;
@@ -271,7 +277,7 @@ public class NodeImpl implements Node, RaftServerService {
         @Override
         public void onEvent(final LogEntryAndClosure event, final long sequence, final boolean endOfBatch)
                                                                                                           throws Exception {
-            // 如果设置了闭锁 代表该任务是调用 shutdown 发布的事件
+            // 如果设置了闭锁 代表该任务是调用 shutdown 发布的事件  该对象的闭锁 就是 node 所持有的那个
             if (event.shutdownLatch != null) {
                 if (!this.tasks.isEmpty()) {
                     // 执行队列中所有任务
@@ -1173,15 +1179,20 @@ public class NodeImpl implements Node, RaftServerService {
         }
     }
 
+    /**
+     * 每个 回调对象 对应一批待处理entry 如果node 发起下一次添加数据的请求 那么对应的entries会存放在另一个回调对象中
+     */
     class LeaderStableClosure extends LogManager.StableClosure {
 
         public LeaderStableClosure(final List<LogEntry> entries) {
             super(entries);
         }
 
+        // 该回调意味着 将数据写入leader 成功 这样就在投票箱中增加了一票 之后只要半数节点添加成功就能在 任务回调中设置success
         @Override
         public void run(final Status status) {
             if (status.isOk()) {
+                // firstLogIndex 对应在logManager中写入的起始下标 lastLogIndex 对应该批entry 的 长度
                 NodeImpl.this.ballotBox.commitAt(this.firstLogIndex, this.firstLogIndex + this.nEntries - 1,
                     NodeImpl.this.serverId);
             } else {
@@ -1192,14 +1203,14 @@ public class NodeImpl implements Node, RaftServerService {
     }
 
     /**
-     * 执行队列中所有任务 (一般是 生产者堆积了大量未处理任务)
+     * 执行队列中所有任务 (一般是 生产者堆积了大量未处理任务 否则都是单个任务)
      * @param tasks
      */
     private void executeApplyingTasks(final List<LogEntryAndClosure> tasks) {
         this.writeLock.lock();
         try {
             final int size = tasks.size();
-            // 因为 只有leader 才允许写入事件
+            // 因为 只有leader 才允许写入事件   TODO 这里要注意 不同的 errorState closuer会以怎样的策略去应对
             if (this.state != State.STATE_LEADER) {
                 final Status st = new Status();
                 if (this.state != State.STATE_TRANSFERRING) {
@@ -1210,7 +1221,7 @@ public class NodeImpl implements Node, RaftServerService {
                 }
                 LOG.debug("Node {} can't apply, status={}.", getNodeId(), st);
                 for (int i = 0; i < size; i++) {
-                    // 使用指定status 触发回调函数
+                    // 使用指定status 触发回调函数   防止回调任务耗时过大 或者说 阻碍node本身的流程 使用额外的线程池去处理任务
                     Utils.runClosureInThread(tasks.get(i).done, st);
                 }
                 return;
@@ -1218,7 +1229,8 @@ public class NodeImpl implements Node, RaftServerService {
             final List<LogEntry> entries = new ArrayList<>(size);
             for (int i = 0; i < size; i++) {
                 final LogEntryAndClosure task = tasks.get(i);
-                // 该写入任务预想的预期 与本预期不一致  TODO 这里的预期任期 是按照什么标准写入的
+                // 该写入任务预想的预期 与本预期不一致
+                // 默认情况下 task 的任期为-1 除非指定
                 if (task.expectedTerm != -1 && task.expectedTerm != this.currTerm) {
                     LOG.debug("Node {} can't apply task whose expectedTerm={} doesn't match currTerm={}.", getNodeId(),
                         task.expectedTerm, this.currTerm);
@@ -1229,16 +1241,23 @@ public class NodeImpl implements Node, RaftServerService {
                     }
                     continue;
                 }
+                // 开始向投票箱提交任务  也就是 只有半数(以上) 成功提交任务才返回正常提交
+                // 因为集群内部可能发生变动 这里将变动前后的节点都传入了 看看它是如何应对的
+                // 因为一开始pendingIndex =  会导致无法添加任务 并为回调对象设置错误结果  如果成功添加任务 应该是在某个定时器中做处理
                 if (!this.ballotBox.appendPendingTask(this.conf.getConf(),
                     this.conf.isStable() ? null : this.conf.getOldConf(), task.done)) {
                     Utils.runClosureInThread(task.done, new Status(RaftError.EINTERNAL, "Fail to append task."));
                     continue;
                 }
                 // set task entry info before adding to list.
+                // 为什么能确定数据一定是 data 类型呢 难道是根据执行的方法确定???
                 task.entry.getId().setTerm(this.currTerm);
                 task.entry.setType(EnumOutter.EntryType.ENTRY_TYPE_DATA);
                 entries.add(task.entry);
             }
+            // 将数据添加到rocksDB 中纯异步框架的特点就是 回调环环相扣 也就是通过回调的叠加 在异步线程中做的处理越来越多 但是对主线程不影响
+            // 该方法还没有进行commited 只有当写入半数时 才会触发commited
+            // 每台机器都会commited 吗 怎么通知的呢 还有 有可能在commited 时失败吗
             this.logManager.appendEntries(entries, new LeaderStableClosure(entries));
             // update conf.first
             this.conf = this.logManager.checkAndSetConfiguration(this.conf);
@@ -1446,11 +1465,14 @@ public class NodeImpl implements Node, RaftServerService {
     }
 
     /**
-     * 将任务提交到节点 之后通过传给 状态机来执行 这里必须确保本节点是 leader 否则不接受任务
+     * 在 rhea 模块中 任务首先提交到了statemachine 上 之后委托给raftRawKVStore 最后 转发到node上执行
+     * 那么一般化来讲是什么样  还是通过状态机向node 发起任务???
+     * 将任务提交到节点 这里必须确保本节点是 leader 否则不接受任务
      * @param task task to apply
      */
     @Override
     public void apply(final Task task) {
+        // 只有调用shutdown时 shutdownLatch 会被设置  注意使用volatile 修饰确保可见性
         if (this.shutdownLatch != null) {
             Utils.runClosureInThread(task.getDone(), new Status(RaftError.ENODESHUTDOWN, "Node is shutting down."));
             throw new IllegalStateException("Node is shutting down");
@@ -1458,7 +1480,9 @@ public class NodeImpl implements Node, RaftServerService {
         Requires.requireNonNull(task, "Null task");
 
         // 提交的每个任务都会被封装成 LogEntry 写入到LogManager中 同时复制机 会将数据同步到其他节点
+        // 在写入到 LogManager 中时 会判断当前预期写入的偏移量是否会超过 lastIndex 超过的话不会进行处理
         final LogEntry entry = new LogEntry();
+        // data 是 序列化后的 kvOperation (针对hrea 模块来讲)
         entry.setData(task.getData());
         int retryTimes = 0;
         try {
@@ -2500,6 +2524,7 @@ public class NodeImpl implements Node, RaftServerService {
         try {
             LOG.info("Node {} shutdown, currTerm={} state={}.", getNodeId(), this.currTerm, this.state);
             if (this.state.compareTo(State.STATE_SHUTTING) < 0) {
+                // 将本节点从 nodeManager 中移除
                 NodeManager.getInstance().remove(this);
                 // If it is leader, set the wakeup_a_candidate with true;
                 // If it is follower, call on_stop_following in step_down
@@ -2535,6 +2560,7 @@ public class NodeImpl implements Node, RaftServerService {
                 // 如果不使用闭锁 无法预测 ringBuffer 中的任务什么时候被处理完
                 if (this.applyQueue != null) {
                     Utils.runInThread(() -> {
+                        // 该对象与 event 持有同一个 闭锁 这样只有在处理事件后 闭锁才会被释放 那么调用 join的线程就会被唤醒
                         this.shutdownLatch = new CountDownLatch(1);
                         this.applyQueue.publishEvent((event, sequence) -> event.shutdownLatch = this.shutdownLatch);
                     });

@@ -28,8 +28,7 @@ import com.alipay.sofa.jraft.util.Requires;
 /**
  * A simple kv state list which is recyclable.
  * This implementation does not allow {@code null} elements to be added.
- * 在 BatchRawKVStore 中被使用   该对象的创建和销毁肯定比较耗资源 所以需要用 Recycles 进行重复利用
- * 该对象就是一个 ArrayList 的加强版
+ * 在 netty 的编解码框架中 每次数据都会存入一个 list 那个list 也是一样的套路 因为会被重复使用 所以配合recycle 实现优化
  */
 public final class KVStateOutputList extends ArrayList<KVState> implements Recyclable {
 

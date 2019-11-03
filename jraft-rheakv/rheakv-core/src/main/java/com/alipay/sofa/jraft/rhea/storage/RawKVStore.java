@@ -22,7 +22,7 @@ import com.alipay.sofa.jraft.rhea.util.concurrent.DistributedLock;
 
 /**
  * Raw KV store
- * KV 存储层
+ * KV 存储层状态机
  * @author dennis
  * @author jiachun.fjc
  */
@@ -43,7 +43,7 @@ public interface RawKVStore {
      *         it.close();
      *     }
      * <pre/>
-     * 返回一个基于head 的迭代器 在不使用时 应该关闭它
+     * 返回一个基于heap 的迭代器 在不使用时 应该关闭它
      */
     KVIterator localIterator();
 

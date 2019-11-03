@@ -216,7 +216,7 @@ public class LogManagerImpl implements LogManager {
      * 2018-Apr-04 5:05:04 PM
      */
     private static class WaitMeta {
-        /** callback when new log come in  当添加一个新的 LogEntry时触发的回调*/
+        /** callback when new log come in  当添加一个新的 LogEntry时触发的回调  实际上 replicator 就是通过该回调起作用 */
         NewLogCallback onNewLog;
         /** callback error code 错误码*/
         int            errorCode;
@@ -410,7 +410,7 @@ public class LogManagerImpl implements LogManager {
     }
 
     /**
-     * 操控 logManager  将一组LogEntry 通过该对象存储到 LogStorage
+     * 操控 logManager  将一组LogEntry 通过该对象存储到 LogStorage  此时还没有触发commit
      * @param entries log entries
      * @param done    callback
      */
@@ -426,7 +426,7 @@ public class LogManagerImpl implements LogManager {
         boolean doUnlock = true;
         this.writeLock.lock();
         try {
-            // 发现要写入的数据异常
+            // 发现要写入的数据异常  针对leader来说 只是为entries 设置了index
             if (!entries.isEmpty() && !checkAndResolveConflict(entries, done)) {
                 entries.clear();
                 Utils.runClosureInThread(done, new Status(RaftError.EINTERNAL, "Fail to checkAndResolveConflict."));
@@ -434,10 +434,11 @@ public class LogManagerImpl implements LogManager {
             }
             for (int i = 0; i < entries.size(); i++) {
                 final LogEntry entry = entries.get(i);
-                // Set checksum after checkAndResolveConflict
+                // Set checksum after checkAndResolveConflict  校验和忽略
                 if (this.raftOptions.isEnableLogEntryChecksum()) {
                     entry.setChecksum(entry.checksum());
                 }
+                // 如果写入的是 conf
                 if (entry.getType() == EntryType.ENTRY_TYPE_CONFIGURATION) {
                     Configuration oldConf = new Configuration();
                     if (entry.getOldPeers() != null) {
@@ -450,15 +451,23 @@ public class LogManagerImpl implements LogManager {
                 }
             }
             if (!entries.isEmpty()) {
+                // 注意 leader 对象在写入本机时因为不通过 网络所以不会发生乱序情况 在ballotBox中能保证首次写入一定成功 而为了写入超过
+                // 半数的节点 则要借助网络 此时就有可能发生乱序
                 done.setFirstLogIndex(entries.get(0).getId().getIndex());
                 // 数据不是直接写入到 logStore 中的 而是先写到内存中 在合适的时机进行刷盘
+                // 也就是 当超过半数节点写入成功后 才从内存中写入到 logStore中
+                // TODO 如果宕机了数据不就消失了吗 那么写入内存本身应该没有任何意义啊???
                 this.logsInMemory.addAll(entries);
             }
             // 将检查冲突完后的数据设置到 done 中
             done.setEntries(entries);
 
             int retryTimes = 0;
-            // 这里是发布 OTHER 事件
+            // 这里是发布 OTHER 事件 然后数据会被写入到 appentBatch中 此时是异步操作 也就是 写入到其他节点 和持久化本节点的数据不是顺序执行的
+            // TODO 首先 到底哪样算写入成功 这个分界线应该是 回调触发 那么一旦调用该方法后实际上已经可以写入其他节点了
+            // 实际上这个写入半数 到底要不要包含leader 呢 如果写入leader 就失败了 那么 leader 的数据又怎么保证是准确的呢
+            // 在raft协议中好像没有明确指出这种情况 都是默认写入leader自身成功了 虽然理论上写入自身一定会成功但是 这里借助了第三方框架 如果写入失败
+            // 会怎么样
             final EventTranslator<StableClosureEvent> translator = (event, sequence) -> {
                 event.reset();
                 event.type = EventType.OTHER;
@@ -471,6 +480,7 @@ public class LogManagerImpl implements LogManager {
                 } else {
                     retryTimes++;
                     if (retryTimes > APPEND_LOG_RETRY_TIMES) {
+                        // 这里会触发 caller.onError
                         reportError(RaftError.EBUSY.getNumber(), "LogManager is busy, disk queue overload.");
                         return;
                     }
@@ -479,7 +489,8 @@ public class LogManagerImpl implements LogManager {
                 }
             }
             doUnlock = false;
-            // 触发回调对象  这时数据不一定写入到 writeMap 中
+            // 触发回调对象  实际上 节点复制机制就是通过该对象进行传播的
+            // 梳理一下 某组logEntry 写入到同jvm 的logManager中后 触发Waiter 写入到其他节点
             if (!wakeupAllWaiter(this.writeLock)) {
                 // 如果没有设置 newLog 的 回调对象 才选择触发该监听器
                 notifyLastLogIndexListeners();
@@ -547,7 +558,7 @@ public class LogManagerImpl implements LogManager {
             return false;
         }
         final List<WaitMeta> wms = new ArrayList<>(this.waitMap.values());
-        // 停止代表由于该对象被关闭 无法正常写入数据  success 代表该对象对应的 logEntry 已经正常写入
+        // 停止代表由于该对象被关闭 无法正常写入数据
         final int errCode = this.stopped ? RaftError.ESTOP.getNumber() : RaftError.SUCCESS.getNumber();
         this.waitMap.clear();
         // 一旦清空该容器就 唤醒锁 是为了 将耗时操作放到锁外
@@ -564,7 +575,7 @@ public class LogManagerImpl implements LogManager {
     }
 
     /**
-     * 将一组日志对象写入到LogStorage 中
+     * 将一组日志对象写入到LogStorage 中  实际上在调用appendEntries 时 数据就可能会刷盘了 (积累数据超过size时)
      * @param toAppend
      * @return
      */
@@ -610,7 +621,7 @@ public class LogManagerImpl implements LogManager {
      */
     private class AppendBatcher {
         /**
-         * 存放 事件的队列 每个 事件中包含一组数据(一个LogEntry 列表)
+         * 存放 回调对象的队列 每个 回调中包含一组数据(一个LogEntry 列表)
          */
         List<StableClosure> storage;
         /**
@@ -655,10 +666,11 @@ public class LogManagerImpl implements LogManager {
          */
         LogId flush() {
             if (this.size > 0) {
-                // toAppend 代表一组待写入的数据
+                // toAppend 代表一组待写入的数据  更新最后刷盘的 id
                 this.lastId = appendToStorage(this.toAppend);
                 for (int i = 0; i < this.size; i++) {
                     // storage 中每个元素都对应到toAppend 这里在处理完成时 根据状态触发回调
+                    // 也就是 向node 提交一个任务后 只有真正写入到 storage 才会触发回调 那么 一开始保存在内存中确实是作为二级缓存了
                     this.storage.get(i).getEntries().clear();
                     if (LogManagerImpl.this.hasError) {
                         this.storage.get(i).run(new Status(RaftError.EIO, "Corrupted LogStorage"));
@@ -736,6 +748,8 @@ public class LogManagerImpl implements LogManager {
             final StableClosure done = event.done;
 
             // 如果回调对象中存在 要写入的数据 将实体写入到 ab 中
+            // 当调用 appendEntries 会发出一个 OTHER 事件 会触发ab.append  此时回调对象还没有被触发 也就是ballot 还没有减少需要的票数
+            // 真正触发flush 并写入 logStorage 时 才会触发回调
             if (done.getEntries() != null && !done.getEntries().isEmpty()) {
                 this.ab.append(done);
             } else {
@@ -1314,13 +1328,14 @@ public class LogManagerImpl implements LogManager {
     private boolean checkAndResolveConflict(final List<LogEntry> entries, final StableClosure done) {
         // 等同于 entries.get(0)
         final LogEntry firstLogEntry = ArrayDeque.peekFirst(entries);
-        // 如果 index ==0 代表无法知晓当前合适的偏移量 这时用之前维护的 lastLogIndex 来设置
+        // 如果 index ==0 代表没有指定 LogEntry 的偏移量 默认情况下 index 就是0 而term 会选择node 的任期
+        // 也许leader 的index 不会设置???
         if (firstLogEntry.getId().getIndex() == 0) {
             // Node is currently the leader and |entries| are from the user who
             // don't know the correct indexes the logs should assign to. So we have
             // to assign indexes to the appending entries
             for (int i = 0; i < entries.size(); i++) {
-                // 注意这里的 ++
+                // 注意这里的 ++ (在写锁内所以可以使用非原子操作)  也就是 lastLogIndex 是由对应该node提交的所有任务决定的 无论数据到来的先后
                 entries.get(i).getId().setIndex(++this.lastLogIndex);
             }
             return true;
@@ -1328,7 +1343,9 @@ public class LogManagerImpl implements LogManager {
             // Node is currently a follower and |entries| are from the leader. We
             // should check and resolve the conflicts between the local logs and
             // |entries|
-            // 代表偏移量超过了预期值 无法写入
+            // 代表偏移量超过了预期值 无法写入 那么如果连续往node 写入数据 就会出现 超过偏移量
+            // TODO 这里要确定 follower 是怎么写入数据的 follower 难道就不会收到乱序的数据 还能正常写入吗
+            // TODO follower 写入先放着
             if (firstLogEntry.getId().getIndex() > this.lastLogIndex + 1) {
                 Utils.runClosureInThread(done, new Status(RaftError.EINVAL,
                     "There's gap between first_index=%d and last_log_index=%d", firstLogEntry.getId().getIndex(),
