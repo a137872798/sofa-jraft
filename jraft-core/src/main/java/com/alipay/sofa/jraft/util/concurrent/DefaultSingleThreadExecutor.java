@@ -110,7 +110,7 @@ public final class DefaultSingleThreadExecutor implements SingleThreadExecutor {
             .maximumThreads(1) //
                 // 这里设置了存活时间 那么 线程 会被回收 之后接到任务又会创建新线程
             .keepAliveSeconds(60L) //
-            .workQueue(new LinkedBlockingQueue<>(maxPendingTasks)) //
+            .workQueue(new LinkedBlockingQueue<>(maxPendingTasks)) // 基于链表 有种优化版本是使用 mpsc 队列
             .threadFactory(new NamedThreadFactory(poolName, true)) //
             .build();
 

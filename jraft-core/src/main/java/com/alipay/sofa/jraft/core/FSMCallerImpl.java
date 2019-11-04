@@ -390,6 +390,11 @@ public class FSMCallerImpl implements FSMCaller {
         });
     }
 
+    /**
+     * 当某个刚重置过leader 的follower 又收到某个leader 发来的数据时 重新开始跟随leader
+     * @param ctx context of leader change
+     * @return
+     */
     @Override
     public boolean onStartFollowing(final LeaderChangeContext ctx) {
         return enqueueTask((task, sequence) -> {
@@ -398,6 +403,11 @@ public class FSMCallerImpl implements FSMCaller {
         });
     }
 
+    /**
+     * 当接收到 leader发生变更 同时follower 不再跟随该leader时触发
+     * @param ctx context of leader change
+     * @return
+     */
     @Override
     public boolean onStopFollowing(final LeaderChangeContext ctx) {
         return enqueueTask((task, sequence) -> {

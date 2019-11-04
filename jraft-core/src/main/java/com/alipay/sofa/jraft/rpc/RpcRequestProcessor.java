@@ -28,7 +28,7 @@ import com.google.protobuf.Message;
 
 /**
  * Abstract AsyncUserProcessor for RPC processors.
- * 继承异步处理器
+ * 继承异步处理器 也就是有专门的线程池来处理???
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Apr-08 5:55:39 PM
@@ -57,7 +57,7 @@ public abstract class RpcRequestProcessor<T extends Message> extends AsyncUserPr
     }
 
     /**
-     * 处理请求
+     * 这里是 server 处理client 请求的入口
      * @param bizCtx  存放双端信息
      * @param asyncCtx
      * @param request
@@ -65,9 +65,10 @@ public abstract class RpcRequestProcessor<T extends Message> extends AsyncUserPr
     @Override
     public void handleRequest(BizContext bizCtx, AsyncContext asyncCtx, T request) {
         try {
+            // 处理请求并生成响应结果
             final Message msg = this.processRequest(request, new RpcRequestClosure(bizCtx, asyncCtx));
             if (msg != null) {
-                // 发送响应结果
+                // 如果 response 不为空 则返回给 client
                 asyncCtx.sendResponse(msg);
             }
         } catch (final Throwable t) {

@@ -856,21 +856,35 @@ public class Replicator implements ThreadId.OnError {
         }
     }
 
+    /**
+     * 将其他属性填充到 entry 中
+     * @param nextSendingIndex
+     * @param offset  offset在 0 ～ maxEntry 之间
+     * @param emb  如果 LogEntry 是 conf 类型 将 2组peerIdList 设置到 EntryMeta
+     * @param dateBuffer  如果LogEntry 是 data类型 就加入到buffer中
+     * @return
+     */
     boolean prepareEntry(final long nextSendingIndex, final int offset, final RaftOutter.EntryMeta.Builder emb,
                          final RecyclableByteBufferList dateBuffer) {
+        // 每当往 databuffer 中插入数据 capacity 都会增加 所以当超过 max 时 就代表填充满了
         if (dateBuffer.getCapacity() >= this.raftOptions.getMaxBodySize()) {
             return false;
         }
+        // 代表下个要选择的 偏移量
         final long logIndex = nextSendingIndex + offset;
+        // 从存储数据的 logManager 中获取数据  如果用户是一批一批的复制数据 那么应该在前面的数据成功发送到半数后才进行下次的发送吧
+        // 这里应该要通过什么标识来确保nextSendingIndex 不要将2次任务数据混起来
         final LogEntry entry = this.options.getLogManager().getEntry(logIndex);
         if (entry == null) {
             return false;
         }
+        // 将存储在 logManager中的任期和类型转移到 emb 中 这时数据还不一定会写入 那么是从那么内存中的数据中获取吗
         emb.setTerm(entry.getId().getTerm());
         if (entry.hasChecksum()) {
             emb.setChecksum(entry.getChecksum()); //since 1.2.6
         }
         emb.setType(entry.getType());
+        // 代表本次entry 是 conf
         if (entry.getPeers() != null) {
             Requires.requireTrue(!entry.getPeers().isEmpty(), "Empty peers at logIndex=%d", logIndex);
             for (final PeerId peer : entry.getPeers()) {
@@ -882,13 +896,15 @@ public class Replicator implements ThreadId.OnError {
                 }
             }
         } else {
+            // 确保必须是 数据类型
             Requires.requireTrue(entry.getType() != EnumOutter.EntryType.ENTRY_TYPE_CONFIGURATION,
                 "Empty peers but is ENTRY_TYPE_CONFIGURATION type at logIndex=%d", logIndex);
         }
         final int remaining = entry.getData() != null ? entry.getData().remaining() : 0;
         emb.setDataLen(remaining);
+        // 如果是data 类型 会写入到 databuffer 中
         if (entry.getData() != null) {
-            // should slice entry data
+            // should slice entry data  切片对象的特性就是 共用一个 byte[] 但是拥有独立的指针
             dateBuffer.add(entry.getData().slice());
         }
         return true;
@@ -896,6 +912,8 @@ public class Replicator implements ThreadId.OnError {
 
     /**
      * 通过配置对象初始化 ThreadId  复制机的复制功能依赖于 threadId
+     * 每个 node 包含一个 replicatorGroup 对象 而该对象内包含了除自身之外所有的peer 所对应的 replicator
+     * 也就是实际上一次有多个 replicator 在监听logManager 的指针移动  当指针变化后 每个replicator 都会将请求发送到对应的peer 上
      * @param opts
      * @param raftOptions
      * @return
@@ -1558,6 +1576,13 @@ public class Replicator implements ThreadId.OnError {
         return true;
     }
 
+    /**
+     * 填充公共字段
+     * @param rb
+     * @param prevLogIndex
+     * @param isHeartbeat
+     * @return
+     */
     private boolean fillCommonFields(final AppendEntriesRequest.Builder rb, long prevLogIndex, final boolean isHeartbeat) {
         final long prevLogTerm = this.options.getLogManager().getTerm(prevLogIndex);
         if (prevLogTerm == 0 && prevLogIndex != 0) {
@@ -1613,8 +1638,10 @@ public class Replicator implements ThreadId.OnError {
         try {
             long prevSendIndex = -1;
             while (true) {
+                // 在循环中不断调用该方法 拉取可以发送的下标
                 final long nextSendingIndex = getNextSendIndex();
                 if (nextSendingIndex > prevSendIndex) {
+                    // 真正发送数据的方法
                     if (sendEntries(nextSendingIndex)) {
                         prevSendIndex = nextSendingIndex;
                     } else {
@@ -1636,51 +1663,65 @@ public class Replicator implements ThreadId.OnError {
 
     /**
      * Send log entries to follower, returns true when success, otherwise false and unlock the id.
-     *
+     * 将指定偏移量前的数据发送到其他节点
      * @param nextSendingIndex next sending index
      * @return send result.
      */
     private boolean sendEntries(final long nextSendingIndex) {
         final AppendEntriesRequest.Builder rb = AppendEntriesRequest.newBuilder();
+        // 插入公共字段 如果插入失败的话 就安装快照
         if (!fillCommonFields(rb, nextSendingIndex - 1, false)) {
             // unlock id in installSnapshot
             installSnapshot();
             return false;
         }
 
+        // 该对象用于存放要传输的数据  在 bytebuffer 的基础上增加了 自动扩容能力
         ByteBufferCollector dataBuf = null;
         final int maxEntriesSize = this.raftOptions.getMaxEntriesSize();
+        // 实际上是借助于 recycle 的一个bytebuffer List 该对象会存放 所有data 实体
         final RecyclableByteBufferList byteBufList = RecyclableByteBufferList.newInstance();
         try {
             for (int i = 0; i < maxEntriesSize; i++) {
+                // 发送的数据 被包装成这种类型
                 final RaftOutter.EntryMeta.Builder emb = RaftOutter.EntryMeta.newBuilder();
+                // 填充 meta 对象 无法再添加时跳出该方法
                 if (!prepareEntry(nextSendingIndex, i, emb, byteBufList)) {
                     break;
                 }
+                // em 对应conf 信息
                 rb.addEntries(emb.build());
             }
+            // 代表 全部都是data 类型数据  全部都是 data类型数据就要等待吗 为什么???
             if (rb.getEntriesCount() == 0) {
+                // 代表数据落后了 直接安装快照  这个快照是从哪安装到哪 感觉像是从其他节点安装到本地
                 if (nextSendingIndex < this.options.getLogManager().getFirstLogIndex()) {
                     installSnapshot();
                     return false;
                 }
                 // _id is unlock in _wait_more
+                // 往 LogManager 中再插入一个waitMeta 对象  当数据被写入后 继续触发该方法
                 waitMoreEntries(nextSendingIndex);
                 return false;
             }
+            // 代表本次 entries 中包含 data 数据 也就是确实有效的数据 而不是conf 信息
             if (byteBufList.getCapacity() > 0) {
+                // 申请一个 byteBufferCollector 对象
                 dataBuf = ByteBufferCollector.allocateByRecyclers(byteBufList.getCapacity());
                 for (final ByteBuffer b : byteBufList) {
                     dataBuf.put(b);
                 }
                 final ByteBuffer buf = dataBuf.getBuffer();
+                // 反转成读模式
                 buf.flip();
+                // 将数据序列化后 设置到rb 中
                 rb.setData(ZeroByteStringHelper.wrap(buf));
             }
         } finally {
             RecycleUtil.recycle(byteBufList);
         }
 
+        // 生成请求对象
         final AppendEntriesRequest request = rb.build();
         if (LOG.isDebugEnabled()) {
             LOG.debug(
@@ -1690,6 +1731,7 @@ public class Replicator implements ThreadId.OnError {
                 request.getEntriesCount());
         }
         this.statInfo.runningState = RunningState.APPENDING_ENTRIES;
+        // prevLogIndex 就是 nextIndex - 1
         this.statInfo.firstLogIndex = rb.getPrevLogIndex() + 1;
         this.statInfo.lastLogIndex = rb.getPrevLogIndex() + rb.getEntriesCount();
 
@@ -1697,17 +1739,21 @@ public class Replicator implements ThreadId.OnError {
         final int v = this.version;
         final long monotonicSendTimeMs = Utils.monotonicMs();
         final int seq = getAndIncrementReqSeq();
+        // opt中的peerId 对应某个follower 上 实际上有多个Replicator  他们交由ReplicatorGroup 来统一管理
         final Future<Message> rpcFuture = this.rpcService.appendEntries(this.options.getPeerId().getEndpoint(),
             request, -1, new RpcResponseClosureAdapter<AppendEntriesResponse>() {
 
                 @Override
                 public void run(final Status status) {
+                    // 归还分配出去的buffer
                     RecycleUtil.recycle(recyclable);
+                    // 处理返回结果
                     onRpcReturned(Replicator.this.id, RequestType.AppendEntries, status, request, getResponse(), seq,
                         v, monotonicSendTimeMs);
                 }
 
             });
+        // 代表当前有个请求等待响应
         addInflight(RequestType.AppendEntries, nextSendingIndex, request.getEntriesCount(), request.getData().size(),
             seq, rpcFuture);
         return true;

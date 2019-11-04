@@ -55,6 +55,7 @@ public final class DefaultFixedThreadsExecutorGroupFactory implements FixedThrea
         final ThreadFactory threadFactory = mpsc ? new NamedThreadFactory(poolName, true) : null;
         for (int i = 0; i < nThreads; i++) {
             if (mpsc) {
+                // 内部使用了mpsc 队列
                 children[i] = new MpscSingleThreadExecutor(maxPendingTasksPerThread, threadFactory);
             } else {
                 // 普通的单线程执行器

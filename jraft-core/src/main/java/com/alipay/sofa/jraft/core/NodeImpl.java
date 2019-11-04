@@ -214,6 +214,9 @@ public class NodeImpl implements Node, RaftServerService {
     private TimerManager                                                   timerManager;
     private RepeatedTimer                                                  electionTimer;
     private RepeatedTimer                                                  voteTimer;
+    /**
+     * 代表重复执行的定时任务 内部基于 netty.HashedWheel 实现
+     */
     private RepeatedTimer                                                  stepDownTimer;
     private RepeatedTimer                                                  snapshotTimer;
     private ScheduledFuture<?>                                             transferTimer;
@@ -1042,12 +1045,13 @@ public class NodeImpl implements Node, RaftServerService {
     }
 
     /**
-     * 重置 Leader
-     * @param newLeaderId
+     * 重置 Leader   如果主动调用某个 更改leader 的请求 也会重置 leaderId
+     * @param newLeaderId  当本node作为follower 首次收到leader 发来的请求时 请求体中会携带 serverId 也就是leaderId
+     *                     如果本节点没有设置 leaderId 那么就会被重置
      * @param status
      */
     private void resetLeaderId(final PeerId newLeaderId, final Status status) {
-        // 置空leader
+        // 代表要更换leader
         if (newLeaderId.isEmpty()) {
             // STATE_TRANSFERRING 以上就代表本节点不是leader 节点
             if (!this.leaderId.isEmpty() && this.state.compareTo(State.STATE_TRANSFERRING) > 0) {
@@ -1055,7 +1059,7 @@ public class NodeImpl implements Node, RaftServerService {
                 this.fsmCaller.onStopFollowing(new LeaderChangeContext(this.leaderId.copy(), this.currTerm, status));
             }
             this.leaderId = PeerId.emptyPeer();
-        // 代表设置一个新的leader
+        // 代表设置一个新的leader  当某个follower 接收到新的leader 发来的数据时 就会设置leaderId
         } else {
             if (this.leaderId == null || this.leaderId.isEmpty()) {
                 // 开始跟随一个新的leader
@@ -1066,19 +1070,34 @@ public class NodeImpl implements Node, RaftServerService {
     }
 
     // in writeLock
+
+    /**
+     * 检验 leader 节点是否已经失去leaderShip
+     * @param requestTerm  对应本次发起请求的leader 的任期
+     * @param serverId
+     */
     private void checkStepDown(final long requestTerm, final PeerId serverId) {
         final Status status = new Status();
+        // 接收到来自更新的 leader 的数据  当之前的leader 被更换掉后 收到的新请求 任期自然是新的
         if (requestTerm > this.currTerm) {
             status.setError(RaftError.ENEWLEADER, "Raft node receives message from new leader with higher term.");
             stepDown(requestTerm, false, status);
+        // 能进入到这里已经排除了 requestTerm < this.currTerm 的可能然后上面的情况 又否决了 大于 那么现在 currTerm == requestTerm
+        // 同时本节点 不再是 follower 这就代表
+        // 1. 本节点作为 follower 长时间没有收到leader 的心跳而将自己升级成了candidate 这时收到了 滞后的leader的请求
+        // 2. 本节点已经升级成了 leader  然后收到了滞后的leader 请求 又或者是发生脑裂
+        // 2个leader 之间是可以相互发送数据的呀 这时怎么确定哪个leader 降级呢 通过term吧
+        // 调用stepDown方法的参数于上面完全一致
         } else if (this.state != State.STATE_FOLLOWER) {
             status.setError(RaftError.ENEWLEADER, "Candidate receives message from new leader with the same term.");
             stepDown(requestTerm, false, status);
+        // 本节点还是 follower 但是 leaderId 已经不在了 leaderId 什么时候被置空 推测可能是初始化时 还有就是强制更换leader
         } else if (this.leaderId.isEmpty()) {
             status.setError(RaftError.ENEWLEADER, "Follower receives message from new leader with the same term.");
             stepDown(requestTerm, false, status);
         }
-        // save current leader
+        // stepDown 最后会清除 leaderId
+        // save current leader 更新当前的leaderId
         if (this.leaderId == null || this.leaderId.isEmpty()) {
             resetLeaderId(serverId, status);
         }
@@ -1114,18 +1133,32 @@ public class NodeImpl implements Node, RaftServerService {
     }
 
     // should be in writeLock
+
+    /**
+     *
+     * @param term
+     * @param wakeupCandidate
+     * @param status
+     */
     private void stepDown(final long term, final boolean wakeupCandidate, final Status status) {
         LOG.debug("Node {} stepDown, term={}, newTerm={}, wakeupCandidate={}.", getNodeId(), this.currTerm, term,
             wakeupCandidate);
+        // 如果已经失活 就没有处理的必要了  还需要看看 如何做到优雅关闭的
         if (!this.state.isActive()) {
             return;
         }
+        // 如果当前节点是 候选人 那么可以停止投票了 对应的场景就是 在同一时间 极端情况出现了多个候选人(实际上因为随机心跳的设置已经不容易出现该情况了)
+        // 而一旦某个候选人成功竞选后 成为了leader 并向其他节点发送数据 (发什么 心跳吗???) 那么其他的候选人就知道自己没有必要再参选了
+        // 恢复成 follower
         if (this.state == State.STATE_CANDIDATE) {
             stopVoteTimer();
+        // 如果本节点就是 leader  多个leader 之间会发送数据都会进入这个分支 那么应该根据 term 确定哪个才是该保留的
+        // 难道说哪里能够保证 当前真正的leader 不会收到其他leader 发来的请求??? 这样就对应下面无条件关闭leader了
         } else if (this.state.compareTo(State.STATE_TRANSFERRING) <= 0) {
             stopStepDownTimer();
             this.ballotBox.clearPendingTasks();
             // signal fsm leader stop immediately
+            // 如果当前节点是 leader 那么 立即触发 停止 TODO  等下这里不用判断term吗 ???
             if (this.state == State.STATE_LEADER) {
                 onLeaderStop(status);
             }
@@ -1134,20 +1167,28 @@ public class NodeImpl implements Node, RaftServerService {
         resetLeaderId(PeerId.emptyPeer(), status);
 
         // soft state in memory
+        // 强制设置为 跟随者
         this.state = State.STATE_FOLLOWER;
+        // TODO 这个晚点看
         this.confCtx.reset();
+        // 设置leader 更新时间
         updateLastLeaderTimestamp(Utils.monotonicMs());
+        // 打断下载快照的任务 这个任务是哪到哪  关闭的是当前请求体对应的任期
         if (this.snapshotExecutor != null) {
             this.snapshotExecutor.interruptDownloadingSnapshots(term);
         }
 
         // meta state
+        // 如果本次leader 的任期更新
         if (term > this.currTerm) {
             this.currTerm = term;
+            // TODO 这个属性要看到投票相关的才能明白
             this.votedId = PeerId.emptyPeer();
+            // 重置 term 和 votedId TODO 这里可能还有后续的逻辑 先不管
             this.metaStorage.setTermAndVotedFor(term, this.votedId);
         }
 
+        // TODO 待理解
         if (wakeupCandidate) {
             this.wakingCandidate = this.replicatorGroup.stopAllAndFindTheNextCandidate(this.conf);
             if (this.wakingCandidate != null) {
@@ -1750,13 +1791,21 @@ public class NodeImpl implements Node, RaftServerService {
         }
     }
 
+    /**
+     * server 接收从leader 传来的logEntry请求 到最后 还是委托给了node 来实现
+     * @param request   data of the entries to append
+     * @param done      callback  该回调内部嵌套了多层回调 包含 返回res给 client 的回调 和 client端处理res 的回调
+     * @return
+     */
     @Override
     public Message handleAppendEntriesRequest(final AppendEntriesRequest request, final RpcRequestClosure done) {
         boolean doUnlock = true;
         final long startMs = Utils.monotonicMs();
         this.writeLock.lock();
+        // 这个实际上是 conf 的数量  request.getData.size() 才是LogEntry的数量
         final int entriesCount = request.getEntriesCount();
         try {
+            // 如果节点已经失活了 返回无法正常处理请求的结果
             if (!this.state.isActive()) {
                 LOG.warn("Node {} is not in active state, currTerm={}.", getNodeId(), this.currTerm);
                 return RpcResponseFactory.newResponse(RaftError.EINVAL, "Node %s is not in active state, state %s.",
@@ -1764,6 +1813,8 @@ public class NodeImpl implements Node, RaftServerService {
             }
 
             final PeerId serverId = new PeerId();
+
+            // serverId 是 leader 的id 而 peerId 就是本node的id (本node 是follower)
             if (!serverId.parse(request.getServerId())) {
                 LOG.warn("Node {} received AppendEntriesRequest from {} serverId bad format.", getNodeId(),
                     request.getServerId());
@@ -1771,7 +1822,7 @@ public class NodeImpl implements Node, RaftServerService {
                     request.getServerId());
             }
 
-            // Check stale term
+            // Check stale term  数据已经过期了
             if (request.getTerm() < this.currTerm) {
                 LOG.warn("Node {} ignore stale AppendEntriesRequest from {}, term={}, currTerm={}.", getNodeId(),
                     request.getServerId(), request.getTerm(), this.currTerm);
@@ -1781,8 +1832,9 @@ public class NodeImpl implements Node, RaftServerService {
                     .build();
             }
 
-            // Check term and state to step down
+            // Check term and state to step down  这里在检测 是否要更新本节点的角色 可能是从候选人变成跟随者 里面还有些细节待梳理
             checkStepDown(request.getTerm(), serverId);
+            // 代表leader发生了变化 TODO 这段先不看 主要先理清 logEntry 是如何添加到 follower 上的
             if (!serverId.equals(this.leaderId)) {
                 LOG.error("Another peer {} declares that it is the leader at term {} which was occupied by leader {}.",
                     serverId, this.currTerm, this.leaderId);
@@ -1796,16 +1848,24 @@ public class NodeImpl implements Node, RaftServerService {
                     .build();
             }
 
+            // 又更新leader 的时间戳
             updateLastLeaderTimestamp(Utils.monotonicMs());
 
+            // entriesCount 是conf 的数量  data 才是LogEntry 的数量
+            // 如果正在安装快照 不允许提交配置  如果本次集群复制失败了 那么怎么处理 代表提交失败了吗
             if (entriesCount > 0 && this.snapshotExecutor != null && this.snapshotExecutor.isInstallingSnapshot()) {
                 LOG.warn("Node {} received AppendEntriesRequest while installing snapshot.", getNodeId());
                 return RpcResponseFactory.newResponse(RaftError.EBUSY, "Node %s:%s is installing snapshot.",
                     this.groupId, this.serverId);
             }
 
+            // 获取上次写入 LogManager 的数据 以及对应的任期 这时数据可能还没持久化 而是仅仅写入了 leader的内存
             final long prevLogIndex = request.getPrevLogIndex();
             final long prevLogTerm = request.getPrevLogTerm();
+            // ** 关键点 如果从follower上拉取数据对应的任期不对 则可能该follower 有部分数据尚未写入吗???
+            // 没找到的情况返回0   2个任期会不匹配这时应该要同步阻塞安装快照???  用户是否必须要等 某个提交成功的数据 完全写入到所有节点才
+            // 允许提交下个任务 应该是不会采用这么慢的方式 那么这里返回失败请求会如何处理呢 又或者中途更换了leader 那么 虽然找到了数据但是
+            // 任期还是不匹配 如何处理???
             final long localPrevLogTerm = this.logManager.getTerm(prevLogIndex);
             if (localPrevLogTerm != prevLogTerm) {
                 final long lastLogIndex = this.logManager.getLastLogIndex();

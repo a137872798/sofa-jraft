@@ -1005,7 +1005,8 @@ public class LogManagerImpl implements LogManager {
             if (index > this.lastLogIndex || index < this.firstLogIndex) {
                 return null;
             }
-            // 首先尝试从内存加载
+            // 首先尝试从内存加载  数据首先会写入内存 如果超过一定量就会批量写入到LogStore中 而复制机 传播数据也是
+            // 通过该方法获取数据
             final LogEntry entry = getEntryFromMemory(index);
             if (entry != null) {
                 return entry;
@@ -1045,7 +1046,8 @@ public class LogManagerImpl implements LogManager {
             if (index == this.lastSnapshotId.getIndex()) {
                 return this.lastSnapshotId.getTerm();
             }
-            // 先尝试从一级缓存获取
+            // 先尝试从内存获取 因为写入内存和写入rocksDB 也是异步的 这里能获取到数据不代表 真正写入到磁盘 所以会尝试从二者都获取一次
+            // 如果为持久化时宕机了怎么办
             final LogEntry entry = getEntryFromMemory(index);
             if (entry != null) {
                 return entry.getId().getTerm();

@@ -30,7 +30,7 @@ import com.google.protobuf.Message;
 
 /**
  * Node handle requests processor template.
- * 处理节点请求
+ * node 请求处理器的模板
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Apr-08 6:03:25 PM 
@@ -49,14 +49,22 @@ public abstract class NodeRequestProcessor<T extends Message> extends RpcRequest
 
     protected abstract String getGroupId(final T request);
 
+    /**
+     * 处理请求
+     * @param request
+     * @param done 该对象内部包含了 bizContext(包含通讯2端的信息, asyncContext具备将res返回给client的能力)
+     * @return
+     */
     @Override
     public Message processRequest(T request, RpcRequestClosure done) {
         final PeerId peer = new PeerId();
+        // 请求中的peerId 就是client的target  也就是处理该请求的节点地址
         final String peerIdStr = getPeerId(request);
         if (peer.parse(peerIdStr)) {
             final String groupId = getGroupId(request);
-            // 通过 group 和 peer 找到 node 并触发processRequest0
+            // 尝试从NodeManager中搜索node信息
             final Node node = NodeManager.getInstance().get(groupId, peer);
+            // 这个node 是什么时候插入进去的???
             if (node != null) {
                 return processRequest0((RaftServerService) node, request, done);
             } else {

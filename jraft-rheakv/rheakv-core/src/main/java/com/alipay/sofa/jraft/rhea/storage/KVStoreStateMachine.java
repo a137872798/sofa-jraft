@@ -321,7 +321,6 @@ public class KVStoreStateMachine extends StateMachineAdapter {
     }
 
     /**
-     * 监听该对象由follower 变成leader
      * @param term
      */
     @Override
@@ -332,6 +331,7 @@ public class KVStoreStateMachine extends StateMachineAdapter {
         // Because of the raft state machine must be a sequential commit, in order to prevent the user
         // doing something (needs to go through the raft state machine) in the listeners, we need
         // asynchronously triggers the listeners.
+        // 使用 storeEngine 专有的 状态变更触发线程池去执行监听器
         this.storeEngine.getRaftStateTrigger().execute(() -> {
             for (final StateListener listener : this.listeners) { // iterator the snapshot
                 listener.onLeaderStart(term);
@@ -354,8 +354,13 @@ public class KVStoreStateMachine extends StateMachineAdapter {
         });
     }
 
+    /**
+     * 当 某个follower 开始跟随某个leader时 触发 无默认实现  而onLeaderStart 会触发pd 的某个方法
+     * @param ctx
+     */
     @Override
     public void onStartFollowing(final LeaderChangeContext ctx) {
+        // 父类就是打印日志
         super.onStartFollowing(ctx);
         // Because of the raft state machine must be a sequential commit, in order to prevent the user
         // doing something (needs to go through the raft state machine) in the listeners, we need
@@ -367,6 +372,10 @@ public class KVStoreStateMachine extends StateMachineAdapter {
         });
     }
 
+    /**
+     * follower 停止跟随leader时触发  无默认实现
+     * @param ctx
+     */
     @Override
     public void onStopFollowing(final LeaderChangeContext ctx) {
         super.onStopFollowing(ctx);

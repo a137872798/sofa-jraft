@@ -50,7 +50,7 @@ import com.google.protobuf.Message;
 
 /**
  * Raft rpc service based bolt.
- * 基于螺丝的RPC service 对象
+ * 就是一个 client 基本类
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Mar-28 6:07:05 PM
@@ -58,7 +58,9 @@ import com.google.protobuf.Message;
 public class BoltRaftClientService extends AbstractBoltClientService implements RaftClientService {
 
     /**
-     * 创建线程组对象
+     * 创建线程组对象  默认使用mpsc 作为任务队列 同时该对象 使用了 类似netty 的线程组模式 内部包含一个选择器对象
+     * 会负载请求 使用其中一条线程设置任务   阻塞队列本身为什么性能差 是因为不同线程间并发访问下标 必须要加锁
+     * 而mpsc 就是专门为这种情况创建的一种无锁队列
      */
     private static final FixedThreadsExecutorGroup  APPEND_ENTRIES_EXECUTORS = DefaultFixedThreadsExecutorGroupFactory.INSTANCE
                                                                                  .newExecutorGroup(
@@ -115,10 +117,23 @@ public class BoltRaftClientService extends AbstractBoltClientService implements 
         return invokeWithDone(endpoint, request, done, this.nodeOptions.getElectionTimeoutMs());
     }
 
+    /**
+     * 代表该client 对象将某个请求发送到endpoint 对应的 follower上
+     * @param endpoint  destination address (ip, port)  某个follower 对应的地址
+     * @param request   request data
+     * @param timeoutMs 默认超时时间为-1
+     * @param done      callback
+     * @return
+     */
     @Override
     public Future<Message> appendEntries(final Endpoint endpoint, final AppendEntriesRequest request,
                                          final int timeoutMs, final RpcResponseClosure<AppendEntriesResponse> done) {
+        // 通过选择器 相对公平的选择某条线程作为始终处理该endpoint 相关发送逻辑的线程  因为leader 向每个follower 发送的数据可以是完全相同的
+        // 所以使用 rr 可以保证公平性  实际上任何线程池 都可以考虑使用mpsc 来提高性能
+        // 为什么要使用 线程组 因为默认的线程池实现 当其他线程处理完任务后都会从阻塞队列中拉取任务 那么实际上不符合 mpsc的模型
+        // 而是 mpmc 所以 mpsc作为阻塞队列+线程组+选择器  是一种固定搭配  直接往JUC 实现的线程池中替换mpsc是没用的
         final Executor executor = this.appendEntriesExecutorMap.computeIfAbsent(endpoint, k -> APPEND_ENTRIES_EXECUTORS.next());
+        // 使用指定的线程池执行任务
         return invokeWithDone(endpoint, request, done, timeoutMs, executor);
     }
 

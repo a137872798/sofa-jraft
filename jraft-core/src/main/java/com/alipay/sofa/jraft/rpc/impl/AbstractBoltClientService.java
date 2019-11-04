@@ -208,6 +208,18 @@ public abstract class AbstractBoltClientService implements ClientService {
         return invokeWithDone(endpoint, request, this.defaultInvokeCtx, done, timeoutMs, this.rpcExecutor);
     }
 
+    /**
+     * 当没有指定调用上下文时 使用默认的 上下文对象
+     * 实际上上下文对象就是一个map 他会和本次需要发送的数据一起序列化并被发送到对端 对端从中获取元数据信息
+     * defaultInvokeCtx 默认情况下只会设置 是否校验crc
+     * @param endpoint
+     * @param request
+     * @param done
+     * @param timeoutMs
+     * @param rpcExecutor
+     * @param <T>
+     * @return
+     */
     public <T extends Message> Future<Message> invokeWithDone(final Endpoint endpoint, final Message request,
                                                               final RpcResponseClosure<T> done, final int timeoutMs,
                                                               final Executor rpcExecutor) {
@@ -238,8 +250,10 @@ public abstract class AbstractBoltClientService implements ClientService {
         final FutureImpl<Message> future = new FutureImpl<>();
         try {
             final Url rpcUrl = this.rpcAddressParser.parse(endpoint.toString());
+            // 通过 alipay.remoting 的client 发送请求
             this.rpcClient.invokeWithCallback(rpcUrl, request, ctx, new InvokeCallback() {
 
+                // 在回调中嵌套对回调的调用
                 @SuppressWarnings("unchecked")
                 @Override
                 public void onResponse(final Object result) {

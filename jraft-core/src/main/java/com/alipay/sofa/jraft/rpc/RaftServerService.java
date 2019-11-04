@@ -26,7 +26,7 @@ import com.google.protobuf.Message;
 
 /**
  * Raft RPC service in server.
- * 代表 Raft 中的 server
+ * 暴露 node 作为server时 处理请求的api
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Apr-03 4:25:09 PM

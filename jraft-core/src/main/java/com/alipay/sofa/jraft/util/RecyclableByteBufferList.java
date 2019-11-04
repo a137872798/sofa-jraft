@@ -23,6 +23,7 @@ import java.util.Collection;
 /**
  * A simple {@link java.nio.ByteBuffer} list which is recyclable.
  * This implementation does not allow {@code null} elements to be added.
+ * 代表一组 bytebuffer
  */
 public final class RecyclableByteBufferList extends ArrayList<ByteBuffer> implements Recyclable {
 

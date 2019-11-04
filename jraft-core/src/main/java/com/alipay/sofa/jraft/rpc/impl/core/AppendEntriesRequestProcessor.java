@@ -43,7 +43,7 @@ import com.google.protobuf.Message;
 
 /**
  * Append entries request processor.
- * 追加LogEntry???
+ * 该对象作为 node 节点的server处理器 用于处理从 client 接受到的请求  该处理器是在什么时机设置的???
  * 实现了连接事件处理器
  * @author boyan (boyan@alibaba-inc.com)
  *
@@ -112,10 +112,16 @@ public class AppendEntriesRequestProcessor extends NodeRequestProcessor<AppendEn
     class SequenceRpcRequestClosure extends RpcRequestClosure {
 
         /**
-         * 当前请求的序列
+         * 当前处理的序列
          */
         private final int    reqSequence;
+        /**
+         * 本node 所在组的id
+         */
         private final String groupId;
+        /**
+         * 本node 的id
+         */
         private final String peerId;
 
         public SequenceRpcRequestClosure(RpcRequestClosure parent, int sequence, String groupId, String peerId) {
@@ -274,6 +280,10 @@ public class AppendEntriesRequestProcessor extends NodeRequestProcessor<AppendEn
             return this.responseQueue.size() > this.maxPendingResponses;
         }
 
+        /**
+         * 增加该上下文已经处理的请求数量
+         * @return
+         */
         int getAndIncrementSequence() {
             final int prev = this.sequence;
             this.sequence++;
@@ -343,6 +353,7 @@ public class AppendEntriesRequestProcessor extends NodeRequestProcessor<AppendEn
                     assert (parsed);
                     final Node node = NodeManager.getInstance().get(groupId, peer);
                     assert (node != null);
+                    // 这里保存了 maxInflight 代表 服务端也有做处理数量的限制
                     peerCtx = new PeerRequestContext(groupId, peerId, node.getRaftOptions()
                         .getMaxReplicatorInflightMsgs());
                     groupContexts.put(peerId, peerCtx);
@@ -350,6 +361,7 @@ public class AppendEntriesRequestProcessor extends NodeRequestProcessor<AppendEn
             }
         }
         // Set peer attribute into connection if absent
+        // 这里为连接设置了 peerId 的属性 该id 就对应本server的节点id
         if (conn != null && conn.getAttribute(PEER_ATTR) == null) {
             conn.setAttribute(PEER_ATTR, peerId);
         }
@@ -373,7 +385,7 @@ public class AppendEntriesRequestProcessor extends NodeRequestProcessor<AppendEn
     /**
      * RAFT group peer request contexts
      * Map<groupId, <peerId, ctx>>
-     *     上下文缓存
+     *     上下文缓存  key1 是组id  key2 是 节点id value 是上下文
      */
     private final ConcurrentMap<String, ConcurrentMap<String, PeerRequestContext>> peerRequestContexts = new ConcurrentHashMap<>();
 
@@ -395,6 +407,7 @@ public class AppendEntriesRequestProcessor extends NodeRequestProcessor<AppendEn
 
     @Override
     protected String getPeerId(final AppendEntriesRequest request) {
+        // 就是返回client 的地址
         return request.getPeerId();
     }
 
@@ -423,8 +436,8 @@ public class AppendEntriesRequestProcessor extends NodeRequestProcessor<AppendEn
     }
 
     /**
-     * 处理请求的逻辑
-     * @param service
+     * 处理请求最后会转发到该方法
+     * @param service  本server   实际上是一个node对象
      * @param request
      * @param done
      * @return
@@ -433,15 +446,18 @@ public class AppendEntriesRequestProcessor extends NodeRequestProcessor<AppendEn
     public Message processRequest0(final RaftServerService service, final AppendEntriesRequest request,
                                    final RpcRequestClosure done) {
 
+        // 因为传入的是node 对象所以可以这样转换
         final Node node = (Node) service;
 
+        // 是否使用管道
         if (node.getRaftOptions().isReplicatorPipeline()) {
+            // groupId 和 peerId 实际上就是指向该server
             final String groupId = request.getGroupId();
             final String peerId = request.getPeerId();
 
             // 获取该 peer对应的上下文 并获取应当处理的序列值
             final int reqSequence = getAndIncrementSequence(groupId, peerId, done.getBizContext().getConnection());
-            // 处理结果 并通过回调对象 发送
+            // 使用node 处理添加LogEntry的任务 这里将 回调又包装了一层
             final Message response = service.handleAppendEntriesRequest(request, new SequenceRpcRequestClosure(done,
                 reqSequence, groupId, peerId));
             // 这里又发送一次 啥意思  看来一般情况下 上面应该是返回null
@@ -477,7 +493,7 @@ public class AppendEntriesRequestProcessor extends NodeRequestProcessor<AppendEn
     }
 
     /**
-     * 检测到连接事件
+     * 当连接到 server 时 会触发该方法
      * @param remoteAddr
      * @param conn
      */

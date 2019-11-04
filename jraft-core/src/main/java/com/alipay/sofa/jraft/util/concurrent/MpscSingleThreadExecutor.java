@@ -311,6 +311,7 @@ public class MpscSingleThreadExecutor implements SingleThreadExecutor {
      * 启动工作者
      */
     private void startWorker() {
+        // 实际上这就代表 只会触发一次 doStartWorker 也就是只会调用一次 execute (只创建一次线程)
         if (this.state != ST_NOT_STARTED) {
             // avoid CAS if not needed
             return;

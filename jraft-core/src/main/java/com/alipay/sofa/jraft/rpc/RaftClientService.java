@@ -55,7 +55,8 @@ public interface RaftClientService extends ClientService {
     /**
      * Sends a append-entries request and handle the response with done.
      * 发送一个 增加数据的请求
-     * @param endpoint  destination address (ip, port)
+     * @param endpoint  destination address (ip, port)  某个follower 对应的地址
+     * @param timeoutMs 默认超时时间为-1
      * @param request   request data
      * @param done      callback
      * @return a future with result
