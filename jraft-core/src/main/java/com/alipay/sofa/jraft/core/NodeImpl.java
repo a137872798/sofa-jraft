@@ -1900,6 +1900,7 @@ public class NodeImpl implements Node, RaftServerService {
     }
 
     // called when leader receive greater term in AppendEntriesResponse
+    // 复制机会往其他follower 发送心跳 如果发现某个节点的任期更高 就会调用该方法  稍后看
     void increaseTermTo(final long newTerm, final Status status) {
         this.writeLock.lock();
         try {

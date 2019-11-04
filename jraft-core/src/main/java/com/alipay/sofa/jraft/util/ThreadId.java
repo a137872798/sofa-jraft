@@ -79,6 +79,11 @@ public class ThreadId {
         void onError(final ThreadId id, final Object data, final int errorCode);
     }
 
+    /**
+     * 默认情况下 data 和 onError 都是 Replicator 对象 复制机本身实现了 OnError 接口
+     * @param data
+     * @param onError
+     */
     public ThreadId(final Object data, final OnError onError) {
         super();
         this.data = data;

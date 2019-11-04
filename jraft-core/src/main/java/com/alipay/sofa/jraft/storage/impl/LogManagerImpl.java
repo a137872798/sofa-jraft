@@ -1432,6 +1432,7 @@ public class LogManagerImpl implements LogManager {
      */
     @Override
     public long wait(final long expectedLastLogIndex, final NewLogCallback cb, final Object arg) {
+        // 将传入的回调包装成 waitMeta 对象
         final WaitMeta wm = new WaitMeta(cb, arg, 0);
         return notifyOnNewLog(expectedLastLogIndex, wm);
     }

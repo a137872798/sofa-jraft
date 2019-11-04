@@ -78,22 +78,28 @@ public class Replicator implements ThreadId.OnError {
     private static final Logger              LOG                    = LoggerFactory.getLogger(Replicator.class);
 
     /**
-     * client 对象
+     * client 对象 (跟node中包含的是同一个对象) 用来跟follower 通信
      */
     private final RaftClientService          rpcService;
-    // Next sending log index
+    // Next sending log index 代表下个要发送的下标应该是全局递增的
     private volatile long                    nextIndex;
+    /**
+     * 最大允许的连续错误次数 看来一旦成功就会清零
+     */
     private int                              consecutiveErrorTimes  = 0;
     private boolean                          hasSucceeded;
     private long                             timeoutNowIndex;
     private volatile long                    lastRpcSendTimestamp;
+    /**
+     * 心跳计数器
+     */
     private volatile long                    heartbeatCounter       = 0;
     private volatile long                    appendEntriesCounter   = 0;
     private volatile long                    installSnapshotCounter = 0;
     protected Stat                           statInfo               = new Stat();
     private ScheduledFuture<?>               blockTimer;
 
-    // Cached the latest RPC in-flight request.
+    // Cached the latest RPC in-flight request. 该对象内部包含 最后一次发起的rpc Request 对象
     private Inflight                         rpcInFly;
     // Heartbeat RPC future  心跳消息 这里 Future 被看作是 飞行对象(也就是还未确认结果的对象)
     private Future<Message>                  heartbeatInFly;
@@ -104,7 +110,7 @@ public class Replicator implements ThreadId.OnError {
 
     private long                             waitId                 = -1L;
     /**
-     * 该对象内部包含一个data 并自带上锁功能
+     * 对应该复制机的唯一标识 当进行复制时需要该参数
      */
     protected ThreadId                       id;
     private final ReplicatorOptions          options;
@@ -115,11 +121,11 @@ public class Replicator implements ThreadId.OnError {
      */
     private ScheduledFuture<?>               heartbeatTimer;
     /**
-     * 快照读取器
+     * 快照读取器  replicator 对象不仅有向 follower 发送logEntries 的能力 还有为其他节点安装快照的能力
      */
     private volatile SnapshotReader          reader;
     /**
-     * 追赶回调
+     * 追赶回调  当其他节点变成leader时会使用该对象
      */
     private CatchUpClosure                   catchUpClosure;
     /**
@@ -141,7 +147,7 @@ public class Replicator implements ThreadId.OnError {
 
     // Pending response queue;
     /**
-     * 一个存放RPC 响应结果的 优先队列
+     * 一个存放RPC 响应结果的 优先队列  RpcResponse 通过seq 来比较大小
      */
     private final PriorityQueue<RpcResponse> pendingResponses       = new PriorityQueue<>(50);
 
@@ -158,6 +164,10 @@ public class Replicator implements ThreadId.OnError {
         return prev;
     }
 
+    /**
+     * 增加 required 序列的
+     * @return
+     */
     private int getAndIncrementRequiredNextSeq() {
         final int prev = this.requiredNextSeq;
         this.requiredNextSeq++;
@@ -179,13 +189,21 @@ public class Replicator implements ThreadId.OnError {
         Destroyed // destroyed    销毁
     }
 
+    /**
+     * 初始化 复制机对象
+     * @param replicatorOptions
+     * @param raftOptions
+     */
     public Replicator(final ReplicatorOptions replicatorOptions, final RaftOptions raftOptions) {
         super();
         this.options = replicatorOptions;
         this.nodeMetrics = this.options.getNode().getNodeMetrics();
+        // 代表期待监听的下标 这样每当 LogManager 写入一个数据就会触发一次复制 每个LogEntry 增加一次 lastIndex 可能一次会写入多个LogEntry
         this.nextIndex = this.options.getLogManager().getLastLogIndex() + 1;
+        // 提供了一些快捷使用定时器的api
         this.timerManager = replicatorOptions.getTimerManager();
         this.raftOptions = raftOptions;
+        // 应该是和node共用一个client 对象
         this.rpcService = replicatorOptions.getRaftRpcService();
     }
 
@@ -230,12 +248,12 @@ public class Replicator implements ThreadId.OnError {
     }
 
     /**
-     * 被复制的事件
+     * 针对 stateListener 对应api 的事件
      */
     enum ReplicatorEvent {
-        CREATED, // created  创建某个东西
+        CREATED, // created  当replicator被创建时
         ERROR, // error      出现异常
-        DESTROYED // destroyed  销毁某个东西
+        DESTROYED // destroyed  销毁时
     }
 
     /**
@@ -273,7 +291,7 @@ public class Replicator implements ThreadId.OnError {
 
     /**
      * Notify replicator event(such as created, error, destroyed) to replicatorStateListener which is implemented by users.
-     * 触发监听器
+     * 根据事件类型转发到监听器的不同方法
      * @param replicator    replicator object
      * @param event         replicator's state listener event type
      * @param status        replicator's error detailed status
@@ -326,6 +344,7 @@ public class Replicator implements ThreadId.OnError {
      * 2018-Apr-04 10:38:53 AM
      */
     static class Stat {
+        // 记录当前运行状态
         RunningState runningState;
         long         firstLogIndex;
         long         lastLogIncluded;
@@ -341,7 +360,7 @@ public class Replicator implements ThreadId.OnError {
 
     }
 
-    // In-flight request type
+    // In-flight request type    异步请求的类型 1.为其他node安装快照  2.为其他节点发送LogEntries
     enum RequestType {
         Snapshot, // install snapshot
         AppendEntries // replicate logs
@@ -349,21 +368,21 @@ public class Replicator implements ThreadId.OnError {
 
     /**
      * In-flight request.
-     * 飞行对象???
+     * 就是对future 的包装  记录该组数据的偏移量  便于限流
      * @author dennis
      *
      */
     static class Inflight {
-        // In-flight request count   记录增加飞行中的对象 可以理解为一个响应池
+        // In-flight request count
         final int             count;
-        // Start log index
+        // Start log index 代表该组数据的起始偏移量
         final long            startIndex;
-        // Entries size in bytes
+        // Entries size in bytes  该组数据长度
         final int             size;
-        // RPC future
+        // RPC future  用于获取结果
         final Future<Message> rpcFuture;
         /**
-         * 请求类型 快照/增加LogEntry
+         * 请求类型 安装快照/增加LogEntry
          */
         final RequestType     requestType;
         // Request sequence.   当前请求对象序列
@@ -386,7 +405,7 @@ public class Replicator implements ThreadId.OnError {
                    + ", rpcFuture=" + this.rpcFuture + ", requestType=" + this.requestType + ", seq=" + this.seq + "]";
         }
 
-        // 当计数器 大于 0 代表有请求还未返回响应结果
+        // 判断本次 future 对象是否是发送LogEntries  首先类型要匹配 其次count 必须大于0  因为 prob 也是使用了 AppendEntries 类型
         boolean isSendingLogEntries() {
             return this.requestType == RequestType.AppendEntries && this.count > 0;
         }
@@ -394,6 +413,7 @@ public class Replicator implements ThreadId.OnError {
 
     /**
      * RPC response for AppendEntries/InstallSnapshot.
+     * 代表本次响应结果
      * @author dennis
      *
      */
@@ -402,9 +422,15 @@ public class Replicator implements ThreadId.OnError {
          * 响应结果状态
          */
         final Status      status;
+        /**
+         * 请求体也存放在里面
+         */
         final Message     request;
         final Message     response;
         final long        rpcSendTime;
+        /**
+         * 响应序列
+         */
         final int         seq;
         final RequestType requestType;
 
@@ -527,7 +553,7 @@ public class Replicator implements ThreadId.OnError {
      * Adds a in-flight request
      * 增加一个 飞行对象
      * @param reqType   type of request
-     * @param count     count if request  这个怎么会是从外部传入的呢
+     * @param count     count if request
      * @param size      size in bytes
      */
     private void addInflight(final RequestType reqType, final long startIndex, final int count, final int size,
@@ -540,37 +566,42 @@ public class Replicator implements ThreadId.OnError {
 
     /**
      * Returns the next in-flight sending index, return -1 when can't send more in-flight requests.
-     *
+     * 获取下一个待发送的下标
      * @return next in-flight sending index
      */
     long getNextSendIndex() {
         // Fast path
         if (this.inflights.isEmpty()) {
+            // nextIndex 应该是一个全局递增的标识  从这里看出 nextIndex 记录的是不包含 在inflights 数据的偏移量
             return this.nextIndex;
         }
-        // Too many in-flight requests.
+        // Too many in-flight requests.  超过了最多允许等待的请求数
         if (this.inflights.size() > this.raftOptions.getMaxReplicatorInflightMsgs()) {
             return -1L;
         }
         // Last request should be a AppendEntries request and has some entries.
+        // 待发送的数据长读要计算在内
         if (this.rpcInFly != null && this.rpcInFly.isSendingLogEntries()) {
             return this.rpcInFly.startIndex + this.rpcInFly.count;
         }
         return -1L;
     }
 
+    /**
+     * 从待处理future 中拉取对象
+     * @return
+     */
     private Inflight pollInflight() {
         return this.inflights.poll();
     }
 
     /**
-     * 开启心跳任务
+     * 开启单次延时任务 在指定延时后 如果id 不为空 就设置超时异常
      * @param startMs
      */
     private void startHeartbeatTimer(final long startMs) {
         final long dueTime = startMs + this.options.getDynamicHeartBeatTimeoutMs();
         try {
-            // 这里定时执行设置异常的任务是什么意思
             this.heartbeatTimer = this.timerManager.schedule(() -> onTimeout(this.id), dueTime - Utils.nowMs(),
                 TimeUnit.MILLISECONDS);
         } catch (final Exception e) {
@@ -583,6 +614,7 @@ public class Replicator implements ThreadId.OnError {
      * 安装快照
      */
     void installSnapshot() {
+        // 如果当前正在安装快照就 忽略新的安装请求
         if (this.state == State.Snapshot) {
             LOG.warn("Replicator {} is installing snapshot, ignore the new request.", this.options.getPeerId());
             this.id.unlock();
@@ -593,7 +625,7 @@ public class Replicator implements ThreadId.OnError {
             Requires.requireTrue(this.reader == null,
                 "Replicator %s already has a snapshot reader, current state is %s", this.options.getPeerId(),
                 this.state);
-            // 开启本地快照存储对象
+            // 开启本地快照读取对象从 这里先粗略的理解为reader 连接到了某个文件
             this.reader = this.options.getSnapshotStorage().open();
             if (this.reader == null) {
                 // 如果快照对象还没有创建 这里要抛出异常
@@ -740,6 +772,7 @@ public class Replicator implements ThreadId.OnError {
 
     /**
      * 发送空的实体 根据是否是心跳 发送数据
+     * 当复制机被初始化 调用start 时 会调用该方法 此时的heartbeat == false 代表发送的是探测请求
      * @param isHeartbeat
      */
     private void sendEmptyEntries(final boolean isHeartbeat) {
@@ -755,7 +788,9 @@ public class Replicator implements ThreadId.OnError {
     @SuppressWarnings("NonAtomicOperationOnVolatileField")
     private void sendEmptyEntries(final boolean isHeartbeat,
                                   final RpcResponseClosure<AppendEntriesResponse> heartBeatClosure) {
+        // 构建一组 追加 Entries 的请求 对应到leader往其他follower 发送数据
         final AppendEntriesRequest.Builder rb = AppendEntriesRequest.newBuilder();
+        // 填充公共字段  TODO 这里要注意 内部有一个 index 不为0 任期为0的情况 这里的考虑是安装快照
         if (!fillCommonFields(rb, this.nextIndex - 1, isHeartbeat)) {
             // id is unlock in installSnapshot
             installSnapshot();
@@ -769,6 +804,7 @@ public class Replicator implements ThreadId.OnError {
             final long monotonicSendTimeMs = Utils.monotonicMs();
             final AppendEntriesRequest request = rb.build();
 
+            // 如果是心跳请求
             if (isHeartbeat) {
                 // Sending a heartbeat request
                 this.heartbeatCounter++;
@@ -787,14 +823,17 @@ public class Replicator implements ThreadId.OnError {
                 }
                 this.heartbeatInFly = this.rpcService.appendEntries(this.options.getPeerId().getEndpoint(), request,
                     this.options.getElectionTimeoutMs() / 2, heartbeatDone);
+            // 如果是探测请求
             } else {
                 // Sending a probe request.
                 this.statInfo.runningState = RunningState.APPENDING_ENTRIES;
                 this.statInfo.firstLogIndex = this.nextIndex;
                 this.statInfo.lastLogIndex = this.nextIndex - 1;
                 this.appendEntriesCounter++;
+                // 代表正在探测中
                 this.state = State.Probe;
                 final int stateVersion = this.version;
+                // 累加请求次数
                 final int seq = getAndIncrementReqSeq();
                 final Future<Message> rpcFuture = this.rpcService.appendEntries(this.options.getPeerId().getEndpoint(),
                     request, -1, new RpcResponseClosureAdapter<AppendEntriesResponse>() {
@@ -807,6 +846,7 @@ public class Replicator implements ThreadId.OnError {
 
                     });
 
+                // 添加一个待处理的future对象
                 addInflight(RequestType.AppendEntries, this.nextIndex, 0, 0, seq, rpcFuture);
             }
             LOG.debug("Node {} send HeartbeatRequest to {} term {} lastCommittedIndex {}", this.options.getNode()
@@ -855,7 +895,7 @@ public class Replicator implements ThreadId.OnError {
     }
 
     /**
-     * 通过配置对象初始化 ThreadId
+     * 通过配置对象初始化 ThreadId  复制机的复制功能依赖于 threadId
      * @param opts
      * @param raftOptions
      * @return
@@ -865,14 +905,14 @@ public class Replicator implements ThreadId.OnError {
             throw new IllegalArgumentException("Invalid ReplicatorOptions.");
         }
         final Replicator r = new Replicator(opts, raftOptions);
-        // 无法连接 就无法创建对象
+        // 每个follower 对象都会被该 client 连接  里头的逻辑跟seats 很像 就是获取从连接池中获取一条连接 获取不到就初始化一个 这时就触发了 Netty.Bootstrap.connect()
         if (!r.rpcService.connect(opts.getPeerId().getEndpoint())) {
             LOG.error("Fail to init sending channel to {}.", opts.getPeerId());
             // Return and it will be retried later.
             return null;
         }
 
-        // Register replicator metric set.
+        // Register replicator metric set.  统计相关的不看
         final MetricRegistry metricRegistry = opts.getNode().getNodeMetrics().getMetricRegistry();
         if (metricRegistry != null) {
             try {
@@ -888,12 +928,13 @@ public class Replicator implements ThreadId.OnError {
         // Start replication
         r.id = new ThreadId(r, r);
         r.id.lock();
+        // 触发创建钩子  jraft 没有默认实现 用户自行拓展
         notifyReplicatorStatusListener(r, ReplicatorEvent.CREATED);
         LOG.info("Replicator={}@{} is started", r.id, r.options.getPeerId());
         r.catchUpClosure = null;
         r.lastRpcSendTimestamp = Utils.monotonicMs();
         r.startHeartbeatTimer(Utils.nowMs());
-        // id.unlock in sendEmptyEntries
+        // id.unlock in sendEmptyEntries 发送一次探测请求 返回的future 对象会包装成 inflight 并添加到列表中 什么时候处理这些对象呢???
         r.sendEmptyEntries(false);
         return r.id;
     }
@@ -970,16 +1011,18 @@ public class Replicator implements ThreadId.OnError {
     }
 
     /**
-     * 继续发送
-     * @param id
-     * @param errCode
+     * 将数据传播到其他节点
+     * @param id 对应本复制机的id
+     * @param errCode  异常信息 非0代表出现异常 当LogManager已经被关闭时会返回该标识
      * @return
      */
     static boolean continueSending(final ThreadId id, final int errCode) {
         if (id == null) {
             //It was destroyed already
+            // 当复制机被关闭时 id 会被销毁
             return true;
         }
+        // 使用ThreadId上锁
         final Replicator r = (Replicator) id.lock();
         if (r == null) {
             return false;
@@ -994,9 +1037,10 @@ public class Replicator implements ThreadId.OnError {
             // 发送一个探测对象
             r.sendEmptyEntries(false);
         } else if (errCode != RaftError.ESTOP.getNumber()) {
-            // id is unlock in _send_entries
+            // id is unlock in _send_entries 正常情况 开始发送数据
             r.sendEntries();
         } else {
+            // 代表 LogManager 已经关闭 就会停止发送数据
             LOG.warn("Replicator {} stops sending entries.", id);
             id.unlock();
         }
@@ -1157,6 +1201,14 @@ public class Replicator implements ThreadId.OnError {
         }
     }
 
+    /**
+     * 当心跳请求返回结果时
+     * @param id
+     * @param status
+     * @param request
+     * @param response
+     * @param rpcSendTime
+     */
     static void onHeartbeatReturned(final ThreadId id, final Status status, final AppendEntriesRequest request,
                                     final AppendEntriesResponse response, final long rpcSendTime) {
         if (id == null) {
@@ -1186,7 +1238,9 @@ public class Replicator implements ThreadId.OnError {
                     LOG.debug(sb.toString());
                 }
                 r.state = State.Probe;
+                // 触发对应钩子 同样没有 默认实现
                 notifyReplicatorStatusListener(r, ReplicatorEvent.ERROR, status);
+                // 增加连续的失败次数
                 if (++r.consecutiveErrorTimes % 10 == 0) {
                     LOG.warn("Fail to issue RPC to {}, consecutiveErrorTimes={}, error={}", r.options.getPeerId(),
                         r.consecutiveErrorTimes, status);
@@ -1194,7 +1248,10 @@ public class Replicator implements ThreadId.OnError {
                 r.startHeartbeatTimer(startTimeMs);
                 return;
             }
+            // 代表本次心跳成功 清除失败次数
             r.consecutiveErrorTimes = 0;
+            // 如果本节点发现自己已经落后了 销毁本对象  为什么心跳要做的这么复杂呢 因为 每个node是包含状态的 每次通讯意味着状态的校验
+            // 如果某个节点变成leader 不是应该通知其他节点吗 还是说考虑了通信失败的可能性
             if (response.getTerm() > r.options.getTerm()) {
                 if (isLogDebugEnabled) {
                     sb.append(" fail, greater term ").append(response.getTerm()).append(" expect term ")
@@ -1202,12 +1259,15 @@ public class Replicator implements ThreadId.OnError {
                     LOG.debug(sb.toString());
                 }
                 final NodeImpl node = r.options.getNode();
+                // 通知追上新的任期节点
                 r.notifyOnCaughtUp(RaftError.EPERM.getNumber(), true);
                 r.destroy();
+                // 通过心跳增加任期
                 node.increaseTermTo(response.getTerm(), new Status(RaftError.EHIGHERTERMRESPONSE,
                     "Leader receives higher term heartbeat_response from peer:%s", r.options.getPeerId()));
                 return;
             }
+            // 如果获取到对端信息失败
             if (!response.getSuccess() && response.hasLastLogIndex()) {
                 if (isLogDebugEnabled) {
                     sb.append(" fail, response term ").append(response.getTerm()).append(" lastLogIndex ")
@@ -1525,7 +1585,7 @@ public class Replicator implements ThreadId.OnError {
     }
 
     /**
-     * 写入数据体
+     * 该方法会在 LogManager 中设置一个WaitMeta 对象 负责监听某个写入的index 并将数据传播到所有follower 上
      * @param nextWaitIndex
      */
     private void waitMoreEntries(final long nextWaitIndex) {
@@ -1534,8 +1594,11 @@ public class Replicator implements ThreadId.OnError {
             if (this.waitId >= 0) {
                 return;
             }
+            // 代表该对象是第几个等待对象 (从启动开始不断递增)
             this.waitId = this.options.getLogManager().wait(nextWaitIndex - 1,
+                // arg 对应this.id
                 (arg, errorCode) -> continueSending((ThreadId) arg, errorCode), this.id);
+            // 修改当前状态 为 空闲状态
             this.statInfo.runningState = RunningState.IDLE;
         } finally {
             this.id.unlock();
@@ -1543,7 +1606,7 @@ public class Replicator implements ThreadId.OnError {
     }
 
     /**
-     * Send as many requests as possible.
+     * Send as many requests as possible.  将当前囤积的数据都发送出去
      */
     void sendEntries() {
         boolean doUnlock = true;

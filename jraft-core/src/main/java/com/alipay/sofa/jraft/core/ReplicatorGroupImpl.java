@@ -45,7 +45,7 @@ import com.alipay.sofa.jraft.util.ThreadId;
 /**
  * Replicator group for a raft group.
  * @author boyan (boyan@alibaba-inc.com)
- * 复制者组
+ * 该对象管理了整个raft 的组内复制逻辑
  * 2018-Apr-04 1:54:51 PM
  */
 public class ReplicatorGroupImpl implements ReplicatorGroup {
@@ -53,7 +53,7 @@ public class ReplicatorGroupImpl implements ReplicatorGroup {
     private static final Logger                   LOG                = LoggerFactory
                                                                          .getLogger(ReplicatorGroupImpl.class);
 
-    // <peerId, replicatorId>   每个节点 对应一个 自带锁的对象
+    // <peerId, replicatorId>   key 标记地址 value 标识唯一复制机 (该对象内部会包含一个重入锁)
     private final ConcurrentMap<PeerId, ThreadId> replicatorMap      = new ConcurrentHashMap<>();
     /** common replicator options */
     private ReplicatorOptions                     commonOptions;
@@ -61,7 +61,7 @@ public class ReplicatorGroupImpl implements ReplicatorGroup {
     private int                                   electionTimeoutMs  = -1;
     private RaftOptions                           raftOptions;
     /**
-     * 存放一组失败的 复制者
+     * 存放一组尝试连接失败的 节点
      */
     private final Set<PeerId>                     failureReplicators = new ConcurrentHashSet<>();
 
@@ -110,7 +110,8 @@ public class ReplicatorGroupImpl implements ReplicatorGroup {
     }
 
     /**
-     * 往 replicatorMap 中添加新的 节点
+     * 想要正常使用复制机对象 首先需要获取该组下所有的节点 并遍历调用 addReplicator 详见NodeImpl
+     * 这里使用了无锁实现
      * @param peer target peer
      * @return
      */
@@ -118,15 +119,16 @@ public class ReplicatorGroupImpl implements ReplicatorGroup {
     public boolean addReplicator(final PeerId peer) {
         Requires.requireTrue(this.commonOptions.getTerm() != 0);
         if (this.replicatorMap.containsKey(peer)) {
-            //这是???
+            // 该列表中记录了添加失败的 peer 如果某个节点已经包含在replicatorMap中了 就从failureReplicators 中移除该节点
             this.failureReplicators.remove(peer);
             return true;
         }
         final ReplicatorOptions opts = this.commonOptions == null ? new ReplicatorOptions() : this.commonOptions.copy();
 
         opts.setPeerId(peer);
-        // 通过配置 构建对象
+        // 初始化复制机对象
         final ThreadId rid = Replicator.start(opts, this.raftOptions);
+        // 代表没有连接到某个 client
         if (rid == null) {
             LOG.error("Fail to start replicator to peer={}.", peer);
             this.failureReplicators.add(peer);
