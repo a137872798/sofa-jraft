@@ -23,6 +23,7 @@ import com.alipay.sofa.jraft.Status;
 import com.alipay.sofa.jraft.rhea.errors.Errors;
 
 /**
+ * 用于 rhea 模块的对象
  * @author jiachun.fjc
  */
 public class KVClosureAdapter implements KVStoreClosure {

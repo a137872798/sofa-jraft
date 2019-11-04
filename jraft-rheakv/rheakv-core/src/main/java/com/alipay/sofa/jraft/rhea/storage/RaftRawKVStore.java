@@ -37,7 +37,7 @@ import com.alipay.sofa.jraft.util.BytesUtil;
 
 /**
  * KVStore based on RAFT replica state machine.
- * 基于 状态机的 KV 存储
+ * rhea 模块的 门面类
  * @author jiachun.fjc
  */
 public class RaftRawKVStore implements RawKVStore {
@@ -251,8 +251,15 @@ public class RaftRawKVStore implements RawKVStore {
         applyOperation(KVOperation.createResetSequence(seqKey), closure);
     }
 
+    /**
+     * 当用户 通过 KVStoreStateMachine.onApply 将任务添加到状态机后会转发到该类
+     * @param key
+     * @param value
+     * @param closure
+     */
     @Override
     public void put(final byte[] key, final byte[] value, final KVStoreClosure closure) {
+        // 将k v 还原成 KVOperation 后 调用applyOperation
         applyOperation(KVOperation.createPut(key, value), closure);
     }
 
@@ -332,9 +339,11 @@ public class RaftRawKVStore implements RawKVStore {
         }
         // 创建一个异步任务 并交由 node 来执行
         final Task task = new Task();
+        // 这里使用 protoBuf 作为序列化方式 先不看
         task.setData(ByteBuffer.wrap(Serializers.getDefault().writeObject(op)));
+        // 将 op(内部包含 kv  和 回调对象 设置到 task中)
         task.setDone(new KVClosureAdapter(closure, op));
-        // 将任务提交到节点中
+        // 将任务提交到节点中    状态机是什么样的角色 store 又是什么样的角色  如果要实现特定功能要连整个store 一起实现那么该框架并不见得有多方便
         this.node.apply(task);
     }
 

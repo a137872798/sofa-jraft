@@ -60,7 +60,7 @@ public class BallotBox implements Lifecycle<BallotBoxOptions>, Describer {
      */
     private final StampedLock        stampedLock        = new StampedLock();
     /**
-     * 最后提交的下标
+     * 最后提交的下标  默认为0 需要配合 setLastCommittedIndex
      */
     private long                     lastCommittedIndex = 0;
     /**
@@ -68,7 +68,7 @@ public class BallotBox implements Lifecycle<BallotBoxOptions>, Describer {
      */
     private long                     pendingIndex;
     /**
-     * 悬置队列
+     * 悬置队列  多批node 任务会存放在该队列中 通过 pendingIndex 作为分界线
      */
     private final ArrayDeque<Ballot> pendingMetaQueue   = new ArrayDeque<>();
 
@@ -121,38 +121,50 @@ public class BallotBox implements Lifecycle<BallotBoxOptions>, Describer {
     /**
      * Called by leader, otherwise the behavior is undefined
      * Set logs in [first_log_index, last_log_index] are stable at |peer|.
-     * 必须由 leader 调用  好像是判断 peer 是否在 指定的 index范围内提交过
+     * 代表投票箱 往某个节点插入数据成功  每个节点内部包含一个 LogManager 该对象用于写入数据 一旦写入代表持久化成功 当半数节点提交成功时
+     * 代表本次任务提交成功
+     * 同时用户一次提交多少任务 在这里就会收到多少数据
+     * @param peer 本次提交成功的节点信息 包含 endpoint
+     * @param firstLogIndex 对应该entry 写入到logManager 的起点
+     * @param lastLogIndex 任务总数 + firstLogIndex
      */
     public boolean commitAt(final long firstLogIndex, final long lastLogIndex, final PeerId peer) {
-        // TODO  use lock-free algorithm here?
+        // TODO  use lock-free algorithm here?  这行注解是什么意思 应该还是要加锁吧
         final long stamp = stampedLock.writeLock();
         long lastCommittedIndex = 0;
         try {
-            // 这里又不能让它为0 ???
             if (this.pendingIndex == 0) {
                 return false;
             }
-            // 好像是这样的结构  0   ------  commitindex ------- pendingIndex
+            // 推测 pendingIndex 对应某次任务的分界线 因为该对象会暂存node 每次保存的entry 多批的话如果用一个容器存需要一个分界线
+            // 而只有确保了 任务超过半数成功 pendingIndex 才会修改  通过一旦超过半数之后的修改ballot就不需要执行了
             if (lastLogIndex < this.pendingIndex) {
                 return true;
             }
 
-            // 不能超过限制
+            // 当前提交的长度不能超过 等待队列的总长度
             if (lastLogIndex >= this.pendingIndex + this.pendingMetaQueue.size()) {
                 throw new ArrayIndexOutOfBoundsException();
             }
 
+            // 这里在确定起点 选择大的那个  思考一下 如果发生了乱序 firstLogIndex > pendingIndex 也就是后面的数据先触发了回调
+            // TODO 乱序的前提是本节点是follower 因为leader 是同一进程写入不会发生乱序
             final long startAt = Math.max(this.pendingIndex, firstLogIndex);
+            // 这里初始化了一个 轨迹对象
             Ballot.PosHint hint = new Ballot.PosHint();
             for (long logIndex = startAt; logIndex <= lastLogIndex; logIndex++) {
+                // 获取对应的 投票对象   因为 node 可能一次会提交多个任务 每个任务 都要投票成功
+                // TODO 等下 用户提交一批任务时 如果某几个失败会怎样??? 剩下的会当作成功的处理吗 然后失败的用户重新投递???
+                // TODO 不过这种情况只会发生在 没有在unfoundNode中找到匹配节点 该种情况可能发生吗
                 final Ballot bl = this.pendingMetaQueue.get((int) (logIndex - this.pendingIndex));
-                // 获取范围内所有投票对象 对 peer 进行投票
+                // 代表针对该投票对象 peer 已经提交成功
                 hint = bl.grant(peer, hint);
-                // 如果已经投完了所有的票 也就是投给了半数节点  可是每次投票 不是从 候选人里选吗 而且应该只有一票
+                // 如果本次作为能满足超过半数确认票的情况
                 if (bl.isGranted()) {
                     lastCommittedIndex = logIndex;
                 }
             }
+            // 代表还没有超过半数 不会触发状态机的 onCommited
             if (lastCommittedIndex == 0) {
                 return true;
             }
@@ -162,15 +174,20 @@ public class BallotBox implements Lifecycle<BallotBoxOptions>, Describer {
             // logs, since we use the new configuration to deal the quorum of the
             // removal request, we think it's safe to commit all the uncommitted
             // previous logs, which is not well proved right now
-            // 将悬置部分的数据丢弃了
+            // 这里丢弃的数量虽然是正常的 但是如果后面写入的数据 先触发回调了 那么这里删除的却是前面的任务 还有
+            // 正确的使用方式是否是 必须在某个数据提交并确认后才允许提交下批任务呢
             this.pendingMetaQueue.removeRange(0, (int) (lastCommittedIndex - this.pendingIndex) + 1);
             LOG.debug("Committed log fromIndex={}, toIndex={}.", this.pendingIndex, lastCommittedIndex);
+            // 更新与下次提交数据的分界线   如果 乱序的话 pendingIndex 会在后面
+            // 会使得             if (lastLogIndex < this.pendingIndex) {  这样判断过不了 也就无法对前面的数据进行grant了
             this.pendingIndex = lastCommittedIndex + 1;
             this.lastCommittedIndex = lastCommittedIndex;
         } finally {
             this.stampedLock.unlockWrite(stamp);
         }
-        // 提交结果
+        // 触发 状态机的commited 只有首次超过半数时触发
+        // 相当于是通过stateMachine 转发给node 提交任务之后通过ballotBox 在确认票数超过半数时 回调node的caller 对象
+        // 代表本次提交成功了
         this.waiter.onCommitted(lastCommittedIndex);
         return true;
     }
@@ -232,22 +249,26 @@ public class BallotBox implements Lifecycle<BallotBoxOptions>, Describer {
      * Called by leader, otherwise the behavior is undefined
      * Store application context before replication.
      *
-     * 添加某个悬置任务
+     * 该方法的调用场景是 当向一个node提交任务时  会尝试向其他所有节点提交 当超过半数成功后才会返回成功
+     * 当 node.apply 传入了多个 LogEntry 时 会创建多个 ballot对象 每个对象都对应整个集群中的投票动作
      * @param conf      current configuration   一个集群
      * @param oldConf   old configuration       旧集群节点
      * @param done      callback                处理完成后的回调方法
      * @return          returns true on success 判断添加是否成功
      */
     public boolean appendPendingTask(final Configuration conf, final Configuration oldConf, final Closure done) {
+        // 生成"票"
         final Ballot bl = new Ballot();
-        // 使用传入的 conf 对象进行初始化 ballot 对象内部 包含了 2组 unfound对象 这里就是将conf 中的数据包装成 unfoundPeer 设置到 ballot 中
+        // ballot 对象内部 包含需要访问的所有节点
         if (!bl.init(conf, oldConf)) {
             LOG.error("Fail to init ballot.");
             return false;
         }
+        // 改进的写锁
         final long stamp = this.stampedLock.writeLock();
         try {
-            // 确保悬置index > 0
+            // 确保pendingIndex 大于 0 默认值应该就是0   TODO 先假设会正常添加吧 这个值难道会在哪个地方被设置么???
+            // 难道是在定时任务中做了什么 但是这样就成异步了啊 也就是用户一旦提交任务 无需确定是否投票了 完全根据回调对象的结果来确定执行逻辑
             if (this.pendingIndex <= 0) {
                 LOG.error("Fail to appendingTask, pendingIndex={}.", this.pendingIndex);
                 return false;
@@ -264,7 +285,8 @@ public class BallotBox implements Lifecycle<BallotBoxOptions>, Describer {
     /**
      * Called by follower, otherwise the behavior is undefined.
      *  Set committed index received from leader
-     *  设置最后提交的 index
+     * 该方法是在初始化投票箱对象 只有pendingIndex 被设置后 才能正常提交任务 以及触发 commitAt
+     * 该方法的调用时机先不管  总之是在向状态机提交任务之前
      * @param lastCommittedIndex last committed index
      * @return returns true if set success
      */
@@ -272,7 +294,7 @@ public class BallotBox implements Lifecycle<BallotBoxOptions>, Describer {
         boolean doUnlock = true;
         final long stamp = this.stampedLock.writeLock();
         try {
-            // 悬置相关属性必须为空  也就是不能在 appendPending 后调用???
+            // 悬置相关属性必须为空
             if (this.pendingIndex != 0 || !this.pendingMetaQueue.isEmpty()) {
                 Requires.requireTrue(lastCommittedIndex < this.pendingIndex,
                     "Node changes to leader, pendingIndex=%d, param lastCommittedIndex=%d", this.pendingIndex,
@@ -286,7 +308,7 @@ public class BallotBox implements Lifecycle<BallotBoxOptions>, Describer {
                 this.lastCommittedIndex = lastCommittedIndex;
                 this.stampedLock.unlockWrite(stamp);
                 doUnlock = false;
-                // 将耗时操作 挪到外面执行
+                // 将耗时操作 挪到外面执行  这里为什么会触发 caller 的 COMMITED???
                 this.waiter.onCommitted(lastCommittedIndex);
             }
         } finally {

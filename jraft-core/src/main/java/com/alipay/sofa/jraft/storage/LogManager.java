@@ -40,7 +40,8 @@ public interface LogManager extends Lifecycle<LogManagerOptions>, Describer {
 
     /**
      * Closure to to run in stable state.
-     * 稳定的回调对象  可能就是指内部的属性不会发生变化吧  当往LogManager 中写入一组 LogEntry 时触发 firstLogIndex 为这个数组的首元素下标 因为这时还没真正写入 只是存入内存
+     * 稳定的回调对象  可能就是指内部的属性不会发生变化吧  当往LogManager 中写入一组 LogEntry 时触发 firstLogIndex 为这个数组的首元素下标
+     * 因为这时还没真正写入 只是存入内存
      * @author boyan (boyan@alibaba-inc.com)
      *
      * 2018-Apr-04 4:35:29 PM
@@ -95,7 +96,7 @@ public interface LogManager extends Lifecycle<LogManagerOptions>, Describer {
     /**
      * Listen on last log index change event, but it's not reliable,
      * the user should not count on this listener to receive all changed events.
-     * 当log 文件的 尾下标发生改变时触发
+     * 当log 文件的 尾下标发生改变时触发  由用户自定义实现
      * @author dennis
      */
     interface LastLogIndexListener {
@@ -128,6 +129,7 @@ public interface LogManager extends Lifecycle<LogManagerOptions>, Describer {
 
     /**
      * Append log entry vector and wait until it's stable (NOT COMMITTED!)
+     * 注意这里还没有commited
      *
      * @param entries log entries
      * @param done    callback

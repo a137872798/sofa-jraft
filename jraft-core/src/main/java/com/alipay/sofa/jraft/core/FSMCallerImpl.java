@@ -320,7 +320,7 @@ public class FSMCallerImpl implements FSMCaller {
     }
 
     /**
-     * 发布一个 commit 任务  外部的操作 最终都转换成对caller 的调用 更进一步说 就是 通过 disruptor 对象发布事件
+     * 生成一个command 任务
      * @param committedIndex committed log indexx
      * @return
      */
@@ -437,7 +437,7 @@ public class FSMCallerImpl implements FSMCaller {
     }
 
     /**
-     * 当发生异常时触发 也是修改task 对象 并发布
+     * 当发生异常时触发 向 disruptor写入异常事件 当用户发布一个任务时 如果在LogManager 中写入失败就会抛出该异常
      * @param error error info
      * @return
      */
@@ -447,6 +447,7 @@ public class FSMCallerImpl implements FSMCaller {
             LOG.warn("FSMCaller already in error status, ignore new error: {}", error);
             return false;
         }
+        // 将异常用一个 特殊的回调对象包装
         final OnErrorClosure c = new OnErrorClosure(error);
         return enqueueTask((task, sequence) -> {
             task.type = TaskType.ERROR;
@@ -549,6 +550,7 @@ public class FSMCallerImpl implements FSMCaller {
                         this.currTask = TaskType.STOP_FOLLOWING;
                         doStopFollowing(task.leaderChangeCtx);
                         break;
+                        // 如果遇到了异常 比如写入logManager 失败
                     case ERROR:
                         this.currTask = TaskType.ERROR;
                         doOnError((OnErrorClosure) task.done);

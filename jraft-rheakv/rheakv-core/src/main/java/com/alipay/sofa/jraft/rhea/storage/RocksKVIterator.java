@@ -23,7 +23,7 @@ import org.rocksdb.RocksIterator;
 import com.alipay.sofa.jraft.rhea.errors.InvalidIteratorVersion;
 
 /**
- * 基于rocksDB 的 数据迭代器
+ * 在RawKVStore api 中暴露给用户的迭代器方法  使用后需要关闭
  * @author jiachun.fjc
  */
 public class RocksKVIterator implements KVIterator {
@@ -177,6 +177,10 @@ public class RocksKVIterator implements KVIterator {
         }
     }
 
+    /**
+     * 通过调用该方法 关闭 rocksDB 的迭代器
+     * @throws Exception
+     */
     @Override
     public void close() throws Exception {
         final Lock readLock = this.dbReadLock;

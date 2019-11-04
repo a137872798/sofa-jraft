@@ -26,7 +26,8 @@ import com.alipay.sofa.jraft.util.Requires;
 
 /**
  * Configuration manager
- * 配置管理器   配置 其实就是 新集群/老集群
+ * 绑定在某个node 上 一个node 对应一个 logManager 一个logManager 对应一个confManager
+ * 该对象内部绑定了所有更改历史的快照 (不是那个写入的快照)
  * @author boyan (boyan@alibaba-inc.com)
  * <p>
  * 2018-Apr-04 2:24:54 PM

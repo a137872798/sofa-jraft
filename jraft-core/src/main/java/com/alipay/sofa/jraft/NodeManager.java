@@ -126,10 +126,11 @@ public class NodeManager {
 
     /**
      * Remove a node.
-     * 从nodeMap 和 groupMapo 中移除节点
+     * 从nodeMap 和 groupMap 中移除节点
      */
     public boolean remove(final Node node) {
         if (this.nodeMap.remove(node.getNodeId(), node)) {
+            // 如果该node 属于某个组中 同时从group 中移除该节点
             final List<Node> nodes = this.groupMap.get(node.getGroupId());
             if (nodes != null) {
                 return nodes.remove(node);

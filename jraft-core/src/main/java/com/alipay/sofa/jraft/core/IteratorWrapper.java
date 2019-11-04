@@ -29,6 +29,9 @@ import com.alipay.sofa.jraft.entity.LogEntry;
  */
 public class IteratorWrapper implements Iterator {
 
+    /**
+     * jraft 特殊的迭代器实现
+     */
     private final IteratorImpl impl;
 
     public IteratorWrapper(IteratorImpl iterImpl) {
@@ -42,6 +45,7 @@ public class IteratorWrapper implements Iterator {
      */
     @Override
     public boolean hasNext() {
+        // 确保impl 没有到 末尾
         return this.impl.isGood() && this.impl.entry().getType() == EnumOutter.EntryType.ENTRY_TYPE_DATA;
     }
 
