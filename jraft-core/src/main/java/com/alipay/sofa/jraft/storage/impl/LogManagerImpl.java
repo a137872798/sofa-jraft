@@ -754,7 +754,8 @@ public class LogManagerImpl implements LogManager {
                 this.ab.append(done);
             } else {
                 // 如果回调事件中携带数据 就存放到appendBatch 中 等积累到一定量才存储
-                // 如果没有携带数据 就代表是某种指令
+                // 如果没有携带数据 就代表是某种指令 或者本次 LogEntry 携带的是 conf 会强制触发刷盘
+                // 如果用户批量写入数据 但是没有提交conf 是不会刷盘的 (如果超过了batchSize 最大值 还是会刷盘)
                 this.lastId = this.ab.flush();
                 boolean ret = true;
                 switch (event.type) {

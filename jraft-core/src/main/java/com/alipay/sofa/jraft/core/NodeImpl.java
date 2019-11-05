@@ -1728,6 +1728,9 @@ public class NodeImpl implements Node, RaftServerService {
         final long                          committedIndex;
         final AppendEntriesResponse.Builder responseBuilder;
         final NodeImpl                      node;
+        /**
+         * 包含将结果发送到client 的回调
+         */
         final RpcRequestClosure             done;
         final long                          term;
 
@@ -1746,16 +1749,23 @@ public class NodeImpl implements Node, RaftServerService {
             this.term = term;
         }
 
+        /**
+         * 当follower 写入 logEntry 并触发回调的时候执行
+         * @param status the task status. 任务结果
+         */
         @Override
         public void run(final Status status) {
 
             if (!status.isOk()) {
+                // 异常情况
+                // 实际上当前回调对象是 SequenceRpcRequestClosure
                 this.done.run(status);
                 return;
             }
 
             this.node.readLock.lock();
             try {
+                // 如果在触发回调的时候 leader 发生了变化
                 if (this.term != this.node.currTerm) {
                     // The change of term indicates that leader has been changed during
                     // appending entries, so we can't respond ok to the old leader
@@ -1772,6 +1782,7 @@ public class NodeImpl implements Node, RaftServerService {
                     //    committed entries would never be truncated.
                     // So we have to respond failure to the old leader and set the new
                     // term to make it stepped down if it didn't.
+                    // 这里返回失败且 包含了 该节点认为的最新的任期
                     this.responseBuilder.setSuccess(false).setTerm(this.node.currTerm);
                     this.done.sendResponse(this.responseBuilder.build());
                     return;
@@ -1785,8 +1796,10 @@ public class NodeImpl implements Node, RaftServerService {
             this.responseBuilder.setSuccess(true).setTerm(this.term);
 
             // Ballot box is thread safe and tolerates disorder.
+            // 更新最后提交的偏移量
             this.node.ballotBox.setLastCommittedIndex(this.committedIndex);
 
+            // 通过回调对象将结果返回到client
             this.done.sendResponse(this.responseBuilder.build());
         }
     }
@@ -1853,6 +1866,7 @@ public class NodeImpl implements Node, RaftServerService {
 
             // entriesCount 是conf 的数量  data 才是LogEntry 的数量
             // 如果正在安装快照 不允许提交配置  如果本次集群复制失败了 那么怎么处理 代表提交失败了吗
+            // 这里同时要求 entriesCount>0 应该是大于0才是正常的请求
             if (entriesCount > 0 && this.snapshotExecutor != null && this.snapshotExecutor.isInstallingSnapshot()) {
                 LOG.warn("Node {} received AppendEntriesRequest while installing snapshot.", getNodeId());
                 return RpcResponseFactory.newResponse(RaftError.EBUSY, "Node %s:%s is installing snapshot.",
@@ -1882,10 +1896,12 @@ public class NodeImpl implements Node, RaftServerService {
                     .build();
             }
 
+            // 如果配置数量是0 可能代表本次请求实际上是一次心跳 也就是 follower 的投票箱是被动开启的 当集群中确定了第一个leader 后
+            // leader 往其他节点发送心跳包 设置了其他follower的lastCommittedIndex (投票箱只有在 设置了该偏移量时才能正常使用)
             if (entriesCount == 0) {
                 // heartbeat
                 final AppendEntriesResponse.Builder respBuilder = AppendEntriesResponse.newBuilder() //
-                    .setSuccess(true) //
+                    .setSuccess(true) //  这里设置success 为 true了
                     .setTerm(this.currTerm) //
                     .setLastLogIndex(this.logManager.getLastLogIndex());
                 doUnlock = false;
@@ -1895,7 +1911,7 @@ public class NodeImpl implements Node, RaftServerService {
                 return respBuilder.build();
             }
 
-            // Parse request
+            // Parse request  代表是一次真正的请求  那么entriesCount == 0 的情况就不允许发送数据了吗 即使用户已经写入了很多LogEntry
             long index = prevLogIndex;
             final List<LogEntry> entries = new ArrayList<>(entriesCount);
             ByteBuffer allData = null;
@@ -1908,20 +1924,24 @@ public class NodeImpl implements Node, RaftServerService {
                 final RaftOutter.EntryMeta entry = entriesList.get(i);
                 index++;
                 if (entry.getType() != EnumOutter.EntryType.ENTRY_TYPE_UNKNOWN) {
+                    // 将请求还原成 LogEntry
                     final LogEntry logEntry = new LogEntry();
                     logEntry.setId(new LogId(index, entry.getTerm()));
                     logEntry.setType(entry.getType());
                     if (entry.hasChecksum()) {
                         logEntry.setChecksum(entry.getChecksum()); // since 1.2.6
                     }
+                    // 对应bytebuffer.remaining
                     final long dataLen = entry.getDataLen();
                     if (dataLen > 0) {
                         final byte[] bs = new byte[(int) dataLen];
                         assert allData != null;
+                        // 将数据从bytebuffer 中 移动到 byte[]中 相当于deepcopy 了一份数据
                         allData.get(bs, 0, bs.length);
                         logEntry.setData(ByteBuffer.wrap(bs));
                     }
 
+                    // 代表是conf 类型  将peerList 和 oldPeerList 转移到entry 中
                     if (entry.getPeersCount() > 0) {
                         if (entry.getType() != EnumOutter.EntryType.ENTRY_TYPE_CONFIGURATION) {
                             throw new IllegalStateException(
@@ -1952,6 +1972,7 @@ public class NodeImpl implements Node, RaftServerService {
                     }
 
                     // Validate checksum
+                    // 代表校验和验证失败
                     if (this.raftOptions.isEnableLogEntryChecksum() && logEntry.isCorrupted()) {
                         long realChecksum = logEntry.checksum();
                         LOG.error(
@@ -1968,10 +1989,15 @@ public class NodeImpl implements Node, RaftServerService {
                 }
             }
 
+            // 构建了特殊的回调对象
             final FollowerStableClosure closure = new FollowerStableClosure(request, AppendEntriesResponse.newBuilder()
+                    // 如果上面发现leader 发生了变化 currTerm 会更新成最新的任期
                 .setTerm(this.currTerm), this, done, this.currTerm);
+            // 同样只是写入到内存中异步刷盘 并在刷盘成功后触发回调
+            // 该方法在leader 中触发回调会修改投票箱的数据 并触发replicator 的复制机制
             this.logManager.appendEntries(entries, closure);
             // update configuration after _log_manager updated its memory status
+            // 更新配置信息
             this.conf = this.logManager.checkAndSetConfiguration(this.conf);
             return null;
         } finally {

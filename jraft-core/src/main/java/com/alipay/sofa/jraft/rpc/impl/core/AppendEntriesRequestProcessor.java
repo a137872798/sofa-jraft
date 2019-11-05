@@ -106,7 +106,7 @@ public class AppendEntriesRequestProcessor extends NodeRequestProcessor<AppendEn
 
     /**
      * RpcRequestClosure that will send responses in pipeline mode.
-     * 按照顺序 也就是 管道模式 来处理请求 并返回 结果
+     * 按照顺序来返回res  实际上是为了避免乱序问题
      * @author dennis
      */
     class SequenceRpcRequestClosure extends RpcRequestClosure {
@@ -184,46 +184,53 @@ public class AppendEntriesRequestProcessor extends NodeRequestProcessor<AppendEn
 
     /**
      * Send request in pipeline mode.
-     * 按照管道模式 发送响应结果
+     * 按照管道模式 发送响应结果 因为网络关系 可能用户端 后写入的数据反而会先被follower 收到 这里利用优先队列做了 排序 确保不会发生乱序
+     * 不过该序列值是由 处理消息的那刻确定的 实际上是一个先进先出的队列 如果一开始收到的消息就是乱序的呢
      */
     void sendSequenceResponse(final String groupId, final String peerId, final int seq,
                               final AsyncContext asyncContext, final BizContext bizContext, final Message msg) {
         // 获取连接对象  内部包含了netty 的 Channel 对象 可以发送请求
         final Connection connection = bizContext.getConnection();
-        // 获取上下文
+        // 获取上下文  上下文本身在全局范围内会被复用
         final PeerRequestContext ctx = getPeerRequestContext(groupId, peerId, connection);
         // 获取优先队列  也就是消息并没有直接发送 而是先存放在一个优先队列中
         final PriorityQueue<SequenceMessage> respQueue = ctx.responseQueue;
         assert (respQueue != null);
 
+        // 通过内置锁 确保优先队列在被触发回调的多个线程中 线程安全
         synchronized (Utils.withLockObject(respQueue)) {
-            // 创建管道消息并存放在优先队列中
+            // 将msg 对象封装成了序列对象后添加到优先队列中 通过序列号来确定优先级
             respQueue.add(new SequenceMessage(asyncContext, msg, seq));
 
-            // 如果没有超过存放的限制
             if (!ctx.hasTooManyPendingResponses()) {
-                // 循环将消息全部发出
+                // 每当成功触发一次回调 需要发送一次res 到 client时
+                // 因为回调触发的时机是不确定的 比如写入LogEntry 是在触发flush 时 才会触发回调 相对会有延时
                 while (!respQueue.isEmpty()) {
                     final SequenceMessage queuedPipelinedResponse = respQueue.peek();
 
+                    // 确保优先返回 最早序列的 res
                     if (queuedPipelinedResponse.sequence != getNextRequiredSequence(groupId, peerId, connection)) {
                         // sequence mismatch, waiting for next response.
                         break;
                     }
+                    // 该 方法就是移除优先队列最上方的对象
                     respQueue.remove();
                     try {
+                        // 该对象内部包含了 发送res的asyncContext
                         queuedPipelinedResponse.sendResponse();
                     } finally {
                         // 增加序列值
                         getAndIncrementNextRequiredSequence(groupId, peerId, connection);
                     }
                 }
-            // 闲置响应过多 就清除
+            // 等待响应的数据过多时如何处理
             } else {
                 LOG.warn("Closed connection to peer {}/{}, because of too many pending responses, queued={}, max={}",
                     ctx.groupId, peerId, respQueue.size(), ctx.maxPendingResponses);
+                // 关闭channel 这样会有异常信息返回给client吗 看来这段req 都会丢弃了 然后下次传入的req 又会建立新的requestContext
                 connection.close();
                 // Close the connection if there are too many pending responses in queue.
+                // 销毁对应的上下文对象
                 removePeerRequestContext(groupId, peerId);
             }
         }
@@ -242,17 +249,17 @@ public class AppendEntriesRequestProcessor extends NodeRequestProcessor<AppendEn
         // 单线程处理器
         private SingleThreadExecutor                 executor;
         // The request sequence;
-        // 可以理解为请求的 下标
+        // 当前收到的请求对应的序列
         private int                                  sequence;
         // The required sequence to be sent.
-        // 下一个将发送的请求序列
+        // 当前预计返回的 res 对应的序列
         private int                                  nextRequiredSequence;
         // The response queue,it's not thread-safe and protected by it self object monitor.
         // 存放响应结果的 优先队列
         private final PriorityQueue<SequenceMessage> responseQueue;
 
         /**
-         * 最大悬置结果数
+         * 最大悬置结果数  每个预备返回的响应结果会存放在优先队列中之后尽可能统一返回
          */
         private final int                            maxPendingResponses;
 
@@ -421,7 +428,7 @@ public class AppendEntriesRequestProcessor extends NodeRequestProcessor<AppendEn
     }
 
     /**
-     * 获取上下文期待的序列
+     * 获取下一个 期望返回的res对应的序列
      * @param groupId
      * @param peerId
      * @param conn
@@ -449,18 +456,18 @@ public class AppendEntriesRequestProcessor extends NodeRequestProcessor<AppendEn
         // 因为传入的是node 对象所以可以这样转换
         final Node node = (Node) service;
 
-        // 是否使用管道
+        // 是否使用管道  这样的话 res返回的顺序就跟 req 传入的顺序一致了  非管道模式就不需要 sequence 和 requireSequence
         if (node.getRaftOptions().isReplicatorPipeline()) {
             // groupId 和 peerId 实际上就是指向该server
             final String groupId = request.getGroupId();
             final String peerId = request.getPeerId();
 
-            // 获取该 peer对应的上下文 并获取应当处理的序列值
+            // 如果某次悬置的 res 过多requestContext 会被删除 (同时 connection 也会被关闭)这里又会重新创建 那么 那些被丢弃的 req 会怎么样呢??? 会有res 通知到client吗???
             final int reqSequence = getAndIncrementSequence(groupId, peerId, done.getBizContext().getConnection());
-            // 使用node 处理添加LogEntry的任务 这里将 回调又包装了一层
+            // 使用node 处理添加LogEntry的任务 这里将 回调又包装了一层  只有在异常情况下才会触发SequenceRpcRequestClosure.run
             final Message response = service.handleAppendEntriesRequest(request, new SequenceRpcRequestClosure(done,
                 reqSequence, groupId, peerId));
-            // 这里又发送一次 啥意思  看来一般情况下 上面应该是返回null
+            // 如果返回了 res 代表中途发生了异常情况 且不会被回调处理  需要手动发送结果
             if (response != null) {
                 sendSequenceResponse(groupId, peerId, reqSequence, done.getAsyncContext(), done.getBizContext(),
                     response);
