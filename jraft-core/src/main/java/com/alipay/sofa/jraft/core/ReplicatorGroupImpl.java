@@ -146,7 +146,7 @@ public class ReplicatorGroupImpl implements ReplicatorGroup {
     }
 
     /**
-     * 等待追赶
+     * 为整个复制组中所有的 复制机设置一个 追赶回调
      * @param peer
      * @param maxMargin
      * @param dueTime

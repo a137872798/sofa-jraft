@@ -204,7 +204,7 @@ public class ThreadId {
                 this.onError.onError(this, this.data, errorCode);
             }
         } else {
-            // 如果上锁失败就将 异常保存到队列中
+            // 如果上锁失败就将 异常保存到队列中  然后持有锁的线程在 解锁后会将囤积的所有异常一次执行
             this.pendingErrors.add(errorCode);
         }
     }

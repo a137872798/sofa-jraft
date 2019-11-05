@@ -68,7 +68,7 @@ public abstract class RpcRequestProcessor<T extends Message> extends AsyncUserPr
             // 处理请求并生成响应结果
             final Message msg = this.processRequest(request, new RpcRequestClosure(bizCtx, asyncCtx));
             if (msg != null) {
-                // 如果 response 不为空 则返回给 client
+                // 如果 response 不为空 则返回给 client  如果下层已经将结果通过回调中的 asyncContext 发送了 那么这里就返回null
                 asyncCtx.sendResponse(msg);
             }
         } catch (final Throwable t) {

@@ -71,7 +71,7 @@ public final class NonReentrantLock extends AbstractQueuedSynchronizer implement
     }
 
     /**
-     * 实现非重入的核心方法 就是 只要cas 失败就返回false
+     * 实现非重入的核心方法 就是只能从0变成1  之后继续上锁 会因为当前已经是1了 使得 cas 失败
      * @param acquires
      * @return
      */

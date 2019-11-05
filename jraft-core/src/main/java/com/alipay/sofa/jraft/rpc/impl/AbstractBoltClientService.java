@@ -312,6 +312,7 @@ public abstract class AbstractBoltClientService implements ClientService {
                 public Executor getExecutor() {
                     return rpcExecutor != null ? rpcExecutor : AbstractBoltClientService.this.rpcExecutor;
                 }
+                // 一定会有超时限制的 如果 为-1 就使用默认值
             }, timeoutMs <= 0 ? this.rpcOptions.getRpcDefaultTimeout() : timeoutMs);
         } catch (final InterruptedException e) {
             Thread.currentThread().interrupt();

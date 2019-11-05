@@ -58,13 +58,13 @@ public abstract class NodeRequestProcessor<T extends Message> extends RpcRequest
     @Override
     public Message processRequest(T request, RpcRequestClosure done) {
         final PeerId peer = new PeerId();
-        // 请求中的peerId 就是client的target  也就是处理该请求的节点地址
+        // 请求中的peerId 就是follower的地址
         final String peerIdStr = getPeerId(request);
         if (peer.parse(peerIdStr)) {
             final String groupId = getGroupId(request);
             // 尝试从NodeManager中搜索node信息
             final Node node = NodeManager.getInstance().get(groupId, peer);
-            // 这个node 是什么时候插入进去的???
+            // 这个node 是什么时候插入nodeManager的???
             if (node != null) {
                 return processRequest0((RaftServerService) node, request, done);
             } else {

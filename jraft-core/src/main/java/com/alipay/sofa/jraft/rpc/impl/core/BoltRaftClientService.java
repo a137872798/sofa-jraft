@@ -111,6 +111,13 @@ public class BoltRaftClientService extends AbstractBoltClientService implements 
         return invokeWithDone(endpoint, request, done, this.nodeOptions.getElectionTimeoutMs());
     }
 
+    /**
+     * 某个候选人尝试访问某个follower 并拉票
+     * @param endpoint  destination address (ip, port)
+     * @param request   request data
+     * @param done      callback
+     * @return
+     */
     @Override
     public Future<Message> requestVote(final Endpoint endpoint, final RequestVoteRequest request,
                                        final RpcResponseClosure<RequestVoteResponse> done) {

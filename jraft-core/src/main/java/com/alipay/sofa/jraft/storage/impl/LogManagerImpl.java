@@ -755,7 +755,8 @@ public class LogManagerImpl implements LogManager {
             } else {
                 // 如果回调事件中携带数据 就存放到appendBatch 中 等积累到一定量才存储
                 // 如果没有携带数据 就代表是某种指令 或者本次 LogEntry 携带的是 conf 会强制触发刷盘
-                // 如果用户批量写入数据 但是没有提交conf 是不会刷盘的 (如果超过了batchSize 最大值 还是会刷盘)
+                // 如果要获取 最新下标 那么就会将当前数据全部刷盘 等下 如果当前数据还没有写入半数呢
+                // 好像根据raft 论文 来描述 当该节点向其他节点拉票的时候他们发现该节点数据滞后 不会给他票
                 this.lastId = this.ab.flush();
                 boolean ret = true;
                 switch (event.type) {
@@ -1145,7 +1146,9 @@ public class LogManagerImpl implements LogManager {
 
     /**
      * 获取当前node 写入的最后logId  注意写入的不一定生效 可能leader只是将数据写入少数节点中 而该节点就是少数节点 实际上数据是不作数的
-     * @param isFlush whether to flush all pending task.
+     * @param isFlush whether to flush all pending task.    如果是 flush 很可能就代表本节点是follower 那么 在获取最新数据时
+     *                必须要以 快照的偏移量为基准 如果能确定本节点就是leader 的情况下 那么可以获取lastLogIndex(虽然还没有变成快照
+     *                但是数据最终也会同步到其他节点上)
      * @return
      */
     @Override
@@ -1160,6 +1163,7 @@ public class LogManagerImpl implements LogManager {
                 }
                 return this.lastSnapshotId;
             } else {
+                // 如果当前下标 刚好匹配 快照下标 那么可以直接返回快照下标
                 if (this.lastLogIndex == this.lastSnapshotId.getIndex()) {
                     return this.lastSnapshotId;
                 }
@@ -1171,7 +1175,7 @@ public class LogManagerImpl implements LogManager {
             this.readLock.unlock();
         }
         try {
-            // 等待回调被触发
+            // 等待回调被触发  也就是会在 回调中设置lastId
             c.await();
         } catch (final InterruptedException e) {
             Thread.currentThread().interrupt();

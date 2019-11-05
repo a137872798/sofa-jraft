@@ -148,7 +148,7 @@ public class BallotBox implements Lifecycle<BallotBoxOptions>, Describer {
             }
 
             // 这里在确定起点 选择大的那个  思考一下 如果发生了乱序 firstLogIndex > pendingIndex 也就是后面的数据先触发了回调
-            // TODO 乱序的前提是本节点是follower 因为leader 是同一进程写入不会发生乱序
+            // 这里通过在server 设置优先队列避免了乱序 所以不存在后面的数据触发先触发回调
             final long startAt = Math.max(this.pendingIndex, firstLogIndex);
             // 这里初始化了一个 轨迹对象
             Ballot.PosHint hint = new Ballot.PosHint();
@@ -156,6 +156,7 @@ public class BallotBox implements Lifecycle<BallotBoxOptions>, Describer {
                 // 获取对应的 投票对象   因为 node 可能一次会提交多个任务 每个任务 都要投票成功
                 // TODO 等下 用户提交一批任务时 如果某几个失败会怎样??? 剩下的会当作成功的处理吗 然后失败的用户重新投递???
                 // TODO 不过这种情况只会发生在 没有在unfoundNode中找到匹配节点 该种情况可能发生吗
+                // 这里囤积了 待处理的投票对象
                 final Ballot bl = this.pendingMetaQueue.get((int) (logIndex - this.pendingIndex));
                 // 代表针对该投票对象 peer 已经提交成功
                 hint = bl.grant(peer, hint);
@@ -174,12 +175,8 @@ public class BallotBox implements Lifecycle<BallotBoxOptions>, Describer {
             // logs, since we use the new configuration to deal the quorum of the
             // removal request, we think it's safe to commit all the uncommitted
             // previous logs, which is not well proved right now
-            // 这里丢弃的数量虽然是正常的 但是如果后面写入的数据 先触发回调了 那么这里删除的却是前面的任务 还有
-            // 正确的使用方式是否是 必须在某个数据提交并确认后才允许提交下批任务呢
             this.pendingMetaQueue.removeRange(0, (int) (lastCommittedIndex - this.pendingIndex) + 1);
             LOG.debug("Committed log fromIndex={}, toIndex={}.", this.pendingIndex, lastCommittedIndex);
-            // 更新与下次提交数据的分界线   如果 乱序的话 pendingIndex 会在后面
-            // 会使得             if (lastLogIndex < this.pendingIndex) {  这样判断过不了 也就无法对前面的数据进行grant了
             this.pendingIndex = lastCommittedIndex + 1;
             this.lastCommittedIndex = lastCommittedIndex;
         } finally {
@@ -187,7 +184,7 @@ public class BallotBox implements Lifecycle<BallotBoxOptions>, Describer {
         }
         // 触发 状态机的commited 只有首次超过半数时触发
         // 相当于是通过stateMachine 转发给node 提交任务之后通过ballotBox 在确认票数超过半数时 回调node的caller 对象
-        // 代表本次提交成功了
+        // 代表本次提交成功了   这里就触发 flush 将到 该偏移量前的数据都写入到 LogManager 中 (非内存)  同时会触发 针对用户提交该LogEntry的回调
         this.waiter.onCommitted(lastCommittedIndex);
         return true;
     }

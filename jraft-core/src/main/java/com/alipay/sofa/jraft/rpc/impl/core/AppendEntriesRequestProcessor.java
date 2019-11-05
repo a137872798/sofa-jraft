@@ -463,8 +463,9 @@ public class AppendEntriesRequestProcessor extends NodeRequestProcessor<AppendEn
             final String peerId = request.getPeerId();
 
             // 如果某次悬置的 res 过多requestContext 会被删除 (同时 connection 也会被关闭)这里又会重新创建 那么 那些被丢弃的 req 会怎么样呢??? 会有res 通知到client吗???
+            // 每个请求应该是有个时限的超过了自动返回超时异常
             final int reqSequence = getAndIncrementSequence(groupId, peerId, done.getBizContext().getConnection());
-            // 使用node 处理添加LogEntry的任务 这里将 回调又包装了一层  只有在异常情况下才会触发SequenceRpcRequestClosure.run
+            // 使用node 处理添加LogEntry的任务 这里将 回调又包装了一层
             final Message response = service.handleAppendEntriesRequest(request, new SequenceRpcRequestClosure(done,
                 reqSequence, groupId, peerId));
             // 如果返回了 res 代表中途发生了异常情况 且不会被回调处理  需要手动发送结果
@@ -475,7 +476,7 @@ public class AppendEntriesRequestProcessor extends NodeRequestProcessor<AppendEn
             // 这里同样返回null 避免上层继续发送
             return null;
         } else {
-            // 非管道模式 直接处理 并通过回调对象发送结果
+            // 非管道模式 这里就是不将结果排序
             return service.handleAppendEntriesRequest(request, done);
         }
     }

@@ -186,7 +186,7 @@ public interface LogManager extends Lifecycle<LogManagerOptions>, Describer {
 
     /**
      * Return the id the last log.
-     *
+     * 获取最后写入内容的id
      * @param isFlush whether to flush all pending task.
      */
     LogId getLastLogId(final boolean isFlush);

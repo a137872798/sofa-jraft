@@ -43,7 +43,7 @@ public interface RaftClientService extends ClientService {
 
     /**
      * Sends a request-vote request and handle the response with done.
-     * 发起投票
+     * 拉票 也就是本节点访问对端尝试获取票数  同一个follower 可以给多个候选人投票吗???
      * @param endpoint  destination address (ip, port)
      * @param request   request data
      * @param done      callback
