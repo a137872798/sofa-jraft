@@ -213,15 +213,15 @@ public class BallotBox implements Lifecycle<BallotBoxOptions>, Describer {
      * According the the raft algorithm, the logs from previous terms can't be
      * committed until a log at the new term becomes committed, so
      * |newPendingIndex| should be |last_log_index| + 1.
-     * 只能当某个候选者变成ledaer 时调用  这里只是更新 悬置的index
+     * 只能当某个候选者变成ledaer 时调用
+     * 当想要使用投票箱时必须先调用该方法
      * @param newPendingIndex pending index of new leader
      * @return returns true if reset success
      */
     public boolean resetPendingIndex(final long newPendingIndex) {
         final long stamp = this.stampedLock.writeLock();
         try {
-            // 如果 悬置index 不为空 或者 悬置队列不为空 返回false 啥意思???
-            // 调用该方法前 必须确保 属性为初始状态
+            // 调用该方法前 必须确保 属性为初始状态  那么重置就是在 stepDown(变成follower)时执行
             if (!(this.pendingIndex == 0 && this.pendingMetaQueue.isEmpty())) {
                 LOG.error("resetPendingIndex fail, pendingIndex={}, pendingMetaQueueSize={}.", this.pendingIndex,
                     this.pendingMetaQueue.size());
@@ -233,7 +233,9 @@ public class BallotBox implements Lifecycle<BallotBoxOptions>, Describer {
                     this.lastCommittedIndex);
                 return false;
             }
-            // 更新index
+            // 更新index  该pendingIndex 对应LogManager 的下标  也就是每往里面添加一个LogEntry 在收到半数的票数前 该值都不会发生变化 代表用户的某个任务未在集群范围内进行提交
+            // 同时借助优先队列的特性 确保 client 端收到结果后一定是按照顺序处理  server端 (follower) 可以选择是否按照收到req 的顺序处理任务 按照是否启用pieline 模式
+            // 但是如果发生乱序的话这样设置的意义也不大吧
             this.pendingIndex = newPendingIndex;
             this.closureQueue.resetFirstIndex(newPendingIndex);
             return true;

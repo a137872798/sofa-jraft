@@ -36,6 +36,11 @@ public class RequestVoteRequestProcessor extends NodeRequestProcessor<RequestVot
         super(executor);
     }
 
+    /**
+     * 此时 peerId 代表follower的信息
+     * @param request
+     * @return
+     */
     @Override
     protected String getPeerId(RequestVoteRequest request) {
         return request.getPeerId();
@@ -51,6 +56,7 @@ public class RequestVoteRequestProcessor extends NodeRequestProcessor<RequestVot
         if (request.getPreVote()) {
             return service.handlePreVoteRequest(request);
         } else {
+            // 处理正常的投票请求
             return service.handleRequestVoteRequest(request);
         }
     }

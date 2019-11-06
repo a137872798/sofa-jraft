@@ -222,6 +222,11 @@ public class ReplicatorGroupImpl implements ReplicatorGroup {
         return Replicator.stop(rid);
     }
 
+    /**
+     * 仅更新任期 需要配合 addReplicator
+     * @param newTerm new term num
+     * @return
+     */
     @Override
     public boolean resetTerm(final long newTerm) {
         if (newTerm <= this.commonOptions.getTerm()) {

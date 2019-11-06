@@ -118,7 +118,7 @@ public interface ReplicatorGroup extends Describer {
      * This method is supposed to be called when the very candidate becomes the
      * leader, so we suppose that there are no running replicators.
      * Return true on success, false otherwise
-     *
+     * 重置复制机组的 任期
      * @param newTerm new term num
      * @return true on success
      */

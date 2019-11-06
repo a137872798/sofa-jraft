@@ -182,7 +182,7 @@ public class Ballot {
 
     /**
      * Returns true when the ballot is granted.
-     * 代表该投票箱 投完了全部的票
+     * 票数达到了要求的值
      * @return true if the ballot is granted
      */
     public boolean isGranted() {

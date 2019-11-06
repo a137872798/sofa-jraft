@@ -955,10 +955,13 @@ public class Replicator implements ThreadId.OnError {
         // 触发创建钩子  jraft 没有默认实现 用户自行拓展
         notifyReplicatorStatusListener(r, ReplicatorEvent.CREATED);
         LOG.info("Replicator={}@{} is started", r.id, r.options.getPeerId());
+        // 当初始化 复制机 时 追赶相关的回调要置空
         r.catchUpClosure = null;
         r.lastRpcSendTimestamp = Utils.monotonicMs();
+        // 该定时任务会在 一定延时后触发 通过 onError 调用        r.sendEmptyEntries(true);  算是一种另类的心跳实现了
         r.startHeartbeatTimer(Utils.nowMs());
-        // id.unlock in sendEmptyEntries 发送一次探测请求 返回的future 对象会包装成 inflight 并添加到列表中 什么时候处理这些对象呢???
+        // id.unlock in sendEmptyEntries
+        // 本对象刚启动时 需要发送一个 无 conf 无 data 的空数据去检测对端follower 的状态(对端会把它的任期等信息返回回来 之后根据该情况判断是否要做降级)
         r.sendEmptyEntries(false);
         return r.id;
     }

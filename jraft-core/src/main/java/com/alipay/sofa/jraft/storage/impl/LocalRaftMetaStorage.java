@@ -212,6 +212,12 @@ public class LocalRaftMetaStorage implements RaftMetaStorage {
         return this.votedFor;
     }
 
+    /**
+     * 修改数据并写入文件(持久化)
+     * @param term
+     * @param peerId
+     * @return
+     */
     @Override
     public boolean setTermAndVotedFor(final long term, final PeerId peerId) {
         checkState();

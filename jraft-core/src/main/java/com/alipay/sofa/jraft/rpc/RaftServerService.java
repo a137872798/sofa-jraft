@@ -43,7 +43,7 @@ public interface RaftServerService {
 
     /**
      * Handle request-vote request.
-     *
+     * 用于处理拉票请求
      * @param request   data of the vote
      * @return the response message
      */
