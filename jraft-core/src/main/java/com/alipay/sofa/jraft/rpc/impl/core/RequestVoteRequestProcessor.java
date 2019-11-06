@@ -54,6 +54,7 @@ public class RequestVoteRequestProcessor extends NodeRequestProcessor<RequestVot
     @Override
     public Message processRequest0(RaftServerService service, RequestVoteRequest request, RpcRequestClosure done) {
         if (request.getPreVote()) {
+            // 处理预投票
             return service.handlePreVoteRequest(request);
         } else {
             // 处理正常的投票请求

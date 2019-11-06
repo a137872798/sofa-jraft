@@ -77,7 +77,7 @@ public interface ReplicatorGroup extends Describer {
     /**
      * Check replicator state, if it's not started, start it;
      * if it is blocked, unblock it. It should be called by leader.
-     *
+     * 检查 连接到目标地址的复制机状态是否正常  如果尚未存在连接 会建立连接 并发送一个探测请求
      * @param peer     peer of replicator
      * @param lockNode if lock with node
      */
@@ -95,7 +95,7 @@ public interface ReplicatorGroup extends Describer {
 
     /**
      * Get peer's last rpc send timestamp (monotonic time in milliseconds).
-     *
+     * 获取复制机发往目标节点的最后时间 (确切的说是收到响应时间)
      * @param peer the peer of replicator
      */
     long getLastRpcSendTimestamp(final PeerId peer);

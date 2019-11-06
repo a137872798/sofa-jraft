@@ -170,6 +170,7 @@ public class ReplicatorGroupImpl implements ReplicatorGroup {
         if (rid == null) {
             return 0L;
         }
+        // 获取发送到该节点的最后时间戳 (收到响应才作数)
         return Replicator.getLastRpcSendTimestamp(rid);
     }
 
@@ -184,6 +185,11 @@ public class ReplicatorGroupImpl implements ReplicatorGroup {
         return true;
     }
 
+    /**
+     * 检查目标节点的状态机是否正常
+     * @param peer     peer of replicator
+     * @param lockNode if lock with node
+     */
     @Override
     public void checkReplicator(final PeerId peer, final boolean lockNode) {
         final ThreadId rid = this.replicatorMap.get(peer);
@@ -195,6 +201,7 @@ public class ReplicatorGroupImpl implements ReplicatorGroup {
                 node.writeLock.lock();
             }
             try {
+                // 获取本节点 在确定本节点是leader 的前提下 创建对端节点 在调用 addReolicator时 还会发送心跳
                 if (node.isLeader() && this.failureReplicators.contains(peer) && addReplicator(peer)) {
                     this.failureReplicators.remove(peer);
                 }

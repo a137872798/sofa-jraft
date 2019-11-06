@@ -614,7 +614,7 @@ public class NodeImpl implements Node, RaftServerService {
             if (isCurrentLeaderValid()) {
                 return;
             }
-            // 重置leader  同时会触发状态机的 stopFollow 由用户实现钩子
+            // 重置leader  同时会触发状态机的 stopFollow (由用户实现钩子)
             resetLeaderId(PeerId.emptyPeer(), new Status(RaftError.ERAFTTIMEDOUT, "Lost connection from leader %s.",
                 this.leaderId));
             // 因为在 preVote 中会解锁 这里就不需要解锁了
@@ -993,7 +993,7 @@ public class NodeImpl implements Node, RaftServerService {
 
     /**
      * should be in writeLock
-     * 当自己是候选人时  为自己投票
+     * 将自身升级成候选人 同时为自己投票以及去其他节点拉票
      */
     private void electSelf() {
         long oldTerm;
@@ -1004,7 +1004,8 @@ public class NodeImpl implements Node, RaftServerService {
                 LOG.warn("Node {} can't do electSelf as it is not in {}.", getNodeId(), this.conf);
                 return;
             }
-            // 如果当前是 follower 那么停止 选举定时器???
+            // 代表已经确定要发起新一轮投票就关闭 electionTimer  (该定时器的作用是检测与leader 的心跳是否超时 既然leader已经确认失效了也就
+            // 不需要继续维持该定时器了)
             if (this.state == State.STATE_FOLLOWER) {
                 LOG.debug("Node {} stop election timer, term={}.", getNodeId(), this.currTerm);
                 this.electionTimer.stop();
@@ -1014,11 +1015,12 @@ public class NodeImpl implements Node, RaftServerService {
                 "A follower's leader_id is reset to NULL as it begins to request_vote."));
             // 将自身状态修改为 候选人 并增加任期 代表进入了新一轮选举
             this.state = State.STATE_CANDIDATE;
+            // 此时才增加任期 在预投票阶段是不增加任期的
             this.currTerm++;
             // 代表该对象投票节点是自身
             this.votedId = this.serverId.copy();
             LOG.debug("Node {} start vote timer, term={} .", getNodeId(), this.currTerm);
-            // 开启投票定时器 这里不是已经发起投票了吗 为什么要开启这个定时器
+            // 开启投票定时器 因为 本次投票不一定能选出leader 既然已经停止检测心跳了就需要一个别的触发点来 进行选举
             this.voteTimer.start();
             // 初始化一个投票对象  也就是logEntry的 投票和 选择leader 的投票走的是同一套体系
             this.voteCtx.init(this.conf.getConf(), this.conf.isStable() ? null : this.conf.getOldConf());
@@ -1161,7 +1163,7 @@ public class NodeImpl implements Node, RaftServerService {
                 continue;
             }
             LOG.debug("Node {} add replicator, term={}, peer={}.", getNodeId(), this.currTerm, peer);
-            // 应该是在 stepDown 中将 复制机组重置了吧
+            // 应该是在 stepDown 中将 复制机组重置了吧  这里向所有follower 发送探测信息(主要是告诉他们产生了新的leader)
             if (!this.replicatorGroup.addReplicator(peer)) {
                 LOG.error("Fail to add replicator, peer={}.", peer);
             }
@@ -1608,11 +1610,17 @@ public class NodeImpl implements Node, RaftServerService {
         }
     }
 
+    /**
+     * 进行预投票
+     * @param request   data of the pre vote
+     * @return
+     */
     @Override
     public Message handlePreVoteRequest(final RequestVoteRequest request) {
         boolean doUnlock = true;
         this.writeLock.lock();
         try {
+            // 本节点已经停止活动
             if (!this.state.isActive()) {
                 LOG.warn("Node {} is not in active state, currTerm={}.", getNodeId(), this.currTerm);
                 return RpcResponseFactory.newResponse(RaftError.EINVAL, "Node %s is not in active state, state %s.",
@@ -1628,30 +1636,40 @@ public class NodeImpl implements Node, RaftServerService {
             boolean granted = false;
             // noinspection ConstantConditions
             do {
+                // 这里发现该节点的leader 还是有效的 那么很可能打算只是发起投票的 节点与leader  的通信断了
+                // 如果本节点就是leader 的话  isCurrentLeaderValid 会是 false 就会进入到 } else if (request.getTerm() == this.currTerm + 1) {
+                // 这里应该是在找未收到leader 的节点有多少吧 达到指定值 才能真正进入投票节点 要排除掉某个节点通信失败的情况
                 if (this.leaderId != null && !this.leaderId.isEmpty() && isCurrentLeaderValid()) {
                     LOG.info(
                         "Node {} ignore PreVoteRequest from {}, term={}, currTerm={}, because the leader {}'s lease is still valid.",
                         getNodeId(), request.getServerId(), request.getTerm(), this.currTerm, this.leaderId);
                     break;
                 }
+                // 请求节点的任期 旧了 那么本机如果是leader 就要通过复制机往对应节点发送心跳 来让对方察觉到 新的leader
+                // 在投票环节 收到拉票请求的节点会将自身任期+1 且根据情况变更voteForId 但是leaderId 还没有变更
+                // 那么修改的地方应该就是通过复制机 让对端收到了相同任期的请求  再修改leaderId 为 发出请求的peer
                 if (request.getTerm() < this.currTerm) {
                     LOG.info("Node {} ignore PreVoteRequest from {}, term={}, currTerm={}.", getNodeId(),
                         request.getServerId(), request.getTerm(), this.currTerm);
                     // A follower replicator may not be started when this node become leader, so we must check it.
                     checkReplicator(candidateId);
                     break;
+                // 这里是正常情况 因为在发起预投票时 client 还没有增加 任期 但是在请求体中发送的任期+1 也就超过同一时期其他节点的任期
                 } else if (request.getTerm() == this.currTerm + 1) {
                     // A follower replicator may not be started when this node become leader, so we must check it.
                     // check replicator state
+                    // 如果本节点就是leader 节点那么 通过复制机重新往client 发起探测请求  注意针对这种情况 appendEntry 2端的 任期是一样的
                     checkReplicator(candidateId);
                 }
                 doUnlock = false;
                 this.writeLock.unlock();
 
+                // 获取本节点最新的下标
                 final LogId lastLogId = this.logManager.getLastLogId(true);
 
                 doUnlock = true;
                 this.writeLock.lock();
+                // 如果对端的数据比这个旧 那么肯定是 它通信断了 所以不能让它变成候选人
                 final LogId requestLastLogId = new LogId(request.getLastLogIndex(), request.getLastLogTerm());
                 granted = requestLastLogId.compareTo(lastLogId) >= 0;
 
@@ -1698,6 +1716,10 @@ public class NodeImpl implements Node, RaftServerService {
         this.lastLeaderTimestamp = lastLeaderTimestamp;
     }
 
+    /**
+     * 当本节点是leader 时检查状态
+     * @param candidateId
+     */
     private void checkReplicator(final PeerId candidateId) {
         if (this.state == State.STATE_LEADER) {
             this.replicatorGroup.checkReplicator(candidateId, false);
@@ -2160,9 +2182,16 @@ public class NodeImpl implements Node, RaftServerService {
         }
     }
 
+    /**
+     * 检测已经无效的节点
+     * @param conf
+     * @param monotonicNowMs
+     */
     private void checkDeadNodes(final Configuration conf, final long monotonicNowMs) {
+        // 获取当前集群内所有的节点
         final List<PeerId> peers = conf.listPeers();
         final Configuration deadNodes = new Configuration();
+        // 检测成功直接返回
         if (checkDeadNodes0(peers, monotonicNowMs, true, deadNodes)) {
             return;
         }
@@ -2173,19 +2202,31 @@ public class NodeImpl implements Node, RaftServerService {
         stepDown(this.currTerm, false, status);
     }
 
+    /**
+     * 真正的检测逻辑
+     * @param peers 本集群当前所有的节点
+     * @param monotonicNowMs
+     * @param checkReplicator
+     * @param deadNodes 用于存放检测出来无效的节点
+     * @return
+     */
     private boolean checkDeadNodes0(final List<PeerId> peers, final long monotonicNowMs, final boolean checkReplicator,
                                     final Configuration deadNodes) {
+        // 获取续约超时时间 如果上次收到响应结果超过这个时长 那么认为该节点已经离线
         final int leaderLeaseTimeoutMs = this.options.getLeaderLeaseTimeoutMs();
         int aliveCount = 0;
         long startLease = Long.MAX_VALUE;
         for (final PeerId peer : peers) {
+            // 跳过本节点 直接增加存活数量
             if (peer.equals(this.serverId)) {
                 aliveCount++;
                 continue;
             }
+            // 如果要通过复制机检查  首先要确保自身是leader 复制机是什么时候被清除的还没确认
             if (checkReplicator) {
                 checkReplicator(peer);
             }
+            // 获取最后一次发往该节点并收到响应的时间 (每个复制机会定期发送心跳)
             final long lastRpcSendTimestamp = this.replicatorGroup.getLastRpcSendTimestamp(peer);
             if (monotonicNowMs - lastRpcSendTimestamp <= leaderLeaseTimeoutMs) {
                 aliveCount++;
@@ -2221,16 +2262,22 @@ public class NodeImpl implements Node, RaftServerService {
         return alivePeers;
     }
 
+    /**
+     * 处理 stepDown 任务
+     */
     private void handleStepDownTimeout() {
         this.writeLock.lock();
         try {
+            // 代表非 leader 的其他状态包含安装快照等
             if (this.state.compareTo(State.STATE_TRANSFERRING) > 0) {
                 LOG.debug("Node {} stop step-down timer, term={}, state={}.", getNodeId(), this.currTerm, this.state);
                 return;
             }
             final long monotonicNowMs = Utils.monotonicMs();
+            // 检测无效的节点
             checkDeadNodes(this.conf.getConf(), monotonicNowMs);
             if (!this.conf.getOldConf().isEmpty()) {
+                // 如果存在旧配置也检测一遍
                 checkDeadNodes(this.conf.getOldConf(), monotonicNowMs);
             }
         } finally {
@@ -2538,23 +2585,33 @@ public class NodeImpl implements Node, RaftServerService {
         }
     }
 
+    /**
+     * 处理预投票请求
+     * @param peerId
+     * @param term
+     * @param response
+     */
     public void handlePreVoteResponse(final PeerId peerId, final long term, final RequestVoteResponse response) {
         boolean doUnlock = true;
         this.writeLock.lock();
         try {
+            // 确保当前角色是 follower 因为可能响应结果 滞后返回 那么角色已经变了就没有处理的必要了
             if (this.state != State.STATE_FOLLOWER) {
                 LOG.warn("Node {} received invalid PreVoteResponse from {}, state not in STATE_FOLLOWER but {}.",
                     getNodeId(), peerId, this.state);
                 return;
             }
+            // 在同一任期才有处理的必要
             if (term != this.currTerm) {
                 LOG.warn("Node {} received invalid PreVoteResponse from {}, term={}, currTerm={}.", getNodeId(),
                     peerId, term, this.currTerm);
                 return;
             }
+            // 代表对端已经进入下一轮选举了
             if (response.getTerm() > this.currTerm) {
                 LOG.warn("Node {} received invalid PreVoteResponse from {}, term {}, expect={}.", getNodeId(), peerId,
                     response.getTerm(), this.currTerm);
+                // follower 也可以调用该方法
                 stepDown(response.getTerm(), false, new Status(RaftError.EHIGHERTERMRESPONSE,
                     "Raft node receives higher term pre_vote_response."));
                 return;
@@ -2562,6 +2619,9 @@ public class NodeImpl implements Node, RaftServerService {
             LOG.info("Node {} received PreVoteResponse from {}, term={}, granted={}.", getNodeId(), peerId,
                 response.getTerm(), response.getGranted());
             // check granted quorum?
+            // 只有当某个节点 往其他节点发送预投票请求 并且得到的回应是 有半数都没有按时收到leader 心跳 本次预投票才算成功
+            // 然后成功的几个节点会将自己变成候选人  如果小于半数很可能只是 该节点自己与leader 通信断了 当真正的leader 收到预投票请求
+            // 后会通过复制机对该节点进行重连
             if (response.getGranted()) {
                 this.prevVoteCtx.grant(peerId);
                 if (this.prevVoteCtx.isGranted()) {
@@ -2579,8 +2639,17 @@ public class NodeImpl implements Node, RaftServerService {
     private class OnPreVoteRpcDone extends RpcResponseClosureAdapter<RequestVoteResponse> {
 
         final long         startMs;
+        /**
+         * 对端节点
+         */
         final PeerId       peer;
+        /**
+         * 存放发送本次 预投票请求时的任期
+         */
         final long         term;
+        /**
+         * 本次请求对象 内部的任期是  term+1
+         */
         RequestVoteRequest request;
 
         public OnPreVoteRpcDone(final PeerId peer, final long term) {
@@ -2596,6 +2665,7 @@ public class NodeImpl implements Node, RaftServerService {
             if (!status.isOk()) {
                 LOG.warn("Node {} PreVote to {} error: {}.", getNodeId(), this.peer, status);
             } else {
+                // 处理响应结果
                 handlePreVoteResponse(this.peer, this.term, getResponse());
             }
         }
@@ -2616,7 +2686,8 @@ public class NodeImpl implements Node, RaftServerService {
                     getNodeId());
                 return;
             }
-            // 如果该节点不属于新的配置中 也就是该节点从集群中被剔除了 不具备投票的条件  这里针对的是conf 发生变化 之后要考虑有关这里的逻辑
+            // 如果该节点不属于新的配置中 也就是该节点从集群中被剔除了 不具备投票的条件  这里针对的是conf 发生变化
+            // TODO 之后要考虑有关这里的逻辑
             if (!this.conf.contains(this.serverId)) {
                 LOG.warn("Node {} can't do preVote as it is not in conf <{}>.", getNodeId(), this.conf);
                 return;
@@ -2633,9 +2704,7 @@ public class NodeImpl implements Node, RaftServerService {
         this.writeLock.lock();
         try {
             // pre_vote need defense ABA after unlock&writeLock
-            // 如果 还未投票就更新了任期 也就是 即使某次投票中少了本节点 某个节点还是竞选成功了 就不需要再进行投票了
-            // 上面的写锁应该是判断到 flush 本身会有一定的耗时 这时如果某节点成为了新的leader 也会因为获取不到写锁无法修改term 这样会有一定的性能损耗
-            // 所以在flush 之前释放了写锁  之后刷盘完成就要判断中途是否确定了 新的leader
+            // 在等待刷盘的时候 已经收到了其他leader的请求 同时更新了 任期 那么就不需要发起请求了
             if (oldTerm != this.currTerm) {
                 LOG.warn("Node {} raise term {} when get lastLogId.", getNodeId(), this.currTerm);
                 return;
@@ -2653,18 +2722,20 @@ public class NodeImpl implements Node, RaftServerService {
                     LOG.warn("Node {} channel init failed, address={}.", getNodeId(), peer.getEndpoint());
                     continue;
                 }
+                // 本次请求会触发预投票的回调
                 final OnPreVoteRpcDone done = new OnPreVoteRpcDone(peer, this.currTerm);
                 done.request = RequestVoteRequest.newBuilder() //
                     .setPreVote(true) // it's a pre-vote request.
                     .setGroupId(this.groupId) //
                     .setServerId(this.serverId.toString()) //
-                    .setPeerId(peer.toString()) //
-                    .setTerm(this.currTerm + 1) // next term
+                    .setPeerId(peer.toString()) // 代表其他follower的信息
+                    .setTerm(this.currTerm + 1) // next term 注意这里选择的任期 是 下一次的
                     .setLastLogIndex(lastLogId.getIndex()) //
                     .setLastLogTerm(lastLogId.getTerm()) //
                     .build();
                 this.rpcService.preVote(peer.getEndpoint(), done.request, done);
             }
+            // 这里预投票成功是 将自己设置为候选人 而在 选举阶段投票成功是将自己设置成leader
             this.prevVoteCtx.grant(this.serverId);
             if (this.prevVoteCtx.isGranted()) {
                 doUnlock = false;

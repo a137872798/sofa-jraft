@@ -89,6 +89,9 @@ public class Replicator implements ThreadId.OnError {
     private int                              consecutiveErrorTimes  = 0;
     private boolean                          hasSucceeded;
     private long                             timeoutNowIndex;
+    /**
+     * 代表最后一次发送的时间戳
+     */
     private volatile long                    lastRpcSendTimestamp;
     /**
      * 心跳计数器
