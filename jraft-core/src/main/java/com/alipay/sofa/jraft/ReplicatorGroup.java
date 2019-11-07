@@ -176,7 +176,7 @@ public interface ReplicatorGroup extends Describer {
      * the caller is responsible for stopping it, or an invalid value if we
      * found none.
      * Returns candidate replicator id on success and null otherwise.
-     *
+     * 停止所有复制机 并返回一个 认为会成为下个leader 的候选人(也就是当前拥有最大 lastlogId 的 在投票阶段会根据该值判断是否有必要将票给对应的候选人 也就是偏移量小的成功率就低)
      * @param conf configuration of all replicators
      * @return candidate replicator id on success
      */

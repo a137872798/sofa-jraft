@@ -41,7 +41,7 @@ public class ConfigurationManager {
      */
     private final LinkedList<ConfigurationEntry> configurations = new LinkedList<>();
     /**
-     * 最近一次快照数据
+     * 最近一次快照对应 集群信息
      */
     private ConfigurationEntry                   snapshot       = new ConfigurationEntry();
 
@@ -114,6 +114,7 @@ public class ConfigurationManager {
             Requires.requireTrue(lastIncludedIndex >= this.snapshot.getId().getIndex(),
                 "lastIncludedIndex %d is less than snapshot index %d", lastIncludedIndex, this.snapshot.getId()
                     .getIndex());
+            // 该快照对象是什么时候生成的???
             return this.snapshot;
         }
         ListIterator<ConfigurationEntry> it = this.configurations.listIterator();
@@ -124,7 +125,7 @@ public class ConfigurationManager {
                 break;
             }
         }
-        // 多往前数了一个 啥意思???
+        // 获取的 confEntry 刚好小于 lastIncludedIndex  这里调用2次 it.previous() 是不是搞错了???
         if (it.hasPrevious()) {
             // find the first position that is less than or equal to lastIncludedIndex.
             return it.previous();

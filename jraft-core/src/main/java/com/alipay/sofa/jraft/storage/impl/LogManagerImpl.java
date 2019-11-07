@@ -765,7 +765,7 @@ public class LogManagerImpl implements LogManager {
                         // 这里设置到回调对象中
                         ((LastLogIdClosure) done).setLastLogId(this.lastId.copy());
                         break;
-                    // 截断 前缀
+                    // 执行删除前面数据的回调
                     case TRUNCATE_PREFIX:
                         long startMs = Utils.monotonicMs();
                         try {
@@ -893,11 +893,9 @@ public class LogManagerImpl implements LogManager {
             // 生成配置实体
             final ConfigurationEntry entry = new ConfigurationEntry(new LogId(meta.getLastIncludedIndex(),
                 meta.getLastIncludedTerm()), conf, oldConf);
-            // 设置配置快照  快照应该不是只包含 新旧集群信息
+            // snapshot 字段就记录了最新一次写入的快照对象元数据
             this.configManager.setSnapshot(entry);
-            // 获取快照数据 对应的任期   这里有一点 如果超过了 lastIndex 那么会返回0
-            // 该方法的含义是 当写入快照时 follower 的旧数据就可以清除了 这里是在划分界限 看看对应到哪个任期 如果返回0 代表数据全部过期
-            // 如果
+            // 获取快照数据 对应的任期
             final long term = unsafeGetTerm(meta.getLastIncludedIndex());
             // 代表上次快照写入的 起始偏移量
             final long savedLastSnapshotIndex = this.lastSnapshotId.getIndex();
@@ -906,12 +904,12 @@ public class LogManagerImpl implements LogManager {
             this.lastSnapshotId.setIndex(meta.getLastIncludedIndex());
             this.lastSnapshotId.setTerm(meta.getLastIncludedTerm());
 
-            // appliedId代表快照的偏移量 为什么要保存该变量???
+            // 同步 applied 与 lastSnapshot
             if (this.lastSnapshotId.compareTo(this.appliedId) > 0) {
                 this.appliedId = this.lastSnapshotId.copy();
             }
 
-            // 这里代表  快照对应的任期 超过了 lastIndex 这样可以清除旧数据
+            // last_included_index is larger than last_index 允许删除所有数据
             if (term == 0) {
                 // last_included_index is larger than last_index
                 // FIXME: what if last_included_index is less than first_index?
@@ -923,7 +921,7 @@ public class LogManagerImpl implements LogManager {
                 // some log around last_snapshot_index is probably needed by some
                 // followers
                 // TODO if there are still be need?
-                // 代表 快照之间数据有重叠 这里就删除掉重复的部分
+                // 这里在写入快照后 没有立即截取到最新的部分  可能有些人正在拉取这部分的数据
                 if (savedLastSnapshotIndex > 0) {
                     truncatePrefix(savedLastSnapshotIndex + 1);
                 }
@@ -1266,12 +1264,12 @@ public class LogManagerImpl implements LogManager {
         this.firstLogIndex = firstIndexKept;
         if (firstIndexKept > this.lastLogIndex) {
             // The entry log is dropped
+            // 当LogManager 为空时  lastLogIndex 会小于 firstLogIndex
             this.lastLogIndex = firstIndexKept - 1;
         }
 
         LOG.debug("Truncate prefix, firstIndexKept is :{}", firstIndexKept);
-        // 将旧的配置也删除  这个 confManager 到底是干嘛用的 因为 加载rockDB 时 将所有conf 信息都保存进去了 如果 过时的数据是无效的
-        // 那么一开始就没必要保存该数据
+        // 清除 configManager 的无效数据  configManager 什么时候起作用???
         this.configManager.truncatePrefix(firstIndexKept);
         // 添加写入任务  也就是 针对 rockDB 的操作 都会放到 Disruptor 中
         final TruncatePrefixClosure c = new TruncatePrefixClosure(firstIndexKept);

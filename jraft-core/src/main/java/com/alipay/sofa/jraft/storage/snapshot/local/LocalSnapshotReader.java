@@ -36,7 +36,7 @@ import com.google.protobuf.Message;
 
 /**
  * Snapshot reader on local file system.
- * 读取基于文件系统的 快照对象
+ * 读取基于文件系统的 快照对象  该对象实际没有直接接触到文件 而是与fileService交互
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Apr-08 11:10:34 AM
@@ -50,7 +50,7 @@ public class LocalSnapshotReader extends SnapshotReader {
     /** remote peer addr */
     private final Endpoint               addr;
     /**
-     * 存放本地快照元数据的 table
+     * 由writer 创建映射关系 该对象读取  该对象内部保存的是基于用户实现的快照文件
      */
     private final LocalSnapshotMetaTable metaTable;
     private final String                 path;
@@ -110,7 +110,7 @@ public class LocalSnapshotReader extends SnapshotReader {
             setError(RaftError.ENOENT, "No such path %s for snapshot reader", this.path);
             return false;
         }
-        // 拼接成一个新的文件路径
+        // 查找对应的元数据文件路径并读取到 metaTable 中   对应writer写入快照文件后生成 元数据文件
         final String metaPath = this.path + File.separator + JRAFT_SNAPSHOT_META_FILE;
         try {
             // 初始化时 storage 对应的文件中读取数据 并存入 metaTable 中
@@ -164,17 +164,17 @@ public class LocalSnapshotReader extends SnapshotReader {
             LOG.error("Address is not specified");
             return null;
         }
-        // 为什么一定要readerId 为0 ???
+        // 当该对象被初始化时  readerId 为0 也就是该方法只能初始化后使用
         if (this.readerId == 0) {
-            // 创建一个快照文件读取对象
+            // 创建一个快照文件读取对象 这里还设置了一个阀门
             final SnapshotFileReader reader = new SnapshotFileReader(this.path, this.snapshotThrottle);
             reader.setMetaTable(this.metaTable);
-            // 读取失败
+            // 校验 path 对应的文件是否存在
             if (!reader.open()) {
                 LOG.error("Open snapshot {} failed.", this.path);
                 return null;
             }
-            // 添加reader 对象
+            // 将该对象注册到文件服务上 返回一个readerId
             this.readerId = FileService.getInstance().addReader(reader);
             if (this.readerId < 0) {
                 LOG.error("Fail to add reader to file_service.");

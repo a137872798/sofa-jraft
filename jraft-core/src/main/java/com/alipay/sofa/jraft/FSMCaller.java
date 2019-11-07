@@ -69,7 +69,7 @@ public interface FSMCaller extends Lifecycle<FSMCallerOptions>, Describer {
 
     /**
      * Called after saving snapshot.
-     *
+     * 开始保存快照
      * @param done callback
      */
     boolean onSnapshotSave(final SaveSnapshotClosure done);

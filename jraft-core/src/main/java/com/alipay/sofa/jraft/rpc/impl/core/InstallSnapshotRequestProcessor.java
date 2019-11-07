@@ -47,7 +47,7 @@ public class InstallSnapshotRequestProcessor extends NodeRequestProcessor<Instal
     }
 
     /**
-     * 委托给 RaftServerService
+     * follower 用于接受 leader安装快照的请求
      * @param service
      * @param request
      * @param done

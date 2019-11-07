@@ -208,6 +208,9 @@ public class NodeImpl implements Node, RaftServerService {
     private LogManager                                                     logManager;
     private FSMCaller                                                      fsmCaller;
     private BallotBox                                                      ballotBox;
+    /**
+     * 用于处理生成快照的对象
+     */
     private SnapshotExecutor                                               snapshotExecutor;
     private ReplicatorGroup                                                replicatorGroup;
     private final List<Closure>                                            shutdownContinuations    = new ArrayList<>();
@@ -227,9 +230,12 @@ public class NodeImpl implements Node, RaftServerService {
      */
     private RepeatedTimer                                                  voteTimer;
     /**
-     * 代表重复执行的定时任务 内部基于 netty.HashedWheel 实现
+     * 作为leader 时 定时检查与其他 follower的联系 如果超过半数丢失了 清除 自己的leader 信息 之后其他节点由于心跳超时开始进入预投票阶段
      */
     private RepeatedTimer                                                  stepDownTimer;
+    /**
+     * 快照定时器 定期生成快照 并删除LogManager 的无效数据
+     */
     private RepeatedTimer                                                  snapshotTimer;
     private ScheduledFuture<?>                                             transferTimer;
     private ThreadId                                                       wakingCandidate;
@@ -585,6 +591,9 @@ public class NodeImpl implements Node, RaftServerService {
         return true;
     }
 
+    /**
+     * 处理快照相关定时任务
+     */
     private void handleSnapshotTimeout() {
         this.writeLock.lock();
         try {
@@ -595,6 +604,7 @@ public class NodeImpl implements Node, RaftServerService {
             this.writeLock.unlock();
         }
         // do_snapshot in another thread to avoid blocking the timer thread.
+        // 避免阻塞定时线程  在额外线程中执行  这里没有设置 回调函数
         Utils.runInThread(() -> doSnapshot(null));
     }
 
@@ -1121,16 +1131,11 @@ public class NodeImpl implements Node, RaftServerService {
         if (requestTerm > this.currTerm) {
             status.setError(RaftError.ENEWLEADER, "Raft node receives message from new leader with higher term.");
             stepDown(requestTerm, false, status);
-        // 能进入到这里已经排除了 requestTerm < this.currTerm 的可能然后上面的情况 又否决了 大于 那么现在 currTerm == requestTerm
-        // 同时本节点 不再是 follower 这就代表
-        // 1. 本节点作为 follower 长时间没有收到leader 的心跳而将自己升级成了candidate 这时收到了 滞后的leader的请求
-        // 2. 本节点已经升级成了 leader  然后收到了滞后的leader 请求 又或者是发生脑裂
-        // 2个leader 之间是可以相互发送数据的呀 这时怎么确定哪个leader 降级呢 通过term吧
-        // 调用stepDown方法的参数于上面完全一致
+        // 本节点是候选人时
         } else if (this.state != State.STATE_FOLLOWER) {
             status.setError(RaftError.ENEWLEADER, "Candidate receives message from new leader with the same term.");
             stepDown(requestTerm, false, status);
-        // 本节点还是 follower 但是 leaderId 已经不在了 leaderId 什么时候被置空 推测可能是初始化时 还有就是强制更换leader
+        // 本节点还是 follower 但是长时间没有收到leader 的心跳
         } else if (this.leaderId.isEmpty()) {
             status.setError(RaftError.ENEWLEADER, "Follower receives message from new leader with the same term.");
             stepDown(requestTerm, false, status);
@@ -1185,7 +1190,7 @@ public class NodeImpl implements Node, RaftServerService {
     // should be in writeLock
 
     /**
-     * 代表本leader 进行让位
+     * 实际上就是退位 根据当前角色 比如 当前是候选人 在收到 别的节点变成leader 后 就不需要触发有关候选人的定时任务了
      * @param term
      * @param wakeupCandidate
      * @param status  让位的原因
@@ -1193,22 +1198,22 @@ public class NodeImpl implements Node, RaftServerService {
     private void stepDown(final long term, final boolean wakeupCandidate, final Status status) {
         LOG.debug("Node {} stepDown, term={}, newTerm={}, wakeupCandidate={}.", getNodeId(), this.currTerm, term,
             wakeupCandidate);
-        // 如果已经失活 就没有处理的必要了  还需要看看 如何做到优雅关闭的
+        // 如果已经失活 就没有处理的必要了
         if (!this.state.isActive()) {
             return;
         }
-        // 如果当前节点是 候选人 那么可以停止投票了 对应的场景就是 在同一时间 极端情况出现了多个候选人(实际上因为随机心跳的设置已经不容易出现该情况了)
-        // 而一旦某个候选人成功竞选后 成为了leader 并向其他节点发送数据 (发什么 心跳吗???) 那么其他的候选人就知道自己没有必要再参选了
-        // 恢复成 follower
+        // 如果当前节点是 候选人 该场景对应于 收到了更新任期的请求 那么本节点所在任期的选举已经无效了 就停止选举
         if (this.state == State.STATE_CANDIDATE) {
             stopVoteTimer();
         // 如果本节点就是 leader  多个leader 之间会发送数据都会进入这个分支 那么应该根据 term 确定哪个才是该保留的
         // 难道说哪里能够保证 当前真正的leader 不会收到其他leader 发来的请求??? 这样就对应下面无条件关闭leader了
         } else if (this.state.compareTo(State.STATE_TRANSFERRING) <= 0) {
+            // 本节点不再作为leader  关闭 stepdown 定时任务 也就是定期检查 有多少节点失效 超过半数 自行降级
             stopStepDownTimer();
+            // 清理了投票箱 投票箱内还残存的是用户针对本leader 提交的任务 那么 看来用户在提交任务时 要根据对应回调被触发的时候再做处理会比较好 那时才是真正的写入
             this.ballotBox.clearPendingTasks();
             // signal fsm leader stop immediately
-            // 如果当前节点是 leader 那么 立即触发 停止 TODO  等下这里不用判断term吗 ???
+            // 如果当前节点是 leader 那么 立即触发 stop
             if (this.state == State.STATE_LEADER) {
                 onLeaderStop(status);
             }
@@ -1223,30 +1228,38 @@ public class NodeImpl implements Node, RaftServerService {
         this.confCtx.reset();
         // 设置leader 更新时间
         updateLastLeaderTimestamp(Utils.monotonicMs());
-        // 打断下载快照的任务 这个任务是哪到哪  关闭的是当前请求体对应的任期
+        // 如果正在执行快照任务 要先进行打断
         if (this.snapshotExecutor != null) {
             this.snapshotExecutor.interruptDownloadingSnapshots(term);
         }
 
         // meta state
-        // 如果本次leader 的任期更新
+        // 如果触发方法的节点 的任期更新
         if (term > this.currTerm) {
             this.currTerm = term;
-            // TODO 这个属性要看到投票相关的才能明白
+            // 代表进入了下一轮那么置空votedId 作为下轮的投票节点字段
             this.votedId = PeerId.emptyPeer();
-            // 重置 term 和 votedId TODO 这里可能还有后续的逻辑 先不管
+            // 重置 term 和 votedId 同时写入到文件
             this.metaStorage.setTermAndVotedFor(term, this.votedId);
         }
 
-        // TODO 待理解
+        // 下面做了停止复制机组的操作
+
+        // 如果需要唤醒候选人
         if (wakeupCandidate) {
+            // 关闭除目标复制机外的其他机器
             this.wakingCandidate = this.replicatorGroup.stopAllAndFindTheNextCandidate(this.conf);
             if (this.wakingCandidate != null) {
+                // 主动让该节点超时 原本情况是要 从节点自己执行那个预投票对应的定时任务去发现 与leader断开连接
+                // 而且这样follower 会跳过预投票阶段直接进入投票阶段 就不需要判断 是否有半数未收到心跳
+                // 在通知完候选节点后 再关闭本复制机
                 Replicator.sendTimeoutNowAndStop(this.wakingCandidate, this.options.getElectionTimeoutMs());
             }
         } else {
+            // 只要触发该方法 复制机就会被停止
             this.replicatorGroup.stopAll();
         }
+        // TODO 这个待会看
         if (this.stopTransferArg != null) {
             if (this.transferTimer != null) {
                 this.transferTimer.cancel(true);
@@ -1255,6 +1268,7 @@ public class NodeImpl implements Node, RaftServerService {
             // mark stopTransferArg to NULL
             this.stopTransferArg = null;
         }
+        // 本节点已经作为follower 了 那么开启检测心跳的定时任务
         this.electionTimer.start();
     }
 
@@ -1712,6 +1726,10 @@ public class NodeImpl implements Node, RaftServerService {
         return Utils.monotonicMs() - this.lastLeaderTimestamp < this.options.getElectionTimeoutMs();
     }
 
+    /**
+     * stepdown 定时任务每次都会检查本leader 管理的节点 有多少已经失效 在半数内 就会继续维持leadership
+     * @param lastLeaderTimestamp
+     */
     private void updateLastLeaderTimestamp(final long lastLeaderTimestamp) {
         this.lastLeaderTimestamp = lastLeaderTimestamp;
     }
@@ -2107,7 +2125,6 @@ public class NodeImpl implements Node, RaftServerService {
             if (newTerm < this.currTerm) {
                 return;
             }
-            // 应该是代表让位了
             stepDown(newTerm, false, status);
         } finally {
             this.writeLock.unlock();
@@ -2191,13 +2208,14 @@ public class NodeImpl implements Node, RaftServerService {
         // 获取当前集群内所有的节点
         final List<PeerId> peers = conf.listPeers();
         final Configuration deadNodes = new Configuration();
-        // 检测成功直接返回
+        // 检测成功直接返回  检测失败代表本leader 与半数以上的节点无法通信 那么需要对角色进行降级
         if (checkDeadNodes0(peers, monotonicNowMs, true, deadNodes)) {
             return;
         }
         LOG.warn("Node {} steps down when alive nodes don't satisfy quorum, term={}, deadNodes={}, conf={}.",
             getNodeId(), this.currTerm, deadNodes, conf);
         final Status status = new Status();
+        // 设置尝试异常用于触发 stepdown
         status.setError(RaftError.ERAFTTIMEDOUT, "Majority of the group dies: %d/%d", deadNodes.size(), peers.size());
         stepDown(this.currTerm, false, status);
     }
@@ -2205,7 +2223,7 @@ public class NodeImpl implements Node, RaftServerService {
     /**
      * 真正的检测逻辑
      * @param peers 本集群当前所有的节点
-     * @param monotonicNowMs
+     * @param monotonicNowMs 开始检测的当前时间
      * @param checkReplicator
      * @param deadNodes 用于存放检测出来无效的节点
      * @return
@@ -2222,12 +2240,13 @@ public class NodeImpl implements Node, RaftServerService {
                 aliveCount++;
                 continue;
             }
-            // 如果要通过复制机检查  首先要确保自身是leader 复制机是什么时候被清除的还没确认
+            // 如果要通过复制机检查  首先要确保自身是leader 复制机是什么时候被清除的还没确认 能进行该项检测的必然是 leader 吧 follower节点没有检查当前集群的必要
             if (checkReplicator) {
                 checkReplicator(peer);
             }
             // 获取最后一次发往该节点并收到响应的时间 (每个复制机会定期发送心跳)
             final long lastRpcSendTimestamp = this.replicatorGroup.getLastRpcSendTimestamp(peer);
+            // 这里简单讲就是将 最后一次响应的时间 与当前时间做对比 只有在 续约超时时间内 才算是存活
             if (monotonicNowMs - lastRpcSendTimestamp <= leaderLeaseTimeoutMs) {
                 aliveCount++;
                 if (startLease > lastRpcSendTimestamp) {
@@ -2235,10 +2254,13 @@ public class NodeImpl implements Node, RaftServerService {
                 }
                 continue;
             }
+            // 代表长时间掉线的节点会添加到该容器中
             if (deadNodes != null) {
                 deadNodes.addPeer(peer);
             }
         }
+        // 存活节点数超过 半数 那么该leader 就还生效  应该是这样的 发生网络分区时 发现半数无法通信上 那么对应的半数在心跳时间内没有收到leader的req 会尝试进行选举，所以本节点就不应该作为
+        // leader 了 自动变更角色  而只要有半数 还能收到请求  剩余的节点即使发起 prevote 也无法成功
         if (aliveCount >= peers.size() / 2 + 1) {
             updateLastLeaderTimestamp(startLease);
             return true;
@@ -2273,11 +2295,12 @@ public class NodeImpl implements Node, RaftServerService {
                 LOG.debug("Node {} stop step-down timer, term={}, state={}.", getNodeId(), this.currTerm, this.state);
                 return;
             }
+            // 获取当前时间 纳秒为单位
             final long monotonicNowMs = Utils.monotonicMs();
             // 检测无效的节点
             checkDeadNodes(this.conf.getConf(), monotonicNowMs);
             if (!this.conf.getOldConf().isEmpty()) {
-                // 如果存在旧配置也检测一遍
+                // 如果存在旧配置也检测一遍  2套配置会怎么样 存在2套leader吗???
                 checkDeadNodes(this.conf.getOldConf(), monotonicNowMs);
             }
         } finally {
@@ -3086,7 +3109,12 @@ public class NodeImpl implements Node, RaftServerService {
         doSnapshot(done);
     }
 
+    /**
+     * 每个一段时间为当前数据生成快照
+     * @param done
+     */
     private void doSnapshot(final Closure done) {
+        // 首选确保快照选项被开启
         if (this.snapshotExecutor != null) {
             this.snapshotExecutor.doSnapshot(done);
         } else {
@@ -3188,6 +3216,12 @@ public class NodeImpl implements Node, RaftServerService {
         this.fsmCaller.onLeaderStop(status);
     }
 
+    /**
+     * 从节点处理 立即超时请求
+     * @param request   data of the timeout now request
+     * @param done      callback
+     * @return
+     */
     @Override
     public Message handleTimeoutNowRequest(final TimeoutNowRequest request, final RpcRequestClosure done) {
         boolean doUnlock = true;
@@ -3195,17 +3229,20 @@ public class NodeImpl implements Node, RaftServerService {
         try {
             if (request.getTerm() != this.currTerm) {
                 final long savedCurrTerm = this.currTerm;
+                // 如果请求的任期更新 很有可能该节点是滞后了
                 if (request.getTerm() > this.currTerm) {
+                    // 这里主要是 清除leaderId 更新本次term
                     stepDown(request.getTerm(), false, new Status(RaftError.EHIGHERTERMREQUEST,
                         "Raft node receives higher term request"));
                 }
                 LOG.info("Node {} received TimeoutNowRequest from {} while currTerm={} didn't match requestTerm={}.",
                     getNodeId(), request.getPeerId(), savedCurrTerm, request.getTerm());
                 return TimeoutNowResponse.newBuilder() //
-                    .setTerm(this.currTerm) //
+                    .setTerm(this.currTerm) // 返回的任期是已经更新过的
                     .setSuccess(false) //
                     .build();
             }
+            // 该请求仅针对follower
             if (this.state != State.STATE_FOLLOWER) {
                 LOG.info("Node {} received TimeoutNowRequest from {}, while state={}, term={}.", getNodeId(),
                     request.getServerId(), this.state, this.currTerm);
@@ -3216,6 +3253,7 @@ public class NodeImpl implements Node, RaftServerService {
             }
 
             final long savedTerm = this.currTerm;
+            // 代表进入新一轮投票了
             final TimeoutNowResponse resp = TimeoutNowResponse.newBuilder() //
                 .setTerm(this.currTerm + 1) //
                 .setSuccess(true) //
@@ -3223,6 +3261,7 @@ public class NodeImpl implements Node, RaftServerService {
             // Parallelize response and election
             done.sendResponse(resp);
             doUnlock = false;
+            // 直接选举自己 跳过预投票阶段 预投票阶段是基于心跳超时的 需要检测其他节点能否正常收到心跳 而直接进入投票阶段 就不需要判断心跳了 只是检测数据是否比半数新 成功的话直接变成leader
             electSelf();
             LOG.info("Node {} received TimeoutNowRequest from {}, term={}.", getNodeId(), request.getServerId(),
                 savedTerm);
@@ -3234,11 +3273,19 @@ public class NodeImpl implements Node, RaftServerService {
         return null;
     }
 
+    /**
+     * 处理安装快照的请求
+     * @param request   data of the install snapshot request
+     * @param done      callback
+     * @return
+     */
     @Override
     public Message handleInstallSnapshot(final InstallSnapshotRequest request, final RpcRequestClosure done) {
+        // 如果本节点没有安装快照执行器 代表不支持快照功能
         if (this.snapshotExecutor == null) {
             return RpcResponseFactory.newResponse(RaftError.EINVAL, "Not supported snapshot");
         }
+        // 尝试解析对端id
         final PeerId serverId = new PeerId();
         if (!serverId.parse(request.getServerId())) {
             LOG.warn("Node {} ignore InstallSnapshotRequest from {} bad server id.", getNodeId(), request.getServerId());
@@ -3247,6 +3294,7 @@ public class NodeImpl implements Node, RaftServerService {
 
         this.writeLock.lock();
         try {
+            // 如果当前失活不需要处理
             if (!this.state.isActive()) {
                 LOG.warn("Node {} ignore InstallSnapshotRequest as it is not in active state {}.", getNodeId(),
                     this.state);
@@ -3254,6 +3302,7 @@ public class NodeImpl implements Node, RaftServerService {
                     this.groupId, this.serverId, this.state.name());
             }
 
+            // 代表收到了 旧数据的安装快照请求
             if (request.getTerm() < this.currTerm) {
                 LOG.warn("Node {} ignore stale InstallSnapshotRequest from {}, term={}, currTerm={}.", getNodeId(),
                     request.getPeerId(), request.getTerm(), this.currTerm);
@@ -3265,6 +3314,7 @@ public class NodeImpl implements Node, RaftServerService {
 
             checkStepDown(request.getTerm(), serverId);
 
+            // 一般不会进入这种情况
             if (!serverId.equals(this.leaderId)) {
                 LOG.error("Another peer {} declares that it is the leader at term {} which was occupied by leader {}.",
                     serverId, this.currTerm, this.leaderId);
@@ -3289,6 +3339,7 @@ public class NodeImpl implements Node, RaftServerService {
                     getNodeId(), request.getServerId(), request.getMeta().getLastIncludedIndex(), request.getMeta()
                         .getLastIncludedTerm(), this.logManager.getLastLogId(false));
             }
+            // 开始安装快照
             this.snapshotExecutor.installSnapshot(request, InstallSnapshotResponse.newBuilder(), done);
             return null;
         } finally {

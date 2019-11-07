@@ -25,13 +25,13 @@ import com.alipay.sofa.jraft.entity.PeerId;
 /**
  * A configuration entry with current peers and old peers.
  * @author boyan (boyan@alibaba-inc.com)
- * 配置实体 内部维护了旧的集群节点 和新的集群节点  在重新发起选举时起作用 不让old节点参与新一轮的投票
+ * 对应一次快照写入 每次写入快照后会生成一个 confEntry 对象
  * 2018-Apr-04 2:25:06 PM
  */
 public class ConfigurationEntry {
 
     /**
-     * 这个值有什么用 ???
+     * 代表生成快照时的任期 和偏移量
      */
     private LogId         id      = new LogId(0, 0);
     /**

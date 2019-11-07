@@ -261,6 +261,7 @@ public class LocalSnapshotStorage implements SnapshotStorage {
                 break;
             }
             try {
+                // 先等待 writer 将元数据写入到文件中
                 if (!writer.sync()) {
                     ret = RaftError.EIO.getNumber();
                     break;
@@ -272,6 +273,7 @@ public class LocalSnapshotStorage implements SnapshotStorage {
             }
             // 意味着本次没有实际写入的数据
             final long oldIndex = getLastSnapshotIndex();
+            // 实际上就是 lastIncludeIndex 该值是如何变化的???
             final long newIndex = writer.getSnapshotIndex();
             if (oldIndex == newIndex) {
                 ret = RaftError.EEXISTS.getNumber();
@@ -279,6 +281,7 @@ public class LocalSnapshotStorage implements SnapshotStorage {
             }
             // rename temp to new
             final String tempPath = this.path + File.separator + TEMP_PATH;
+            // 生成特定的快照文件
             final String newPath = getSnapshotPath(newIndex);
 
             if (!destroySnapshot(newPath)) {
@@ -293,7 +296,7 @@ public class LocalSnapshotStorage implements SnapshotStorage {
                 ret = RaftError.EIO.getNumber();
                 break;
             }
-            // 将引用转移到新的文件
+            // 将引用转移到新的文件  每个index 都会对应到一个ref值
             ref(newIndex);
             this.lock.lock();
             try {
@@ -302,6 +305,7 @@ public class LocalSnapshotStorage implements SnapshotStorage {
             } finally {
                 this.lock.unlock();
             }
+            // 解除对旧文件的引用
             unref(oldIndex);
         } while (false);
         // 销毁临时文件
@@ -338,7 +342,7 @@ public class LocalSnapshotStorage implements SnapshotStorage {
         LocalSnapshotWriter writer = null;
         // noinspection ConstantConditions
         do {
-            // 按照临时文件的路径去创建writer 这样 writer 都是先将数据写入到临时文件中
+            // 注意这里使用 .temp 作为后缀 也就是一开始创建的是临时文件
             final String snapshotPath = this.path + File.separator + TEMP_PATH;
             // delete temp
             // TODO: Notify watcher before deleting
@@ -367,7 +371,7 @@ public class LocalSnapshotStorage implements SnapshotStorage {
         long lsIndex = 0;
         this.lock.lock();
         try {
-            // lastSnapshotIndex 代表快照文件的下标而不是偏移量 这样就代表 又有一处在引用该映射文件 (应该是指代reader 在引用该文件)
+            // lastSnapshotIndex 代表快照文件的下标而不是偏移量 writer 会修改该偏移量 而reader 负责读取
             if (this.lastSnapshotIndex != 0) {
                 lsIndex = this.lastSnapshotIndex;
                 // 这里意味着  有个reader对象也在依赖该index 的文件
@@ -380,9 +384,9 @@ public class LocalSnapshotStorage implements SnapshotStorage {
             LOG.warn("No data for snapshot reader {}.", this.path);
             return null;
         }
-        // 生成快照文件名
+        // 生成快照文件名  当writer 生成临时快照文件后 最后通过rename 就会设置成该地址
         final String snapshotPath = getSnapshotPath(lsIndex);
-        // 初始化 reader 对象并返回
+        // 将reader 连接到该文件
         final SnapshotReader reader = new LocalSnapshotReader(this, this.snapshotThrottle, this.addr, this.raftOptions,
             snapshotPath);
         // 初始化
@@ -429,13 +433,17 @@ public class LocalSnapshotStorage implements SnapshotStorage {
     @Override
     public SnapshotCopier startToCopyFrom(final String uri, final SnapshotCopierOptions opts) {
         final LocalSnapshotCopier copier = new LocalSnapshotCopier();
+        // 将storage 设置到 copier中
         copier.setStorage(this);
+        // 设置拷贝数据时的阀门
         copier.setSnapshotThrottle(this.snapshotThrottle);
         copier.setFilterBeforeCopyRemote(this.filterBeforeCopyRemote);
+        // 连接到 服务器 一开始 leader连接到follower  而 follower是没有连接 leader 的 这里创建copier 后主动连接到leader
         if (!copier.init(uri, opts)) {
             LOG.error("Fail to init copier to {}.", uri);
             return null;
         }
+        // 开启拉取数据
         copier.start();
         return copier;
     }

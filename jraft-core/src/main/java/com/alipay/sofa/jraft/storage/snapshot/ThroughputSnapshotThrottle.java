@@ -71,6 +71,11 @@ public class ThroughputSnapshotThrottle implements SnapshotThrottle {
         return currTimeUs / this.baseAligningTimeUs * this.baseAligningTimeUs;
     }
 
+    /**
+     * 入参是本次拉取的最大长度  返回值是处理后的长度
+     * @param bytes expect size
+     * @return
+     */
     @Override
     public long throttledByThroughput(final long bytes) {
         long availableSize;

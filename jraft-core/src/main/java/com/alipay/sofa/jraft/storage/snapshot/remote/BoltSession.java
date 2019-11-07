@@ -261,7 +261,7 @@ public class BoltSession implements Session {
     }
 
     /**
-     * 当远端返回结果时触发
+     * 当成功从远端拉取到文件数据后 返回    response.data 内部包含了读取到的数据
      * @param status  代表远端调用的结果
      * @param response  代表本次远端调用的结果
      */
@@ -277,6 +277,7 @@ public class BoltSession implements Session {
             if (!status.isOk()) {
                 // Reset count to make next rpc retry the previous one
                 this.requestBuilder.setCount(0);
+                // 如果 leader reader 已经被关闭这里就可以关闭session 了
                 if (status.getCode() == RaftError.ECANCELED.getNumber()) {
                     if (this.st.isOk()) {
                         this.st.setError(status.getCode(), status.getErrorMsg());
@@ -305,7 +306,7 @@ public class BoltSession implements Session {
             this.retryTimes = 0;
             Requires.requireNonNull(response, "response");
             // Reset count to |real_read_size| to make next rpc get the right offset
-            // 代表没有读取到末尾
+            // 代表没有读取到末尾  就设置真实读取的长度
             if (!response.getEof()) {
                 this.requestBuilder.setCount(response.getReadSize());
             }
@@ -336,16 +337,17 @@ public class BoltSession implements Session {
 
     /**
      * Send next RPC request to get a piece of file data.
-     * 基于本次偏移量 拉取下次数据
+     * 开始发送请求 拉取数据
      */
     void sendNextRpc() {
         this.lock.lock();
         try {
             this.timer = null;
-            // requestBuilder 内部维护了 拉取数据的偏移量
+            // requestBuilder 内部维护了 拉取数据的偏移量   一开始offset 和 count 都是0
             final long offset = this.requestBuilder.getOffset() + this.requestBuilder.getCount();
-            // 设置中包含每次拉取的 长度
+            // 设置中包含每次拉取的 长度  如果是保存到 buf 中那么不限制长度
             final long maxCount = this.destBuf == null ? this.raftOptions.getMaxByteCountPerRpc() : Integer.MAX_VALUE;
+            // 设置本次的拉取起点 + 拉取总数
             this.requestBuilder.setOffset(offset).setCount(maxCount).setReadPartly(true);
 
             // 如果 session 对象已经终止 无法拉取数据
@@ -356,10 +358,12 @@ public class BoltSession implements Session {
             long newMaxCount = maxCount;
             // 如果存在阀门 进行额外处理
             if (this.snapshotThrottle != null) {
+                // 修改预备拉取的最大偏移量  这里先不看吧 不是重点
                 newMaxCount = this.snapshotThrottle.throttledByThroughput(maxCount);
                 if (newMaxCount == 0) {
                     // Reset count to make next rpc retry the previous one
                     this.requestBuilder.setCount(0);
+                    // 在一定时间后发起重试 这里面是某种限流算法 可能流量还没有生成(令牌)
                     this.timer = this.timerManager.schedule(this::onTimer, this.copyOptions.getRetryIntervalMs(),
                         TimeUnit.MILLISECONDS);
                     return;

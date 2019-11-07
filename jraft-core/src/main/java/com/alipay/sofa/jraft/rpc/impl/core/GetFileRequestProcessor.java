@@ -26,7 +26,7 @@ import com.google.protobuf.Message;
 
 /**
  * Get file request processor.
- * 获取文件请求处理器
+ * follower 向leader 拉取快照文件的请求
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Apr-04 3:01:25 PM

@@ -118,7 +118,7 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
 
     /**
      * Downloading snapshot job.
-     * 代表正在下载快照的任务
+     * 代表下载快照的任务
      * @author boyan (boyan@alibaba-inc.com)
      *
      * 2018-Apr-08 3:07:19 PM
@@ -173,9 +173,12 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
          * 写快照对象
          */
         SnapshotWriter writer;
+        /**
+         * 内部包含 node 设置保存快照任务的回调
+         */
         Closure        done;
         /**
-         * 快照元数据
+         * 快照元数据  默认为null  在要写入快照时 会将当前 集群状态对应的元数据信息设置到该属性中
          */
         SnapshotMeta   meta;
 
@@ -208,7 +211,7 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
         }
 
         /**
-         * 设置 meta 属性 并返回 writer 对象
+         * 在写入 快照前会触发该方法 也就是设置元数据
          * @param meta metadata of snapshot.
          * @return
          */
@@ -402,6 +405,10 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
         return this.node;
     }
 
+    /**
+     * 生成快照 该方法会在 node 的定时任务中触发
+     * @param done snapshot callback
+     */
     @Override
     public void doSnapshot(final Closure done) {
         boolean doUnlock = true;
@@ -412,18 +419,20 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
                 Utils.runClosureInThread(done, new Status(RaftError.EPERM, "Is stopped."));
                 return;
             }
+
             // 如果当前正在下载快照
             if (this.downloadingSnapshot.get() != null) {
                 Utils.runClosureInThread(done, new Status(RaftError.EBUSY, "Is loading another snapshot."));
                 return;
             }
-            // 如果当前正在保存快照
+            // 如果当前正在保存快照 保存快照就对应 leader  downloadingSnapshot 就对应follower
             if (this.savingSnapshot) {
                 Utils.runClosureInThread(done, new Status(RaftError.EBUSY, "Is saving another snapshot."));
                 return;
             }
 
-            // 这里代表不需要处理快照
+            // lastAppliedIndex 可能就是类似于 成功提交到 raft集群的最后偏移量之类的概念吧 如果该值就是最后写入的快照下标 就不需要生成快照了  不过可以将之前写入到
+            // logManager 的数据清除  (TODO 如果快照还没有安装到其他节点时 本leader失效了 会怎么样???  那么这个快照数据还有效吗)
             if (this.fsmCaller.getLastAppliedIndex() == this.lastSnapshotIndex) {
                 // There might be false positive as the getLastAppliedIndex() is being
                 // updated. But it's fine since we will do next snapshot saving in a
@@ -435,17 +444,20 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
                 Utils.runClosureInThread(done);
                 return;
             }
-            // writer 会对应到一个 temp 路径 快照数据首先会写入到 temp中之后 如果调用了close 那么数据会被转移到 真正的快照文件中
+
+            // 到这里执行生成快照相关的逻辑
+            // create() 内部会创建一个快照文件 用于写入快照信息 (还有一个包含元数据的文件)
             final SnapshotWriter writer = this.snapshotStorage.create();
             if (writer == null) {
                 Utils.runClosureInThread(done, new Status(RaftError.EIO, "Fail to create writer."));
                 reportError(RaftError.EIO.getNumber(), "Fail to create snapshot writer.");
                 return;
             }
-            // 代表当前开始保存快照信息
+            // 代表当前开始保存快照信息  这段是不是可以放到前面???
             this.savingSnapshot = true;
-            // 创建一个保存快照的回调对象 同时该对象内部嵌套着本次传入的新回调对象
+            // 创建一个保存快照的回调对象 同时该对象内部嵌套着本次传入的新回调对象  默认情况下本次实际的回调对象为null
             final SaveSnapshotDone saveSnapshotDone = new SaveSnapshotDone(writer, done, null);
+            // 保存快照
             if (!this.fsmCaller.onSnapshotSave(saveSnapshotDone)) {
                 Utils.runClosureInThread(done, new Status(RaftError.EHOSTDOWN, "The raft node is down."));
                 return;
@@ -511,6 +523,7 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
         this.lock.lock();
         try {
             if (ret == 0) {
+                // 更新最新的快照 偏移量和 任期
                 this.lastSnapshotIndex = meta.getLastIncludedIndex();
                 this.lastSnapshotTerm = meta.getLastIncludedTerm();
                 doUnlock = false;
@@ -599,7 +612,7 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
 
     /**
      * 开始安装快照
-     * @param request
+     * @param request  leader 发送给 follower 的安装快照请求 内部包含地址信息
      * @param response
      * @param done
      */
@@ -607,7 +620,7 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
     public void installSnapshot(final InstallSnapshotRequest request, final InstallSnapshotResponse.Builder response,
                                 final RpcRequestClosure done) {
         final SnapshotMeta meta = request.getMeta();
-        // 生成一个 下载快照对象的请求
+        // 生成一个 下载快照对象的请求 这时是 从follower 到leader下载
         final DownloadingSnapshot ds = new DownloadingSnapshot(request, response, done);
         //DON'T access request, response, and done after this point
         //as the retry snapshot will replace this one.
@@ -691,13 +704,13 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
 
         this.lock.lock();
         try {
-            // 如果当前 executor 已经终止 直接以 Shutdown 形式触发ds
+            // 已经停止
             if (this.stopped) {
                 LOG.warn("Register DownloadingSnapshot failed: node is stopped");
                 ds.done.sendResponse(RpcResponseFactory.newResponse(RaftError.EHOSTDOWN, "Node is stopped."));
                 return false;
             }
-            // 如果当前正在保存快照 提示繁忙 这里的意思是 下载和 保存不能同时执行吗???  为什么要这样设计 同时这2者可能会同时触发么
+            // follower 可以save快照吗 不是只有leader 才可以save快照吗
             if (this.savingSnapshot) {
                 LOG.warn("Register DownloadingSnapshot failed: is saving snapshot");
                 ds.done.sendResponse(RpcResponseFactory.newResponse(RaftError.EBUSY, "Node is saving snapshot."));
@@ -706,6 +719,7 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
 
             // 如果当前任期 与请求的任期 不匹配 返回失败信息
             ds.responseBuilder.setTerm(this.term);
+            // 任期不同的话 不允许下载快照
             if (ds.request.getTerm() != this.term) {
                 LOG.warn("Register DownloadingSnapshot failed: term mismatch, expect {} but {}.", this.term,
                     ds.request.getTerm());
@@ -713,6 +727,7 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
                 ds.done.sendResponse(ds.responseBuilder.build());
                 return false;
             }
+            // 代表 当前follower 的快照更新 就不需要拉取快照了
             if (ds.request.getMeta().getLastIncludedIndex() <= this.lastSnapshotIndex) {
                 LOG.warn(
                     "Register DownloadingSnapshot failed: snapshot is not newer, request lastIncludedIndex={}, lastSnapshotIndex={}.",
@@ -725,8 +740,9 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
             if (m == null) {
                 // 设置正在下载快照的任务
                 this.downloadingSnapshot.set(ds);
+                // 确保用于下载快照的 copier 对象为空
                 Requires.requireTrue(this.curCopier == null, "Current copier is not null");
-                // 生成session 对象 并开始拉取数据
+                // 指定拉取快照的路径 初始化 copier 对象
                 this.curCopier = this.snapshotStorage.startToCopyFrom(ds.request.getUri(), newCopierOpts());
                 if (this.curCopier == null) {
                     this.downloadingSnapshot.set(null);

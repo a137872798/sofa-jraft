@@ -306,6 +306,11 @@ public class KVStoreStateMachine extends StateMachineAdapter {
         }
     }
 
+    /**
+     * 保存快照  该方法由用户来实现  writer中已经包含了快照文件的路径
+     * @param writer
+     * @param done
+     */
     @Override
     public void onSnapshotSave(final SnapshotWriter writer, final Closure done) {
         this.storeSnapshotFile.save(writer, done, this.region.copy(), this.storeEngine.getSnapshotExecutor());

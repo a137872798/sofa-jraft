@@ -51,7 +51,7 @@ public class LocalSnapshotMetaTable {
     private final Map<String, LocalFileMeta> fileMap;
     private final RaftOptions                raftOptions;
     /**
-     * 快照元数据
+     * 最后一次写入快照的元数据 包含 任期  lastIncludedIndex
      */
     private SnapshotMeta                     meta;
 
@@ -63,7 +63,6 @@ public class LocalSnapshotMetaTable {
 
     /**
      * Save metadata infos into byte buffer.
-     * 将远端传来的数据保存到 buffer 中
      */
     public ByteBuffer saveToByteBufferAsRemote() {
         final LocalSnapshotPbMeta.Builder pbMetaBuilder = LocalSnapshotPbMeta.newBuilder();
@@ -94,7 +93,7 @@ public class LocalSnapshotMetaTable {
                 LOG.error("Fail to load meta from buffer.");
                 return false;
             }
-            // 从格式化后的数据中解析
+            // 从格式化后的数据中解析  这样就做到 将 leader 上的快照文件元数据转移到了follower 上
             return loadFromPbMeta(pbMeta);
         } catch (final InvalidProtocolBufferException e) {
             LOG.error("Fail to parse LocalSnapshotPbMeta from byte buffer", e);
@@ -185,7 +184,7 @@ public class LocalSnapshotMetaTable {
     }
 
     /**
-     * 设置快照元数据
+     * 将参数中的数据 拷贝到本对象上
      * @param pbMeta
      * @return
      */

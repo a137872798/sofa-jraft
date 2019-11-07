@@ -272,15 +272,22 @@ public class ReplicatorGroupImpl implements ReplicatorGroup {
         return rid != null && Replicator.stopTransferLeadership(rid);
     }
 
+    /**
+     * 停止所有的复制机 并返回最有可能成为leader 的候选人
+     * @param conf configuration of all replicators
+     * @return
+     */
     @Override
     public ThreadId stopAllAndFindTheNextCandidate(final ConfigurationEntry conf) {
         ThreadId candidate = null;
+        // 找到写入数据最多的节点
         final PeerId candidateId = this.findTheNextCandidate(conf);
         if (candidateId != null) {
             candidate = this.replicatorMap.get(candidateId);
         } else {
             LOG.info("Fail to find the next candidate.");
         }
+        // 关闭除候选外的其他复制机
         for (final ThreadId r : this.replicatorMap.values()) {
             if (r != candidate) {
                 Replicator.stop(r);
@@ -291,14 +298,21 @@ public class ReplicatorGroupImpl implements ReplicatorGroup {
         return candidate;
     }
 
+    /**
+     * 寻找最可能成为leader 的候选人
+     * @param conf configuration of all replicators
+     * @return
+     */
     @Override
     public PeerId findTheNextCandidate(final ConfigurationEntry conf) {
         PeerId peerId = null;
         long maxIndex = -1L;
         for (final Map.Entry<PeerId, ThreadId> entry : this.replicatorMap.entrySet()) {
+            // 不包含在 复制机中的跳过
             if (!conf.contains(entry.getKey())) {
                 continue;
             }
+            // 这里返回复制机的 nextIndex  该值代表 正确请求到对端并接收到响应的偏移量 那么该值最大就可以理解为写入的数据最多
             final long nextIndex = Replicator.getNextIndex(entry.getValue());
             if (nextIndex > maxIndex) {
                 maxIndex = nextIndex;

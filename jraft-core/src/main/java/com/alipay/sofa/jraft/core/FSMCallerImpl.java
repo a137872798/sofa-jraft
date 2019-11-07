@@ -64,7 +64,8 @@ import com.lmax.disruptor.dsl.ProducerType;
 
 /**
  * The finite state machine caller implementation.
- * 该对象用于与状态机交互
+ * 该对象是用户与状态机交互的门面 通过将不同的事件 发布到该对象中 包装成 iteratorImpl 后提交到状态机
+ * 之后就走raft 那一套
  *
  * @author boyan (boyan@alibaba-inc.com)
  * <p>
@@ -453,6 +454,7 @@ public class FSMCallerImpl implements FSMCaller {
      */
     @Override
     public boolean onError(final RaftException error) {
+        // 这里避免异常被重复执行 因为 caller.onError <-> node.onError 会相互调用
         if (!this.error.getStatus().isOk()) {
             LOG.warn("FSMCaller already in error status, ignore new error: {}", error);
             return false;
@@ -521,13 +523,15 @@ public class FSMCallerImpl implements FSMCaller {
                     case COMMITTED:
                         Requires.requireTrue(false, "Impossible");
                         break;
-                    // 如果是保存快照
+                    // node节点如果配置了快照对象 在定时任务中 会保存快照对象 就会转发到这里
                     case SNAPSHOT_SAVE:
                         // 代表当前正在处理 保存快照的任务
                         this.currTask = TaskType.SNAPSHOT_SAVE;
-                        // 如果当前Caller 对象已经出现了异常就不能处理了 通过异常status触发回调 返回true 代表caller 对象正常
+                        // 如果当前Caller 对象已经出现了异常就不能处理了 通过异常status触发回调
+                        // passByStatus 返回true 代表caller对象正常
                         if (passByStatus(task.done)) {
-                            // 保存快照
+                            // 保存快照  由于需要用户自己实现 简单看作将目标数据写入到了文件中 并在writer中保存了 文件名与 元数据的映射关系
+                            // 比如 基于kv 的实现就是 将region 持久化
                             doSnapshotSave((SaveSnapshotClosure) task.done);
                         }
                         break;
@@ -664,7 +668,7 @@ public class FSMCallerImpl implements FSMCaller {
                     lastAppliedIndex, committedIndex, this.applyingIndex);
             // 等同 hasNext()
             while (iterImpl.isGood()) {
-                // 每次调用 next LogEntry 会从 lastAppliedIndex 向 commitedIndex 靠拢
+                // 每次调用 next LogEntry 会使得 lastAppliedIndex 向 commitedIndex 靠拢
                 final LogEntry logEntry = iterImpl.entry();
                 // LogEntry 分为 data 和configuration
                 if (logEntry.getType() != EnumOutter.EntryType.ENTRY_TYPE_DATA) {
@@ -753,15 +757,15 @@ public class FSMCallerImpl implements FSMCaller {
     }
 
     /**
-     * 保存快照
+     * 保存快照  并触发回调
      *
      * @param done
      */
     private void doSnapshotSave(final SaveSnapshotClosure done) {
         Requires.requireNonNull(done, "SaveSnapshotClosure is null");
-        // 代表最后 成功 commited 的数据下标 应该是基于该下标进行提交
+        // 该值具体是指写入到 集群还是 仅仅提交任务先不管 总之以这个作为能否写入快照的标准
         final long lastAppliedIndex = this.lastAppliedIndex.get();
-        // 以最后提交的 index,term 为终点 创建快照对象
+        // 记录本次生成快照的任期与  偏移量
         final RaftOutter.SnapshotMeta.Builder metaBuilder = RaftOutter.SnapshotMeta.newBuilder() //
                 .setLastIncludedIndex(lastAppliedIndex) //
                 .setLastIncludedTerm(this.lastAppliedTerm);

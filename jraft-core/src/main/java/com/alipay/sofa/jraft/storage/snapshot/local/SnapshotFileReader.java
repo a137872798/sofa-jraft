@@ -68,7 +68,7 @@ public class SnapshotFileReader extends LocalDirReader {
     /**
      * 从指定偏移量读取数据并保存到 buffer中
      * @param metaBufferCollector
-     * @param fileName file name
+     * @param fileName file name   读取的目标文件
      * @param offset   the offset of file
      * @param maxCount max read bytes
      * @return
@@ -79,6 +79,7 @@ public class SnapshotFileReader extends LocalDirReader {
     public int readFile(final ByteBufferCollector metaBufferCollector, final String fileName, final long offset,
                         final long maxCount) throws IOException, RetryAgainException {
         // read the whole meta file.
+        // 代表读取元数据信息
         if (fileName.equals(Snapshot.JRAFT_SNAPSHOT_META_FILE)) {
             // 这里将metaTable 的 meta 和 fileMap 的数据全部保存到 buffer 中
             final ByteBuffer metaBuf = this.metaTable.saveToByteBufferAsRemote();

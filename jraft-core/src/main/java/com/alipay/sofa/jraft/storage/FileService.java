@@ -43,7 +43,7 @@ import com.google.protobuf.ZeroByteStringHelper;
 
 /**
  * File reader service.
- * 文件读取服务对象
+ * 文件读取服务对象  用于统一管理
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Mar-30 10:23:13 AM
@@ -58,14 +58,17 @@ public final class FileService {
     private static final FileService              INSTANCE      = new FileService();
 
     /**
-     * key peerId  value 文件读取对象
+     * key readId  value 文件读取对象
      */
     private final ConcurrentMap<Long, FileReader> fileReaderMap = new ConcurrentHashMap<>();
+    /**
+     * 该属性是一个随机值  每当有某个 FileReader 添加到它的映射容器中 就会将该值+1 并返回作为 readerId
+     */
     private final AtomicLong                      nextId        = new AtomicLong();
 
     /**
      * Retrieve the singleton instance of FileService.
-     *
+     * 一般情况下通过单例方式获取
      * @return a fileService instance
      */
     public static FileService getInstance() {
@@ -91,9 +94,11 @@ public final class FileService {
 
     /**
      * Handle GetFileRequest, run the response or set the response with done.
-     * 处理获取文件的请求
+     * 处理获取文件的请求  流程是这样 leader 发起要求follower 拉取快照的请求 同时生成一个read 对象并保存在fileService中 之后将信息发送到了follower follower 创建一个session 对象 会按照
+     * 每次拉取的最大长度 从leader上找到对应的reader对象 并拉取数据
      */
     public Message handleGetFile(final GetFileRequest request, final RpcRequestClosure done) {
+        // 该请求对象本身无效
         if (request.getCount() <= 0 || request.getOffset() < 0) {
             return RpcResponseFactory.newResponse(RaftError.EREQUEST, "Invalid request: %s", request);
         }
@@ -113,7 +118,7 @@ public final class FileService {
         final ByteBufferCollector dataBuffer = ByteBufferCollector.allocate();
         final GetFileResponse.Builder responseBuilder = GetFileResponse.newBuilder();
         try {
-            // 将文件从指定偏移量将数据读取到 buffer 中  返回读取的长度
+            // 将文件从指定偏移量将数据读取到 buffer 中  返回读取的长度   如果是读取元数据 fileName 就是__raft_snapshot_meta 返回-1代表读取到了文件末尾
             final int read = reader
                 .readFile(dataBuffer, request.getFilename(), request.getOffset(), request.getCount());
             responseBuilder.setReadSize(read);
@@ -144,7 +149,7 @@ public final class FileService {
 
     /**
      * Adds a file reader and return it's generated readerId.
-     * 增加 文件读取对象 看来该类的核心功能在 fileReader中
+     * 注册某个reader
      */
     public long addReader(final FileReader reader) {
         final long readerId = this.nextId.getAndIncrement();

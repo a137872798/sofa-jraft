@@ -86,11 +86,14 @@ public class RemoteFileCopier {
      * @return
      */
     public boolean init(String uri, final SnapshotThrottle snapshotThrottle, final SnapshotCopierOptions opts) {
+        // node 对象
         this.rpcService = opts.getRaftClientService();
         this.timerManager = opts.getTimerManager();
         this.raftOptions = opts.getRaftOptions();
+        // 阀门
         this.snapshotThrottle = snapshotThrottle;
 
+        // 远程拉取url 前缀
         final int prefixSize = Snapshot.REMOTE_SNAPSHOT_URI_SCHEME.length();
         if (uri == null || !uri.startsWith(Snapshot.REMOTE_SNAPSHOT_URI_SCHEME)) {
             LOG.error("Invalid uri {}.", uri);
@@ -100,13 +103,13 @@ public class RemoteFileCopier {
         final int slasPos = uri.indexOf('/');
         // 截取 ip, port
         final String ipAndPort = uri.substring(0, slasPos);
-        // 对应具体的域名   截取出来的值 应该是一个数字
         uri = uri.substring(slasPos + 1);
 
         try {
+            // 解析出对应的 readId  在 leader 每次发起安装快照请求时就会创建一个 snapshotReader 对象 会对应一个readId
             this.readId = Long.parseLong(uri);
             final String[] ipAndPortStrs = ipAndPort.split(":");
-            // 将远端 ip port 转换成 endpoint 对象
+            // 将远端 ip port 转换成 endpoint 对象 实际上就是leader 的地址
             this.endpoint = new Endpoint(ipAndPortStrs[0], Integer.parseInt(ipAndPortStrs[1]));
         } catch (final Exception e) {
             LOG.error("Fail to parse readerId or endpoint.", e);
@@ -196,9 +199,11 @@ public class RemoteFileCopier {
      * @return
      */
     private BoltSession newBoltSession(final String source) {
+        // 生成一个拉取文件的请求 并指定了 readId 这样会在 leader找到对应的reader
         final GetFileRequest.Builder reqBuilder = GetFileRequest.newBuilder() //
             .setFilename(source) //
             .setReaderId(this.readId);
+        // 通过leader 阀门 等 构建一个拉取快照数据的会话对象
         return new BoltSession(this.rpcService, this.timerManager, this.snapshotThrottle, this.raftOptions, reqBuilder,
             this.endpoint);
     }
@@ -227,12 +232,13 @@ public class RemoteFileCopier {
 
     /**
      * 将数据保存到IOBuffer 中
-     * @param source
-     * @param destBuf
+     * @param source  "__raft_snapshot_meta"
+     * @param destBuf   用于存储元数据的buffer
      * @param opts
      * @return
      */
     public Session startCopy2IoBuffer(final String source, final ByteBufferCollector destBuf, final CopyOptions opts) {
+        // 通过给定的字符串生成一个会话对象
         final BoltSession session = newBoltSession(source);
         // destion 为 buffer 时 不设置outputStream 设置destBuf
         session.setOutputStream(null);

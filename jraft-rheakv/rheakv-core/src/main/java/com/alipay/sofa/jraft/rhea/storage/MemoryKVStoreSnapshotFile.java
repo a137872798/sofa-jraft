@@ -53,6 +53,7 @@ public class MemoryKVStoreSnapshotFile extends AbstractKVStoreSnapshotFile {
 
     @Override
     LocalFileMeta doSnapshotSave(final String snapshotPath, final Region region) throws Exception {
+        // 如果使用基于内存的 先删除之前创建的快照文件
         final File file = new File(snapshotPath);
         FileUtils.deleteDirectory(file);
         FileUtils.forceMkdir(file);

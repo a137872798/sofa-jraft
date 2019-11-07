@@ -57,6 +57,8 @@ import com.google.protobuf.Message;
  */
 public class BoltRaftClientService extends AbstractBoltClientService implements RaftClientService {
 
+    // 注意 只有appendEntry相关的请求才从线程组中选择指定的线程 而其他方法调用则是共用某个线程池
+
     /**
      * 创建线程组对象  默认使用mpsc 作为任务队列 同时该对象 使用了 类似netty 的线程组模式 内部包含一个选择器对象
      * 会负载请求 使用其中一条线程设置任务   阻塞队列本身为什么性能差 是因为不同线程间并发访问下标 必须要加锁

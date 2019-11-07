@@ -60,7 +60,7 @@ public interface SnapshotExecutor extends Lifecycle<SnapshotExecutorOptions>, De
      *  - Interrupted: happens when interrupt_downloading_snapshot is called or
      *    a new RPC with the same or newer snapshot arrives
      * - Busy: the state machine is saving or loading snapshot
-     * 将快照设置到其他节点
+     * 从leader 将快照安装到本地(follower)
      */
     void installSnapshot(final InstallSnapshotRequest request, final InstallSnapshotResponse.Builder response,
                          final RpcRequestClosure done);

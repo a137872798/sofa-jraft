@@ -25,7 +25,7 @@ import com.google.protobuf.Message;
 
 /**
  * TimeoutNow request processor.
- * 处理超时请求
+ * 处理超时请求 本超时请求代表 某个leader 已经失效 它找到了最适合成为下个leader 的节点并主动告诉它
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Apr-23 11:12:48 AM

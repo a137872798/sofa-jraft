@@ -49,7 +49,7 @@ import com.alipay.sofa.jraft.util.Utils;
 
 /**
  * Copy another machine snapshot to local.
- * 将其他机器的快照信息拷贝到本地
+ * 从leader将快照信息拷贝到本地(follower)
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Apr-07 11:32:30 AM
@@ -85,8 +85,8 @@ public class LocalSnapshotCopier extends SnapshotCopier {
      */
     private LocalSnapshot                remoteSnapshot;
     /** remote file copier
-     *  远端文件 拷贝对象
-     * */
+     *  远端文件 拷贝对象  实际上逻辑都在该对象内
+     */
     private RemoteFileCopier             copier;
     /** current copying session
      *  会话对象
@@ -115,14 +115,14 @@ public class LocalSnapshotCopier extends SnapshotCopier {
     }
 
     /**
-     * 拷贝快照数据
+     * 这里已经是 follower 连接上leader 并开始拉取快照数据了   为什么采用拉模式 而不是 推模式(leader 将数据送到follower上)
      * @throws IOException
      * @throws InterruptedException
      */
     private void internalCopy() throws IOException, InterruptedException {
         // noinspection ConstantConditions
         do {
-            // 从远端拉取数据 之后保存到 localSnapshot 中
+            // 在准备拉取快照数据前  先拉取元数据 因为里面 包含了 一共有多少映射文件以及文件名等信息
             loadMetaTable();
             if (!isOk()) {
                 break;
@@ -138,7 +138,7 @@ public class LocalSnapshotCopier extends SnapshotCopier {
                 copyFile(file);
             }
         } while (false);
-        // 如果本对象已经发现异常了 将异常传播到 writer 中
+        // 如果 尝试拉取快照失败
         if (!isOk() && this.writer != null && this.writer.isOk()) {
             this.writer.setError(getCode(), getErrorMsg());
         }
@@ -221,7 +221,7 @@ public class LocalSnapshotCopier extends SnapshotCopier {
     }
 
     /**
-     * 加载元数据表
+     * 加载元数据表  是保存到 remoteSnapshot
      * @throws InterruptedException
      */
     private void loadMetaTable() throws InterruptedException {
@@ -240,7 +240,7 @@ public class LocalSnapshotCopier extends SnapshotCopier {
                     }
                     return;
                 }
-                // 将数据拷贝到 IOBuffer中 并返回一个 会话对象   session 内部维护了远端的信息 并封装了获取数据的api
+                // 将元数据保存到 buffer中
                 session = this.copier.startCopy2IoBuffer(Snapshot.JRAFT_SNAPSHOT_META_FILE, metaBuf, null);
                 this.curSession = session;
             } finally {
@@ -276,14 +276,14 @@ public class LocalSnapshotCopier extends SnapshotCopier {
     }
 
     /**
-     * 在拷贝数据前进行过滤
-     * @param writer  将快照信息从 remoteSnapshot 写入到 storage
+     * 该方法进入的前提是 writer 已经写入了元数据文件  该方法应该是要剔除掉那些比较奇怪的元数据对应的文件
+     * @param writer
      * @param lastSnapshot
      * @return
      * @throws IOException
      */
     boolean filterBeforeCopy(final LocalSnapshotWriter writer, final SnapshotReader lastSnapshot) throws IOException {
-        // 代表预备写入的一组文件
+        // 当前在 writer 中找到的一组 文件名 代表一共写了哪些快照文件
         final Set<String> existingFiles = writer.listFiles();
         final ArrayDeque<String> toRemove = new ArrayDeque<>();
         for (final String file : existingFiles) {
@@ -294,12 +294,14 @@ public class LocalSnapshotCopier extends SnapshotCopier {
             }
         }
 
+        // 获取从 leader 拉取到的快照文件名 列表
         final Set<String> remoteFiles = this.remoteSnapshot.listFiles();
 
         for (final String fileName : remoteFiles) {
+            // 获取对应的元数据
             final LocalFileMeta remoteMeta = (LocalFileMeta) this.remoteSnapshot.getFileMeta(fileName);
             Requires.requireNonNull(remoteMeta, "remoteMeta");
-            // 校验校验和失败 设置到待移除中
+            // 如果该文件没有设置校验和 重新下载
             if (!remoteMeta.hasChecksum()) {
                 // Re-download file if this file doesn't have checksum
                 writer.removeFile(fileName);
@@ -307,16 +309,17 @@ public class LocalSnapshotCopier extends SnapshotCopier {
                 continue;
             }
 
-            // writer 中已经有数据了???
+            // 从writer 中找到对应的元数据
             LocalFileMeta localMeta = (LocalFileMeta) writer.getFileMeta(fileName);
             if (localMeta != null) {
-                // 代表数据完全一致 就不需要写入了
+                // 代表元数据是正常的
                 if (localMeta.hasChecksum() && localMeta.getChecksum().equals(remoteMeta.getChecksum())) {
                     LOG.info("Keep file={} checksum={} in {}", fileName, remoteMeta.getChecksum(), writer.getPath());
                     continue;
                 }
                 // Remove files from writer so that the file is to be copied from
                 // remote_snapshot or last_snapshot
+                // 代表 对应的元数据校验和匹配失败
                 writer.removeFile(fileName);
                 toRemove.add(fileName);
             }
@@ -328,16 +331,16 @@ public class LocalSnapshotCopier extends SnapshotCopier {
             if ((localMeta = (LocalFileMeta) lastSnapshot.getFileMeta(fileName)) == null) {
                 continue;
             }
-            // 如果对应的数据 校验和失败 也跳过   这里 localMeta 到底是什么
+            // 读取的数据 对应元数据校验失败 不需要添加到set 中吗
             if (!localMeta.hasChecksum() || !localMeta.getChecksum().equals(remoteMeta.getChecksum())) {
                 continue;
             }
 
             LOG.info("Found the same file ={} checksum={} in lastSnapshot={}", fileName, remoteMeta.getChecksum(),
                 lastSnapshot.getPath());
-            // 如果source 是本地文件
-            // 这段啥意思???
+            // 如果source 是本地文件  默认创建的元数据就是这个
             if (localMeta.getSource() == FileSource.FILE_SOURCE_LOCAL) {
+                // 找到对应 leader 上的快照文件
                 final String sourcePath = lastSnapshot.getPath() + File.separator + fileName;
                 final String destPath = writer.getPath() + File.separator + fileName;
                 FileUtils.deleteQuietly(new File(destPath));
@@ -375,18 +378,18 @@ public class LocalSnapshotCopier extends SnapshotCopier {
      * @throws IOException
      */
     private void filter() throws IOException {
-        // 根据是否要过滤数据 生成 write 对象
+        // 创建一个专门用于写入快照文件的对象 同时会创建 本地的 元数据文件 而在loadMetaTable() 阶段是将leader 的元数据拉取到 remoteSnapshot中
+        // 如果 filterBeforeCopyRemote == true 代表 如果文件已经存在会读取之前的数据
         this.writer = (LocalSnapshotWriter) this.storage.create(!this.filterBeforeCopyRemote);
         // 创建失败 抛出异常
         if (this.writer == null) {
             setError(RaftError.EIO, "Fail to create snapshot writer");
             return;
         }
-        // 如果需要过滤
+        // 代表允许读取元数据文件 这样reader 会指向 writer 创建的元数据文件
         if (this.filterBeforeCopyRemote) {
             // 获取读取对象
             final SnapshotReader reader = this.storage.open();
-            // 过滤失败的情况 重新创建一个 writer 对象
             if (!filterBeforeCopy(this.writer, reader)) {
                 LOG.warn("Fail to filter writer before copying, destroy and create a new writer.");
                 this.writer.setError(-1, "Fail to filter");
@@ -411,11 +414,20 @@ public class LocalSnapshotCopier extends SnapshotCopier {
         }
     }
 
+    /**
+     * 初始化 copier 对象
+     * @param uri
+     * @param opts
+     * @return
+     */
     public boolean init(final String uri, final SnapshotCopierOptions opts) {
         this.copier = new RemoteFileCopier();
         this.cancelled = false;
+        // 设置阀门属性
         this.filterBeforeCopyRemote = opts.getNodeOptions().isFilterBeforeCopyRemote();
+        // 设置远端快照对象
         this.remoteSnapshot = new LocalSnapshot(opts.getRaftOptions());
+        // 初始化
         return this.copier.init(uri, this.snapshotThrottle, opts);
     }
 

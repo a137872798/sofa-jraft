@@ -77,7 +77,7 @@ public interface RaftClientService extends ClientService {
 
     /**
      * Get a piece of file data by GetFileRequest, and handle the response with done.
-     * 发送一个获取文件的请求
+     * 当follower 向leader 拉取快照文件数据时触发
      * @param endpoint  destination address (ip, port)
      * @param request   request data
      * @param timeoutMs timeout millis

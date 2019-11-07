@@ -46,8 +46,8 @@ public class RocksKVStoreSnapshotFile extends AbstractKVStoreSnapshotFile {
      */
     @Override
     LocalFileMeta doSnapshotSave(final String snapshotPath, final Region region) throws Exception {
+        // 如果 group 有startKey 和 endKey 的概念 就代表是多个组
         if (RegionHelper.isMultiGroup(region)) {
-            // 多组 写入到 sst 中 sst是 rocksDB 的一个概念
             this.kvStore.writeSstSnapshot(snapshotPath, region);
             return buildMetadata(region);
         }

@@ -22,7 +22,7 @@ import com.alipay.sofa.jraft.Status;
 
 /**
  * Copy snapshot from the give resources.
- * 定义快照copier 的 api
+ * 一般的流程是 leader 向 follower 发起请求 让follower 去下载快照 下载的逻辑就在该对象内
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Mar-12 4:55:26 PM

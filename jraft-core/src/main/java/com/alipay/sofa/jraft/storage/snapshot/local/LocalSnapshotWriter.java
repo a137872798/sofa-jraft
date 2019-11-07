@@ -35,7 +35,7 @@ import com.google.protobuf.Message;
 
 /**
  * Snapshot writer to write snapshot into local file system.
- * 基于本地文件系统的 快照写入对象
+ * 基于本地文件系统的 快照写入对象  实际上写入由用户实现 最后通过addFile 向快照文件信息注册到这里
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Apr-08 11:51:43 AM
@@ -45,7 +45,7 @@ public class LocalSnapshotWriter extends SnapshotWriter {
     private static final Logger          LOG = LoggerFactory.getLogger(LocalSnapshotWriter.class);
 
     /**
-     * 本地快照元数据 table
+     * 维护 文件名与元数据的映射关系 用于快速定位  read内部应该也有该属性
      */
     private final LocalSnapshotMetaTable metaTable;
     private final String                 path;
@@ -79,7 +79,7 @@ public class LocalSnapshotWriter extends SnapshotWriter {
             setError(RaftError.EIO, "Fail to create directory  %s", this.path);
             return false;
         }
-        // 创建元数据文件
+        // 除了快照文件本身还会创建一个 元数据相关的文件
         final String metaPath = path + File.separator + JRAFT_SNAPSHOT_META_FILE;
         final File metaFile = new File(metaPath);
         try {
@@ -144,7 +144,7 @@ public class LocalSnapshotWriter extends SnapshotWriter {
     }
 
     /**
-     * 将某个文件映射数据保存到 metaTable中
+     * 当使用该写入对象成功写入文件后 将文件交由该对象管理
      * @param fileName file name
      * @param fileMeta file metadata
      * @return

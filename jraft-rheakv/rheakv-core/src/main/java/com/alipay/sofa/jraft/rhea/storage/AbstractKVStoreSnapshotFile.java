@@ -40,7 +40,7 @@ import com.google.protobuf.ByteString;
 import static com.alipay.sofa.jraft.entity.LocalFileMetaOutter.LocalFileMeta;
 
 /**
- * 快照存储文件骨架类
+ * 快照存储文件骨架类  node 的存储快照逻辑要自己实现
  * @author jiachun.fjc
  */
 public abstract class AbstractKVStoreSnapshotFile implements KVStoreSnapshotFile {
@@ -58,6 +58,14 @@ public abstract class AbstractKVStoreSnapshotFile implements KVStoreSnapshotFile
      */
     protected final Serializer  serializer       = Serializers.getDefault();
 
+    /**
+     * writer 本身有一个默认路径 可以选择不使用 这里就是生成了一个kv 为结尾的新文件
+     * 这里实际上没有使用到 writer 只是用了文件路径 因为kv 包自己实现了快照相关的逻辑
+     * @param writer   snapshot writer  写入快照的对象
+     * @param done     callback
+     * @param region   the region to save snapshot
+     * @param executor the executor to compress snapshot  使用特定的线程池实现异步写入
+     */
     @Override
     public void save(final SnapshotWriter writer, final Closure done, final Region region,
                      final ExecutorService executor) {
