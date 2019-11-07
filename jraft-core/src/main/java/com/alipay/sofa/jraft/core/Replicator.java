@@ -705,6 +705,8 @@ public class Replicator implements ThreadId.OnError {
                     @Override
                     public void run(final Status status) {
                         // 该回调 直到等待 snapShotExecution 执行完任务后才会触发
+                        // 包括下载leader 元数据 从中找到快照文件列表 然后下载快照文件 并触发状态机的对应动作
+                        // 然后在LogManager 和 node 中更新状态
                         onRpcReturned(Replicator.this.id, RequestType.Snapshot, status, request, getResponse(), seq,
                             stateVersion, monotonicSendTimeMs);
                     }
@@ -779,7 +781,7 @@ public class Replicator implements ThreadId.OnError {
         r.hasSucceeded = true;
         // 当成功接受到快照时 触发一个追赶回调
         r.notifyOnCaughtUp(RaftError.SUCCESS.getNumber(), false);
-        // 这个是 告诉follower 某个leader 已经下线的 为什么这里会有???
+        // 这里还不确定是干嘛的
         if (r.timeoutNowIndex > 0 && r.timeoutNowIndex < r.nextIndex) {
             r.sendTimeoutNow(false, false);
         }

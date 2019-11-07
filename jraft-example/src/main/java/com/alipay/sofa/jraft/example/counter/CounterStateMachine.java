@@ -124,6 +124,11 @@ public class CounterStateMachine extends StateMachineAdapter {
         LOG.error("Raft error: %s", e, e);
     }
 
+    /**
+     * 最简易的 有关快照下载完的后置操作 就是从reader 中读取数据并设置到当前对象中
+     * @param reader
+     * @return
+     */
     @Override
     public boolean onSnapshotLoad(final SnapshotReader reader) {
         if (isLeader()) {

@@ -535,10 +535,11 @@ public class FSMCallerImpl implements FSMCaller {
                             doSnapshotSave((SaveSnapshotClosure) task.done);
                         }
                         break;
-                    // 如果是加载快照  实际上还是委托给 状态机 这里会配合 回调对象内部的 SnapshotReader 读取快照
+                    // 当成功从leader 处拉取完快照后触发
                     case SNAPSHOT_LOAD:
                         this.currTask = TaskType.SNAPSHOT_LOAD;
                         if (passByStatus(task.done)) {
+                            // 由用户实现
                             doSnapshotLoad((LoadSnapshotClosure) task.done);
                         }
                         break;
@@ -840,7 +841,7 @@ public class FSMCallerImpl implements FSMCaller {
     }
 
     /**
-     * 加载快照
+     * 当从leader 处下载完快照后触发
      *
      * @param done
      */
@@ -852,7 +853,7 @@ public class FSMCallerImpl implements FSMCaller {
             done.run(new Status(RaftError.EINVAL, "open SnapshotReader failed"));
             return;
         }
-        // 通过reader 对象去加载快照
+        // 返回本次拉取完leader的快照文件后的元数据
         final RaftOutter.SnapshotMeta meta = reader.load();
         if (meta == null) {
             done.run(new Status(RaftError.EINVAL, "SnapshotReader load meta failed"));
@@ -863,8 +864,9 @@ public class FSMCallerImpl implements FSMCaller {
             }
             return;
         }
-        // 代表当前的快照信息
+        // 获取当前写入的下标
         final LogId lastAppliedId = new LogId(this.lastAppliedIndex.get(), this.lastAppliedTerm);
+        // 当前生成快照对应的位置
         final LogId snapshotId = new LogId(meta.getLastIncludedIndex(), meta.getLastIncludedTerm());
         // 如果加载的快照比当前还旧 就不需要处理了
         if (lastAppliedId.compareTo(snapshotId) > 0) {
@@ -874,7 +876,7 @@ public class FSMCallerImpl implements FSMCaller {
                     lastAppliedId.getIndex(), lastAppliedId.getTerm(), snapshotId.getIndex(), snapshotId.getTerm()));
             return;
         }
-        // 使用状态机加载数据时抛出异常
+        // 使用状态机处理建在完快照后的逻辑  一般也就是将文件中的数据 覆盖到当前对象上
         if (!this.fsm.onSnapshotLoad(reader)) {
             done.run(new Status(-1, "StateMachine onSnapshotLoad failed"));
             final RaftException e = new RaftException(EnumOutter.ErrorType.ERROR_TYPE_STATE_MACHINE,

@@ -31,7 +31,7 @@ import com.alipay.sofa.jraft.util.Utils;
 
 /**
  * A framework to implement a raft group service.
- * raft 组级别的服务
+ * raft 组级别的服务  该对象是初始化 node 组的起点 通过在opts 中设置 本节点地址 会完成 node 的初始化
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Apr-08 7:53:03 PM
@@ -78,6 +78,7 @@ public class RaftGroupService {
     private String              groupId;
     /**
      * The raft node.
+     * 当调用 start 后会设置该属性
      */
     private Node                node;
 
@@ -87,8 +88,16 @@ public class RaftGroupService {
             JRaftUtils.createExecutor("CLI-RPC-executor-", nodeOptions.getCliRpcThreadPoolSize())));
     }
 
+    /**
+     * 起点
+     * @param groupId  本节点对应的组id
+     * @param serverId  本node对应的服务地址
+     * @param nodeOptions
+     * @param rpcServer  封装作为 服务器的职能
+     */
     public RaftGroupService(final String groupId, final PeerId serverId, final NodeOptions nodeOptions,
                             final RpcServer rpcServer) {
+        // 默认情况下 不共享 服务器 如果共享可以节省资源 不过会共用线程池
         this(groupId, serverId, nodeOptions, rpcServer, false);
     }
 
@@ -117,13 +126,15 @@ public class RaftGroupService {
     /**
      * Starts the raft group service, returns the raft node.
      * 启动一个raft 组服务 并返回一个节点对象
-     * @param startRpcServer whether to start RPC server.
+     * 这里会顺带完成 node 的初始化
+     * @param startRpcServer whether to start RPC server.  同时启动 rpc 服务器
      */
     public synchronized Node start(final boolean startRpcServer) {
         // 如果已经启动成功直接返回 node 对象
         if (this.started) {
             return this.node;
         }
+        // 必要参数必须设定
         if (this.serverId == null || this.serverId.getEndpoint() == null
             || this.serverId.getEndpoint().equals(new Endpoint(Utils.IP_ANY, 0))) {
             throw new IllegalArgumentException("Blank serverId:" + this.serverId);
@@ -138,7 +149,7 @@ public class RaftGroupService {
         // 创建 node对象并执行init
         this.node = RaftServiceFactory.createAndInitRaftNode(this.groupId, this.serverId, this.nodeOptions);
         if (startRpcServer) {
-            // 启动服务对象 便于接受其他node 的请求
+            // 启动服务对象 便于接受其他node 的请求  这里就是 alipay.remoting 的事了 先不看 也就是netty那套吧
             this.rpcServer.start();
         } else {
             LOG.warn("RPC server is not started in RaftGroupService.");

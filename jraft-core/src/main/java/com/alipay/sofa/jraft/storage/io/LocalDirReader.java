@@ -102,16 +102,16 @@ public class LocalDirReader implements FileReader {
                 totalRead += nread;
                 // 读取的数据还不足
                 if (totalRead < maxCount) {
-                    // 可读的数据不足
+                    // 代表是读取到末尾了
                     if (buf.hasRemaining()) {
                         return EOF;
                     // 代表buffer 空间不足
                     } else {
-                        // hasRemaining == false 进行扩容
                         buf.expandAtMost((int) (maxCount - totalRead));
                         offset += nread;
                     }
                 } else {
+                    // 代表读取的数据过多
                     final long fsize = file.length();
                     if (fsize < 0) {
                         LOG.warn("Invalid file length {}", filePath);

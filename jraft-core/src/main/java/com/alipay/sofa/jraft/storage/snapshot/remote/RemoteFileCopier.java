@@ -178,7 +178,7 @@ public class RemoteFileCopier {
                 super.close();
             }
         });
-        // 构建会话对象
+        // 目标快照文件名作为 source  构建会话对象
         final BoltSession session = newBoltSession(source);
         // 当输出到文件时 不设置 buf 而是设置 outputStream
         session.setOutputStream(out);
@@ -188,7 +188,7 @@ public class RemoteFileCopier {
         if (opts != null) {
             session.setCopyOptions(opts);
         }
-        // 开始通过会话对象拉取数据
+        // 开始通过会话对象拉取数据 并将结果设置到 outputstream 对应的文件中
         session.sendNextRpc();
         return session;
     }

@@ -98,6 +98,7 @@ public class SnapshotFileReader extends LocalDirReader {
 
         // go through throttle
         long newMaxCount = maxCount;
+        // 如果存在 阀门 那么对拉取的最大偏移量做限制
         if (this.snapshotThrottle != null) {
             newMaxCount = this.snapshotThrottle.throttledByThroughput(maxCount);
             if (newMaxCount < maxCount) {

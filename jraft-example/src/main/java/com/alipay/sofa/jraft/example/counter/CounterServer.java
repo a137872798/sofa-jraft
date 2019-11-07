@@ -34,29 +34,43 @@ import com.alipay.sofa.jraft.rpc.RaftRpcServerFactory;
 
 /**
  * Counter server that keeps a counter value in a raft group.
- *
+ * 该对象对应一个 raftGroup
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Apr-09 4:51:02 PM
  */
 public class CounterServer {
 
+    /**
+     * 内部存在一个 group 服务 要使用某个node 前必须确保 该对象被
+     */
     private RaftGroupService    raftGroupService;
     private Node                node;
     private CounterStateMachine fsm;
 
+    /**
+     * 在入参中已经定义了本节点的 地址 已经对应的group 中所有的节点地址信息
+     * @param dataPath
+     * @param groupId
+     * @param serverId
+     * @param nodeOptions
+     * @throws IOException
+     */
     public CounterServer(final String dataPath, final String groupId, final PeerId serverId,
                          final NodeOptions nodeOptions) throws IOException {
         // 初始化路径
+        // 对应logManager以及 快照元数据 快照文件 的 存储地址
         FileUtils.forceMkdir(new File(dataPath));
 
         // 这里让 raft RPC 和业务 RPC 使用同一个 RPC server, 通常也可以分开
+        // 该对象对应了 CS 架构中 服务端的概念 node中会包含一个  server 用于接收follower 的请求
         final RpcServer rpcServer = new RpcServer(serverId.getPort());
+        // 为该对象增加 默认的请求处理器
         RaftRpcServerFactory.addRaftRequestProcessors(rpcServer);
         // 注册业务处理器
         rpcServer.registerUserProcessor(new GetValueRequestProcessor(this));
         rpcServer.registerUserProcessor(new IncrementAndGetRequestProcessor(this));
-        // 初始化状态机
+        // 初始化状态机 状态机由用户自己实现 主要是实现提交任务 保存快照(的逻辑) 下载快照(后的逻辑)
         this.fsm = new CounterStateMachine();
         // 设置状态机到启动参数
         nodeOptions.setFsm(this.fsm);
@@ -100,6 +114,11 @@ public class CounterServer {
         return response;
     }
 
+    /**
+     * GoGoGo
+     * @param args
+     * @throws IOException
+     */
     public static void main(final String[] args) throws IOException {
         if (args.length != 4) {
             System.out
@@ -108,6 +127,7 @@ public class CounterServer {
                 .println("Example: java com.alipay.sofa.jraft.example.counter.CounterServer /tmp/server1 counter 127.0.0.1:8081 127.0.0.1:8081,127.0.0.1:8082,127.0.0.1:8083");
             System.exit(1);
         }
+        // 首先通过 命令行参数来设置 组 id 和 服务id  还有初始配置
         final String dataPath = args[0];
         final String groupId = args[1];
         final String serverIdStr = args[2];
@@ -126,6 +146,7 @@ public class CounterServer {
         if (!serverId.parse(serverIdStr)) {
             throw new IllegalArgumentException("Fail to parse serverId:" + serverIdStr);
         }
+        // 原来是这样设置的  一开始 在 serverIdStr 中已经 指定了本节点的 ip port 然后在 conf中 定义了 本group 初始状态的所有node 地址信息
         final Configuration initConf = new Configuration();
         if (!initConf.parse(initConfStr)) {
             throw new IllegalArgumentException("Fail to parse initConf:" + initConfStr);

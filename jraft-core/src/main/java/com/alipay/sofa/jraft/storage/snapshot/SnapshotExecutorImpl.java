@@ -243,9 +243,9 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
             this.reader = reader;
         }
 
+        // 当状态机的下载快照后置逻辑处理完后触发
         @Override
         public void run(final Status status) {
-            // 触发安装快照
             onSnapshotLoadDone(status);
         }
 
@@ -549,8 +549,7 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
     }
 
     /**
-     * 当加载快照完成时触发  整体上来说 就是将LogStorage 中的 数据向 快照对齐
-     * 这个方法应该是从本地按照快照 而 saveSnapshot 代表从远端拉取快照信息并设置
+     * 当状态机(也就是按照用户的需求)处理完 下载快照文件的后置逻辑后 触发
      * @param st  代表本次结果
      */
     private void onSnapshotLoadDone(final Status st) {
@@ -560,15 +559,15 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
         try {
             // 必须要在 正在加载快照的状态下才能继续
             Requires.requireTrue(this.loadingSnapshot, "Not loading snapshot");
-            // 默认情况下该值应该是null
+            // 如果是正常情况 该属性还没有被清除
             m = this.downloadingSnapshot.get();
-            // 代表reader  load数据成功
             if (st.isOk()) {
+                // 可以更新最新的快照偏移量了
                 this.lastSnapshotIndex = this.loadingSnapshotMeta.getLastIncludedIndex();
                 this.lastSnapshotTerm = this.loadingSnapshotMeta.getLastIncludedTerm();
                 doUnlock = false;
                 this.lock.unlock();
-                // 设置快照数据
+                // 将快照元数据写入到 LogManager 中
                 this.logManager.setSnapshot(this.loadingSnapshotMeta); //should be out of lock
                 doUnlock = true;
                 this.lock.lock();
@@ -582,12 +581,12 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
             doUnlock = false;
             this.lock.unlock();
             if (this.node != null) {
-                // 更新配置  就是将confEntry 同步到 ConfigurationManager上
+                // 更新配置  就是将confEntry  写入到 node.conf 上
                 this.node.updateConfigurationAfterInstallingSnapshot();
             }
             doUnlock = true;
             this.lock.lock();
-            // 代表本地加载快照的动作已经结束了
+            // 代表状态机 已经处理完 对应的钩子了
             this.loadingSnapshot = false;
             this.downloadingSnapshot.set(null);
 
@@ -596,7 +595,7 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
                 this.lock.unlock();
             }
         }
-        // 如果正在下载快照中  TODO 这里还需要再梳理一下
+        // 直到这里才触发一开始 创建下载快照任务的回调
         if (m != null) {
             // Respond RPC
             if (!st.isOk()) {
@@ -624,7 +623,7 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
         final DownloadingSnapshot ds = new DownloadingSnapshot(request, response, done);
         //DON'T access request, response, and done after this point
         //as the retry snapshot will replace this one.
-        // 将下载快照的任务注册到 本对象上
+        // 去leader 拉取快照元数据对象
         if (!registerDownloadingSnapshot(ds)) {
             LOG.warn("Fail to register downloading snapshot");
             // This RPC will be responded by the previous session
@@ -632,7 +631,7 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
         }
         Requires.requireNonNull(this.curCopier, "curCopier");
         try {
-            // 等待 copier 对象下载完数据
+            // 等待 copier 拉取完所有元数据/快照文件
             this.curCopier.join();
         } catch (final InterruptedException e) {
             Thread.currentThread().interrupt();
@@ -640,11 +639,12 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
             return;
         }
 
+        // 处理下载快照的相关回调
         loadDownloadingSnapshot(ds, meta);
     }
 
     /**
-     * 加载下载完成的快照
+     * 此时已经从leader 下载完数据了
      * @param ds
      * @param meta
      */
@@ -652,21 +652,25 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
         SnapshotReader reader;
         this.lock.lock();
         try {
+            // 代表引用对应的 快照任务不同 也就是正在处理别的任务
             if (ds != this.downloadingSnapshot.get()) {
                 //It is interrupted and response by other request,just return
                 return;
             }
             Requires.requireNonNull(this.curCopier, "curCopier");
+            // 此时leader 已经重新打开过了 所以可以获取到最新数据
             reader = this.curCopier.getReader();
-            // 以异常方式触发回调
+            // 如果本次下载快照失败了
             if (!this.curCopier.isOk()) {
                 if (this.curCopier.getCode() == RaftError.EIO.getNumber()) {
                     reportError(this.curCopier.getCode(), this.curCopier.getErrorMsg());
                 }
                 Utils.closeQuietly(reader);
+                // 触发快照
                 ds.done.run(this.curCopier);
                 Utils.closeQuietly(this.curCopier);
                 this.curCopier = null;
+                // 此时才算是完全处理完 下载快照任务 虽然是失败的情况  如果成功的情况 则会在下面的回调中触发
                 this.downloadingSnapshot.set(null);
                 this.runningJobs.countDown();
                 return;
@@ -681,6 +685,7 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
                 this.runningJobs.countDown();
                 return;
             }
+            // 这里设置成正在安装
             this.loadingSnapshot = true;
             this.loadingSnapshotMeta = meta;
         } finally {
@@ -742,7 +747,8 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
                 this.downloadingSnapshot.set(ds);
                 // 确保用于下载快照的 copier 对象为空
                 Requires.requireTrue(this.curCopier == null, "Current copier is not null");
-                // 指定拉取快照的路径 初始化 copier 对象
+                // 这里已经完成了 从leader拉取快照元数据 并创建writer/reader 以及读取 元数据中记录的快照文件列表
+                // 以及从leader 拉取快照文件并保存在本地
                 this.curCopier = this.snapshotStorage.startToCopyFrom(ds.request.getUri(), newCopierOpts());
                 if (this.curCopier == null) {
                     this.downloadingSnapshot.set(null);
@@ -751,6 +757,7 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
                         ds.request.getUri()));
                     return false;
                 }
+                // 代表当前正在执行一个耗时任务
                 this.runningJobs.incrementAndGet();
                 return true;
             }
@@ -819,7 +826,7 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
     }
 
     /**
-     * 代表在拉取哪个任期的快照时出现文件  任期即对应某个leader
+     * 中断正在下载快照的任务
      * @param newTerm new term num
      */
     @Override
@@ -832,7 +839,8 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
             if (this.downloadingSnapshot.get() == null) {
                 return;
             }
-            // 如果正在加载快照 不能进行打断
+            // 如果正在安装 不能进行打断  这个变量对应的是 从leader 下载完数据后 用户准备通过状态机读取快照文件中的数据时 不能被打断
+            // 而在从leader 拉取数据的过程是允许打断的
             if (this.loadingSnapshot) {
                 // We can't interrupt loading
                 return;

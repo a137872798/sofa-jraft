@@ -322,7 +322,7 @@ public class NodeImpl implements Node, RaftServerService {
 
     /**
      * Configuration commit context.
-     * 配置提交上下文
+     * 该对象用于记录 当前集群的配置信息
      * @author boyan (boyan@alibaba-inc.com)
      *
      * 2018-Apr-03 4:29:38 PM
@@ -335,7 +335,13 @@ public class NodeImpl implements Node, RaftServerService {
             STAGE_STABLE // stable stage
         }
 
+        /**
+         * 本节点对象
+         */
         final NodeImpl node;
+        /**
+         * 当前所处状态
+         */
         Stage          stage;
         int            nchanges;
         long           version;
@@ -347,6 +353,7 @@ public class NodeImpl implements Node, RaftServerService {
         public ConfigurationCtx(final NodeImpl node) {
             super();
             this.node = node;
+            // 初始化时 版本为0 同时 stage 为 none
             this.stage = Stage.STAGE_NONE;
             this.version = 0;
             this.done = null;
@@ -512,12 +519,15 @@ public class NodeImpl implements Node, RaftServerService {
         this.serverId = serverId != null ? serverId.copy() : null;
         // 当前状态属于 未初始化
         this.state = State.STATE_UNINITIALIZED;
+        // 当一个节点 初始化时 当前任期为0  会跟当前集群同步吗 如果一个节点出现异常重启后会以什么方式重新加入到该集群呢???
         this.currTerm = 0;
         // 将当前时间作为最后更新leader的时间
         updateLastLeaderTimestamp(Utils.monotonicMs());
+        // 初始化 本节点的配置上下文
         this.confCtx = new ConfigurationCtx(this);
+        // 这个字段应该是记录需要唤醒的目标 候选人
         this.wakingCandidate = null;
-        // 当某个节点被创建时 更新全局节点总数
+        // 当某个节点被创建时 更新全局节点总数  既然是全局范围内 肯定是在哪里 获取到了 本集群其他节点的信息
         final int num = GLOBAL_NUM_NODES.incrementAndGet();
         LOG.info("The number of active nodes increment to {}.", num);
     }
@@ -781,7 +791,7 @@ public class NodeImpl implements Node, RaftServerService {
     }
 
     /**
-     * Node 接口本身继承了 Lifecycle接口 需要通过 init 才能正常使用
+     * 初始化 node 对象
      * @param opts 代表初始化需要的参数
      * @return
      */
@@ -790,20 +800,20 @@ public class NodeImpl implements Node, RaftServerService {
         Requires.requireNonNull(opts, "Null node options");
         Requires.requireNonNull(opts.getRaftOptions(), "Null raft options");
         Requires.requireNonNull(opts.getServiceFactory(), "Null jraft service factory");
-        // 该工厂内部可以快捷生成 存储模块的相关实现类
+        // 该对象是一个工厂内 内部存放了 很多快捷创建对应对象的方法
         this.serviceFactory = opts.getServiceFactory();
         this.options = opts;
         this.raftOptions = opts.getRaftOptions();
         // 统计先不看
         this.metrics = new NodeMetrics(opts.isEnableMetrics());
 
-        // 如果没有指定ip 报错
+        // 必须指定ip
         if (this.serverId.getIp().equals(Utils.IP_ANY)) {
             LOG.error("Node can't started from IP_ANY.");
             return false;
         }
 
-        // 在创建Node 之前必须要确保 已经加入到NodeManager 中
+        // 一般不是由用户直接创建node 的 而是先创建一个 RaftGroupService  并设置必要的参数 在启动时 本节点会自动设置到 nodeManager中
         if (!NodeManager.getInstance().serverExists(this.serverId.getEndpoint())) {
             LOG.error("No RPC server attached to, did you forget to call addService?");
             return false;
@@ -816,10 +826,13 @@ public class NodeImpl implements Node, RaftServerService {
             return false;
         }
 
-        // Init timers   RepeatedTimer 对象简单来讲就是单个线程的定时器 定时执行onTrigger 方法
+        // 注意下面的定时任务 只是创建而没有执行 因为不同的任务对应不同的角色 在初始化阶段只需要开启election任务就可以了
+
         /**
          * 投票任务 在某个节点变成 候选人后该任务就会启动 而在确定leader时任务会停止
-         * 如果本轮没有选出leader 会怎样 这时该任务应该是不会停止的  该任务会替代那个检查心跳的任务,然后将自己变成候选人参与新的选举???  (推测)
+         * 就是为了避免在一轮中没有确定leader 需要一个机制来触发下次的投票
+         * 以整个集群来将 当先发现自己变成候选人的节点向其他节点发起投票申请后 其他节点还会执行哪个检查心跳的定时任务吗
+         * TODO 如果本轮没有选出leader 那么下一轮是只有 上次的几个候选人能进行参选 还是 所有follower 又在哪块逻辑体现???
          */
         this.voteTimer = new RepeatedTimer("JRaft-VoteTimer", this.options.getElectionTimeoutMs()) {
 
@@ -835,7 +848,7 @@ public class NodeImpl implements Node, RaftServerService {
             }
         };
         /**
-         * 处理选举任务  可以理解为多个node 对象都在一个定时任务中跑 每个触发任务的人根据自己当前的角色做出不同的动作
+         * 对应follower 检测心跳的任务
          */
         this.electionTimer = new RepeatedTimer("JRaft-ElectionTimer", this.options.getElectionTimeoutMs()) {
 
@@ -1014,8 +1027,9 @@ public class NodeImpl implements Node, RaftServerService {
                 LOG.warn("Node {} can't do electSelf as it is not in {}.", getNodeId(), this.conf);
                 return;
             }
-            // 代表已经确定要发起新一轮投票就关闭 electionTimer  (该定时器的作用是检测与leader 的心跳是否超时 既然leader已经确认失效了也就
-            // 不需要继续维持该定时器了)
+            // 如果是follower 进入这里代表 本节点需要晋升 就关闭选举任务 选举任务是用来判断收到心跳是否超时的
+            // 已经变成候选人就不需要检测这个了只要想着投票就好 而follower直接进入该方法就说明已经确定leader失效
+            // 比如通过了预投票阶段 或者触发了 更换leader
             if (this.state == State.STATE_FOLLOWER) {
                 LOG.debug("Node {} stop election timer, term={}.", getNodeId(), this.currTerm);
                 this.electionTimer.stop();
@@ -1030,7 +1044,7 @@ public class NodeImpl implements Node, RaftServerService {
             // 代表该对象投票节点是自身
             this.votedId = this.serverId.copy();
             LOG.debug("Node {} start vote timer, term={} .", getNodeId(), this.currTerm);
-            // 开启投票定时器 因为 本次投票不一定能选出leader 既然已经停止检测心跳了就需要一个别的触发点来 进行选举
+            // 开启投票定时器 因为 本轮投票不一定能选出leader 既然已经停止检测心跳了就需要一个别的触发点来 进行选举
             this.voteTimer.start();
             // 初始化一个投票对象  也就是logEntry的 投票和 选择leader 的投票走的是同一套体系
             this.voteCtx.init(this.conf.getConf(), this.conf.isStable() ? null : this.conf.getOldConf());
@@ -1177,13 +1191,13 @@ public class NodeImpl implements Node, RaftServerService {
         // 初始化投票箱对象
         this.ballotBox.resetPendingIndex(this.logManager.getLastLogIndex() + 1);
         // Register _conf_ctx to reject configuration changing before the first log
-        // is committed.
-        // TODO 这里先不看
+        // is committed.  检测当前配置信息对象是否正处于其他状态 必须确保为 none  什么情况不为 none???
         if (this.confCtx.isBusy()) {
             throw new IllegalStateException();
         }
+        // 将当前最新的配置 更新进去 一旦当某个节点变成leader 那么整个group 以它为基准
         this.confCtx.flush(this.conf.getConf(), this.conf.getOldConf());
-        // 开始定期检查自己是否应该下线
+        // 启动定期检查自己是否应该下线 的定时任务
         this.stepDownTimer.start();
     }
 
@@ -1228,7 +1242,9 @@ public class NodeImpl implements Node, RaftServerService {
         this.confCtx.reset();
         // 设置leader 更新时间
         updateLastLeaderTimestamp(Utils.monotonicMs());
-        // 如果正在执行快照任务 要先进行打断
+        // 如果正在执行下载快照任务 要先进行打断 (就是 follower 从leader 拉取快照数据的动作)
+        // 这招可以用  就是通过 异步执行一个任务(future)   正常情况下 任务完成 才设置需要的数据 而如果调用cancel 实际上
+        // 主线程就无法得知任务究竟执行到哪步了 只能得到一个被关闭的结果 不会处在不确定的状态
         if (this.snapshotExecutor != null) {
             this.snapshotExecutor.interruptDownloadingSnapshots(term);
         }

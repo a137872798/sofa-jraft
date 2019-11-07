@@ -75,7 +75,7 @@ public interface StateMachine {
      * User defined snapshot load function
      * get and load snapshot
      * Default: Load nothing and returns error.
-     * 使用指定的reader 去加载快照
+     * 当已经从leader 处下载完快照后 触发 reader 可以读取到本次下载的快照内容
      * @param reader snapshot reader   读取快照的输出流
      * @return true on success
      */

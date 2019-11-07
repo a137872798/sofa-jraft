@@ -111,7 +111,7 @@ public class NodeOptions extends RpcOptions implements Copiable<NodeOptions> {
 
     /**
      * Timer manager thread pool size
-     * 内部线程池大小
+     * 默认的 定时器线程数
      */
     private int                             timerPoolSize          = Utils.cpus() * 3 > 20 ? 20 : Utils.cpus() * 3;
 

@@ -127,14 +127,15 @@ public class LocalSnapshotCopier extends SnapshotCopier {
             if (!isOk()) {
                 break;
             }
-            // 过滤无效数据并通过writer 写入数据
+            // 读取之前在本地保存的 元数据如果发现跟远端数据对不上 则进行删除
             filter();
             if (!isOk()) {
                 break;
             }
+            // 遍历快照当前所有文件
             final Set<String> files = this.remoteSnapshot.listFiles();
             for (final String file : files) {
-                // 拷贝文件   这里干嘛又写 一次 上面先将session 的数据写入到 buffer中 这里又写入到文件中 啥意思???
+                // 从leader 处拉取数据并保存到本地
                 copyFile(file);
             }
         } while (false);
@@ -147,11 +148,17 @@ public class LocalSnapshotCopier extends SnapshotCopier {
             this.writer = null;
         }
         if (isOk()) {
-            // 完成后又打开reader 对象???
+            // 这里重新打开了reader 对象 不过此时 文件已经写入完毕了
             this.reader = (LocalSnapshotReader) this.storage.open();
         }
     }
 
+    /**
+     * 指定leader快照文件名 拉取数据
+     * @param fileName
+     * @throws IOException
+     * @throws InterruptedException
+     */
     void copyFile(final String fileName) throws IOException, InterruptedException {
         // 已存在数据就不拷贝了
         if (this.writer.getFileMeta(fileName) != null) {
@@ -182,7 +189,7 @@ public class LocalSnapshotCopier extends SnapshotCopier {
                     }
                     return;
                 }
-                // 将数据写入到文件中
+                // 指定远端文件名创建会话
                 session = this.copier.startCopyToFile(fileName, filePath, null);
                 if (session == null) {
                     LOG.error("Fail to copy {}", fileName);
@@ -194,6 +201,7 @@ public class LocalSnapshotCopier extends SnapshotCopier {
             } finally {
                 this.lock.unlock();
             }
+            // 等待远端拉取文件成功并写入到本文件中
             session.join(); // join out of lock
             this.lock.lock();
             try {
@@ -205,11 +213,13 @@ public class LocalSnapshotCopier extends SnapshotCopier {
                 setError(session.status().getCode(), session.status().getErrorMsg());
                 return;
             }
-            // 将文件映射关系写入 到 writer 中
+            // 将文件映射关系写入 到 writer 中   这样之后就不会重复写入了 注意每次生成的快照文件 对应一个index 这也是follower复制快照文件
+            // 的最小单位
             if (!this.writer.addFile(fileName, meta)) {
                 setError(RaftError.EIO, "Fail to add file to writer");
                 return;
             }
+            // 更新元数据信息
             if (!this.writer.sync()) {
                 setError(RaftError.EIO, "Fail to sync writer");
             }
@@ -338,28 +348,31 @@ public class LocalSnapshotCopier extends SnapshotCopier {
 
             LOG.info("Found the same file ={} checksum={} in lastSnapshot={}", fileName, remoteMeta.getChecksum(),
                 lastSnapshot.getPath());
+            // 能走到这里代表文件有异常
             // 如果source 是本地文件  默认创建的元数据就是这个
             if (localMeta.getSource() == FileSource.FILE_SOURCE_LOCAL) {
-                // 找到对应 leader 上的快照文件
+                // 找到reader 读取的文件
                 final String sourcePath = lastSnapshot.getPath() + File.separator + fileName;
+                // 找到本地的快照文件路径 并删除
                 final String destPath = writer.getPath() + File.separator + fileName;
                 FileUtils.deleteQuietly(new File(destPath));
                 try {
-                    // 将2个文件连接起来  这里涉及到操作系统的软链概念了
+                    // 将2个文件硬连接  2个文件如果不在一个系统上呢??? 这里可以不细看 不影响大体流程
                     Files.createLink(Paths.get(destPath), Paths.get(sourcePath));
                 } catch (final IOException e) {
                     LOG.error("Fail to link {} to {}", sourcePath, destPath, e);
                     continue;
                 }
-                // Don't delete linked file
+                // Don't delete linked file  一旦使用链接了 那么 就不需要删除了
                 if (!toRemove.isEmpty() && toRemove.peekLast().equals(fileName)) {
                     toRemove.pollLast();
                 }
             }
             // Copy file from last_snapshot
+            // 将远端找到的 本地没有写入的 文件名-元数据 映射关系填入writer
             writer.addFile(fileName, localMeta);
         }
-        // 同步写入失败
+        // 将添加到 writer中的文件与元数据映射关系写入到元数据文件中
         if (!writer.sync()) {
             LOG.error("Fail to sync writer on path={}", writer.getPath());
             return false;
@@ -390,13 +403,13 @@ public class LocalSnapshotCopier extends SnapshotCopier {
         if (this.filterBeforeCopyRemote) {
             // 获取读取对象
             final SnapshotReader reader = this.storage.open();
+            // 实际上不考虑这种情况也不会有大影响
             if (!filterBeforeCopy(this.writer, reader)) {
                 LOG.warn("Fail to filter writer before copying, destroy and create a new writer.");
                 this.writer.setError(-1, "Fail to filter");
                 Utils.closeQuietly(this.writer);
                 this.writer = (LocalSnapshotWriter) this.storage.create(true);
             }
-            // 这里数据已经读取完了
             if (reader != null) {
                 Utils.closeQuietly(reader);
             }
@@ -405,9 +418,9 @@ public class LocalSnapshotCopier extends SnapshotCopier {
                 return;
             }
         }
-        // 写入元数据
+        // 将从leader 处获取的元数据转移到本地的 writer上
         this.writer.saveMeta(this.remoteSnapshot.getMetaTable().getMeta());
-        // 如果同步写入失败
+        // 将元数据写入到 元数据文件 这样本地就知道leader 当前有哪些 快照文件了
         if (!this.writer.sync()) {
             LOG.error("Fail to sync snapshot writer path={}", this.writer.getPath());
             setError(RaftError.EIO, "Fail to sync snapshot writer");
@@ -477,9 +490,11 @@ public class LocalSnapshotCopier extends SnapshotCopier {
             }
             this.cancelled = true;
             if (this.curSession != null) {
+                // 关闭会话对象
                 this.curSession.cancel();
             }
             if (this.future != null) {
+                // 唤醒阻塞等待拉取 leader数据的对象
                 this.future.cancel(true);
             }
         } finally {

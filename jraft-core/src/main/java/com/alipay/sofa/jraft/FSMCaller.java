@@ -62,7 +62,7 @@ public interface FSMCaller extends Lifecycle<FSMCallerOptions>, Describer {
 
     /**
      * Called after loading snapshot.
-     * 当开始从本地加载快照数据时触发
+     * 当成功从leader处拉取完数据后触发
      * @param done callback
      */
     boolean onSnapshotLoad(final LoadSnapshotClosure done);

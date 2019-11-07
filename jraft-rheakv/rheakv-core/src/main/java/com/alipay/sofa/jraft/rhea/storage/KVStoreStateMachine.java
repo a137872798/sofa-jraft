@@ -322,6 +322,7 @@ public class KVStoreStateMachine extends StateMachineAdapter {
             LOG.warn("Leader is not supposed to load snapshot.");
             return false;
         }
+        // 简单来讲就是从reader 中读取数据并转移到 storeSnapshotFile 中
         return this.storeSnapshotFile.load(reader, this.region.copy());
     }
 

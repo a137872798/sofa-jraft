@@ -863,7 +863,7 @@ public class LogManagerImpl implements LogManager {
     }
 
     /**
-     * 设置快照元数据
+     * 写入快照元数据
      * @param meta snapshot metadata
      */
     @Override

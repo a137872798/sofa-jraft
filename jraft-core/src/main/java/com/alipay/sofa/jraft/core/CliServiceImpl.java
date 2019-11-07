@@ -70,7 +70,7 @@ public class CliServiceImpl implements CliService {
 
     private CliOptions          cliOptions;
     /**
-     * 监听命令行的客户端
+     * 监听命令行的客户端  该对象负责与 leader 通信
      */
     private CliClientService    cliClientService;
 
@@ -82,6 +82,7 @@ public class CliServiceImpl implements CliService {
             return true;
         }
         this.cliOptions = opts;
+        // 初始化 客户端对象
         this.cliClientService = new BoltCliClientService();
         return this.cliClientService.init(this.cliOptions);
     }

@@ -310,6 +310,7 @@ public class BoltSession implements Session {
             if (!response.getEof()) {
                 this.requestBuilder.setCount(response.getReadSize());
             }
+            // 如果该会话是通过outputStream 初始化的 代表是读取文件
             if (this.outputStream != null) {
                 try {
                     // 该API 是 protoBuf 的 将数据输出到输出流中 而数据流本身 定位了目标地址
