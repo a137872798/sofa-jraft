@@ -62,7 +62,7 @@ public interface FSMCaller extends Lifecycle<FSMCallerOptions>, Describer {
 
     /**
      * Called after loading snapshot.
-     * 当成功从leader处拉取完数据后触发
+     * 当成功从leader处拉取完数据后触发  又或者是首次启动发现本地有快照文件 就代表可以通过快照文件进行初始化
      * @param done callback
      */
     boolean onSnapshotLoad(final LoadSnapshotClosure done);

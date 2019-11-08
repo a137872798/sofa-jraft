@@ -96,7 +96,7 @@ public class LocalRaftMetaStorage implements RaftMetaStorage {
             LOG.error("Fail to mkdir {}", this.path);
             return false;
         }
-        // 针对文件已经存在的情况下 将数据加载到内存来(相当于一级缓存)
+        // 针对文件已经存在的情况下 将数据加载到内存来
         if (load()) {
             this.isInited = true;
             return true;

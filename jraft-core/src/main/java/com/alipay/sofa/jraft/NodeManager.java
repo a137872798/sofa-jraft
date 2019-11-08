@@ -92,6 +92,7 @@ public class NodeManager {
      */
     public boolean add(final Node node) {
         // check address ok?
+        // 调用add 必须先 执行过 addAddress
         if (!serverExists(node.getNodeId().getPeerId().getEndpoint())) {
             return false;
         }

@@ -70,13 +70,17 @@ public class ReplicatorGroupImpl implements ReplicatorGroup {
         this.dynamicTimeoutMs = opts.getHeartbeatTimeoutMs();
         this.electionTimeoutMs = opts.getElectionTimeoutMs();
         this.raftOptions = opts.getRaftOptions();
+        // 将属性暂存到一个 commonOpt 中 因为每个Replicator 都是共用这些配置
         this.commonOptions = new ReplicatorOptions();
         this.commonOptions.setDynamicHeartBeatTimeoutMs(this.dynamicTimeoutMs);
         this.commonOptions.setElectionTimeoutMs(this.electionTimeoutMs);
+        // 这里包含了一个 client 对象
         this.commonOptions.setRaftRpcService(opts.getRaftRpcClientService());
         this.commonOptions.setLogManager(opts.getLogManager());
+        // 每个复制机都能访问到 投票箱
         this.commonOptions.setBallotBox(opts.getBallotBox());
         this.commonOptions.setNode(opts.getNode());
+        // 默认任期为0
         this.commonOptions.setTerm(0);
         this.commonOptions.setGroupId(nodeId.getGroupId());
         this.commonOptions.setServerId(nodeId.getPeerId());
@@ -216,6 +220,11 @@ public class ReplicatorGroupImpl implements ReplicatorGroup {
         }
     }
 
+    /**
+     * 停止某个复制机 一般是 当前节点从leader 变为follower 时触发
+     * @param peer the peer of replicator
+     * @return
+     */
     @Override
     public boolean stopReplicator(final PeerId peer) {
         LOG.info("Stop replicator to {}.", peer);

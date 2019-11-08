@@ -63,7 +63,7 @@ import com.lmax.disruptor.dsl.ProducerType;
 
 /**
  * Read-only service implementation.
- * 封装了 readIndex 相关的方法
+ * 只读服务  包含线性一致读相关逻辑
  * @author dennis
  */
 public class ReadOnlyServiceImpl implements ReadOnlyService, LastAppliedLogIndexListener {
@@ -124,6 +124,9 @@ public class ReadOnlyServiceImpl implements ReadOnlyService, LastAppliedLogIndex
         }
     }
 
+    /**
+     * 处理线性一致性读任务
+     */
     private class ReadIndexEventHandler implements EventHandler<ReadIndexEvent> {
         // task list for batch
         // 创建用来批处理任务的队列
@@ -280,8 +283,10 @@ public class ReadOnlyServiceImpl implements ReadOnlyService, LastAppliedLogIndex
         this.fsmCaller = opts.getFsmCaller();
         this.raftOptions = opts.getRaftOptions();
 
+        // 只读服务内部包含一个定时器
         this.scheduledExecutorService = Executors
             .newSingleThreadScheduledExecutor(new NamedThreadFactory("ReadOnlyService-PendingNotify-Scanner", true));
+        // 启动 disruptor
         this.readIndexDisruptor = DisruptorBuilder.<ReadIndexEvent> newInstance() //
             .setEventFactory(new ReadIndexEventFactory()) //
             .setRingBufferSize(this.raftOptions.getDisruptorBufferSize()) //
@@ -298,7 +303,7 @@ public class ReadOnlyServiceImpl implements ReadOnlyService, LastAppliedLogIndex
                 .register("jraft-read-only-service-disruptor", new DisruptorMetricSet(this.readIndexQueue));
         }
         // listen on lastAppliedLogIndex change events.
-        // 将自身添加到 caller 中 监听 lastIndex发生变化 推测是 配合 pending队列做什么事情
+        // 将自身添加到 caller 中 监听 lastIndex发生变化
         this.fsmCaller.addLastAppliedLogIndexListener(this);
 
         // start scanner

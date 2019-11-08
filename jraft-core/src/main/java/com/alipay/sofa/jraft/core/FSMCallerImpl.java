@@ -184,7 +184,6 @@ public class FSMCallerImpl implements FSMCaller {
      */
     private ClosureQueue closureQueue;
     /**
-     * 上次写入的 commitIndex 用于避免重复写入
      */
     private final AtomicLong lastAppliedIndex;
     /**
@@ -233,7 +232,7 @@ public class FSMCallerImpl implements FSMCaller {
         super();
         // 代表当前处在空闲状态
         this.currTask = TaskType.IDLE;
-        // 这个好像是快照下标
+        // 初始状态下 appliedIndex 为0
         this.lastAppliedIndex = new AtomicLong(0);
         this.applyingIndex = new AtomicLong(0);
     }
@@ -249,6 +248,7 @@ public class FSMCallerImpl implements FSMCaller {
         this.logManager = opts.getLogManager();
         this.fsm = opts.getFsm();
         this.closureQueue = opts.getClosureQueue();
+        // 该对象关联到 node 中的 afterShutdown
         this.afterShutdown = opts.getAfterShutdown();
         this.node = opts.getNode();
         this.nodeMetrics = this.node.getNodeMetrics();
@@ -764,7 +764,6 @@ public class FSMCallerImpl implements FSMCaller {
      */
     private void doSnapshotSave(final SaveSnapshotClosure done) {
         Requires.requireNonNull(done, "SaveSnapshotClosure is null");
-        // 该值具体是指写入到 集群还是 仅仅提交任务先不管 总之以这个作为能否写入快照的标准
         final long lastAppliedIndex = this.lastAppliedIndex.get();
         // 记录本次生成快照的任期与  偏移量
         final RaftOutter.SnapshotMeta.Builder metaBuilder = RaftOutter.SnapshotMeta.newBuilder() //
@@ -864,9 +863,9 @@ public class FSMCallerImpl implements FSMCaller {
             }
             return;
         }
-        // 获取当前写入的下标
+        // 获取当前写入的下标  如果是重启的情况 2个 applied 都是0
         final LogId lastAppliedId = new LogId(this.lastAppliedIndex.get(), this.lastAppliedTerm);
-        // 当前生成快照对应的位置
+        // 当前生成快照对应的位置 针对首次启动的情况就是读取上次保留的最后一个快照
         final LogId snapshotId = new LogId(meta.getLastIncludedIndex(), meta.getLastIncludedTerm());
         // 如果加载的快照比当前还旧 就不需要处理了
         if (lastAppliedId.compareTo(snapshotId) > 0) {
@@ -876,7 +875,7 @@ public class FSMCallerImpl implements FSMCaller {
                     lastAppliedId.getIndex(), lastAppliedId.getTerm(), snapshotId.getIndex(), snapshotId.getTerm()));
             return;
         }
-        // 使用状态机处理建在完快照后的逻辑  一般也就是将文件中的数据 覆盖到当前对象上
+        // 使用状态机处理完快照后的逻辑  一般也就是将文件中的数据 覆盖到当前对象上
         if (!this.fsm.onSnapshotLoad(reader)) {
             done.run(new Status(-1, "StateMachine onSnapshotLoad failed"));
             final RaftException e = new RaftException(EnumOutter.ErrorType.ERROR_TYPE_STATE_MACHINE,

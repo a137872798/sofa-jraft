@@ -21,7 +21,6 @@ import com.alipay.sofa.jraft.rhea.client.RheaKVStore;
 import com.alipay.sofa.jraft.rhea.options.RheaKVStoreOptions;
 
 /**
- * 代表 jraft中的一个节点 它可能是 candidate/follower/leader 中的任意一个
  * @author jiachun.fjc
  */
 public class Node {

@@ -33,7 +33,7 @@ import com.google.protobuf.Message;
 
 /**
  * Process get leader request.
- * 获取 leader 信息
+ * 处理从某个节点上获取leader 的请求 可能该节点不是leader 也可能  该节点连接到的leader 已经失效 比如脑裂
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Apr-09 2:43:20 PM
@@ -66,6 +66,7 @@ public class GetLeaderRequestProcessor extends BaseCliRequestProcessor<GetLeader
 
     /**
      * 原本 父类方法会通过peerId 和 groupId 获取 node 信息 (从NodeManager 中)
+     * 这里是有可能获取到无效的leader的 在某个leader 无法连接到其他节点时 而follower 检测心跳还没有超时 （follower检测心跳超时的时间是leader自我检测的2倍）
      * @param request
      * @param done
      * @return
@@ -75,7 +76,7 @@ public class GetLeaderRequestProcessor extends BaseCliRequestProcessor<GetLeader
         List<Node> nodes = new ArrayList<>();
         // 获取请求体中的目标group
         String groupId = getGroupId(request);
-        // 如果携带 PeerId   就只判断该节点是否是leader 如果不是 返回 找不到 leader的res
+
         if (request.hasPeerId()) {
             String peerIdStr = getPeerId(request);
             PeerId peer = new PeerId();
@@ -90,14 +91,15 @@ public class GetLeaderRequestProcessor extends BaseCliRequestProcessor<GetLeader
                 return RpcResponseFactory.newResponse(RaftError.EINVAL, "Fail to parse peer id %", peerIdStr);
             }
         } else {
-            // 如果 没有指定 peer 就获取该组下所有节点 通过遍历方式找到leader
+            // 没有设置peerId 时走这条分支 这个manager 应该是以进程为单位的 这里是查询 某台机器上创建了多少node 并且是同组的  最少也会有一个
             nodes = NodeManager.getInstance().getNodesByGroupId(groupId);
         }
+        // 代表server 还没有启动
         if (nodes == null || nodes.isEmpty()) {
             return RpcResponseFactory.newResponse(RaftError.ENOENT, "No nodes in group %s", groupId);
         }
         for (Node node : nodes) {
-            // 代表找到了leader
+            // 因为每个节点中都包含了 leaderId 这里可以直接获取
             PeerId leader = node.getLeaderId();
             if (leader != null && !leader.isEmpty()) {
                 return GetLeaderResponse.newBuilder().setLeaderId(leader.toString()).build();

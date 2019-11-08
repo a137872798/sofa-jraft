@@ -87,10 +87,9 @@ public interface CliClientService extends ClientService {
 
     /**
      * Get the group leader.
-     * 获取集群中的leader 信息
-     * @param endpoint  server address
-     * @param request   request data
-     * @param done      callback
+     * @param endpoint  server address  raftGroup 中某个node 的地址
+     * @param request   request data  请求体
+     * @param done      callback  回调对象
      * @return a future with result
      */
     Future<Message> getLeader(Endpoint endpoint, CliRequests.GetLeaderRequest request,

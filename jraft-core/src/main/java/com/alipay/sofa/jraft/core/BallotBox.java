@@ -48,11 +48,11 @@ public class BallotBox implements Lifecycle<BallotBoxOptions>, Describer {
     private static final Logger      LOG                = LoggerFactory.getLogger(BallotBox.class);
 
     /**
-     * 内部存放了 状态机对象
+     * 内部存放了 状态机caller
      */
     private FSMCaller                waiter;
     /**
-     * 回调队列
+     * 回调队列  跟node中的 closureQueue 指向同一对象
      */
     private ClosureQueue             closureQueue;
     /**
@@ -213,8 +213,8 @@ public class BallotBox implements Lifecycle<BallotBoxOptions>, Describer {
      * According the the raft algorithm, the logs from previous terms can't be
      * committed until a log at the new term becomes committed, so
      * |newPendingIndex| should be |last_log_index| + 1.
-     * 只能当某个候选者变成ledaer 时调用
-     * 当想要使用投票箱时必须先调用该方法
+     *
+     * 当某个对象变成leader 后触发
      * @param newPendingIndex pending index of new leader
      * @return returns true if reset success
      */
@@ -256,7 +256,6 @@ public class BallotBox implements Lifecycle<BallotBoxOptions>, Describer {
      * @return          returns true on success 判断添加是否成功
      */
     public boolean appendPendingTask(final Configuration conf, final Configuration oldConf, final Closure done) {
-        // 生成"票"
         final Ballot bl = new Ballot();
         // ballot 对象内部 包含需要访问的所有节点
         if (!bl.init(conf, oldConf)) {
@@ -266,7 +265,7 @@ public class BallotBox implements Lifecycle<BallotBoxOptions>, Describer {
         // 改进的写锁
         final long stamp = this.stampedLock.writeLock();
         try {
-            // 确保pendingIndex 大于 0 默认值应该就是0   TODO 先假设会正常添加吧 这个值难道会在哪个地方被设置么???
+            // 确保pendingIndex 大于 0 默认值应该就是0
             // 难道是在定时任务中做了什么 但是这样就成异步了啊 也就是用户一旦提交任务 无需确定是否投票了 完全根据回调对象的结果来确定执行逻辑
             if (this.pendingIndex <= 0) {
                 LOG.error("Fail to appendingTask, pendingIndex={}.", this.pendingIndex);

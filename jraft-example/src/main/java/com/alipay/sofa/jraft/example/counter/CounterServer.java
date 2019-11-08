@@ -35,6 +35,7 @@ import com.alipay.sofa.jraft.rpc.RaftRpcServerFactory;
 /**
  * Counter server that keeps a counter value in a raft group.
  * 该对象对应一个 raftGroup
+ * 该对象应该是要启动多个的 每个对应到 一个node 然后他们的group 要一致才有意义
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Apr-09 4:51:02 PM
@@ -101,6 +102,7 @@ public class CounterServer {
 
     /**
      * Redirect request to new leader
+     * 这里返回了 指定的leader 避免下次返回相同的leader
      */
     public ValueResponse redirect() {
         final ValueResponse response = new ValueResponse();

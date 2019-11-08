@@ -327,7 +327,7 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
         this.fsmCaller = opts.getFsmCaller();
         this.node = opts.getNode();
         this.term = opts.getInitTerm();
-        // 创建快照存储对象    看来这个url 就是leader 的地址了 这样获取的快照信息才有意义
+        // 创建快照存储对象    url 指存放生成的快照文件的地址
         this.snapshotStorage = this.node.getServiceFactory().createSnapshotStorage(opts.getUri(),
             this.node.getRaftOptions());
         if (opts.isFilterBeforeCopyRemote()) {
@@ -346,11 +346,13 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
             tmp.setServerAddr(opts.getAddr());
         }
         // 开启快照读取对象  open 方法同时会初始化reader  如果当前没有快照文件 reader 就是null 代表提前退出初始化
-        // 如果是首次启动应该是没有快照文件的 那么 reader 就无法成功创建  但是还是任务 init是执行成功的
+        // 如果是首次启动应该是没有快照文件的 那么 reader 就无法成功创建  但是init还是执行成功的
         final SnapshotReader reader = this.snapshotStorage.open();
         if (reader == null) {
             return true;
         }
+        // 代表是重启 快照文件已经保存在本地了
+
         // 有快照文件却没有元数据抛出异常
         this.loadingSnapshotMeta = reader.load();
         if (this.loadingSnapshotMeta == null) {
@@ -364,7 +366,7 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
         this.runningJobs.incrementAndGet();
         // 使用reader 对象创建 一个 当首次加载快照完成时触发的回调对象
         final FirstSnapshotLoadDone done = new FirstSnapshotLoadDone(reader);
-        // 使用状态机执行加载快照的任务
+        // 使用状态机执行加载快照的任务 实际逻辑由用户自己实现 场景就是 启动某个node 发现有快照 那么 用户可以读取在某个地方事先写好的文件
         Requires.requireTrue(this.fsmCaller.onSnapshotLoad(done));
         try {
             // 阻塞直到快照加载完成
@@ -431,8 +433,7 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
                 return;
             }
 
-            // lastAppliedIndex 可能就是类似于 成功提交到 raft集群的最后偏移量之类的概念吧 如果该值就是最后写入的快照下标 就不需要生成快照了  不过可以将之前写入到
-            // logManager 的数据清除  (TODO 如果快照还没有安装到其他节点时 本leader失效了 会怎么样???  那么这个快照数据还有效吗)
+            // 每次在加载快照完成后 或者某个数据 刷盘到 LogManager 后 lastAppliedIndex都会变化  如果二者相等就代表没有新的数据写入
             if (this.fsmCaller.getLastAppliedIndex() == this.lastSnapshotIndex) {
                 // There might be false positive as the getLastAppliedIndex() is being
                 // updated. But it's fine since we will do next snapshot saving in a
@@ -562,13 +563,13 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
             // 如果是正常情况 该属性还没有被清除
             m = this.downloadingSnapshot.get();
             if (st.isOk()) {
-                // 可以更新最新的快照偏移量了
+                // 可以更新最新的快照偏移量了  (当整套流程走完 包括用户的状态机加载快照逻辑执行完)
                 this.lastSnapshotIndex = this.loadingSnapshotMeta.getLastIncludedIndex();
                 this.lastSnapshotTerm = this.loadingSnapshotMeta.getLastIncludedTerm();
                 doUnlock = false;
                 this.lock.unlock();
                 // 将快照元数据写入到 LogManager 中
-                this.logManager.setSnapshot(this.loadingSnapshotMeta); //should be out of lock
+                this.logManager.setSnapshot(this.loadingSnapshotMeta); //should be out of lock  因为 setSnapshot内部也有锁 这里嵌套不同的锁 容易发生死锁
                 doUnlock = true;
                 this.lock.lock();
             }
@@ -588,6 +589,7 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
             this.lock.lock();
             // 代表状态机 已经处理完 对应的钩子了
             this.loadingSnapshot = false;
+            // 将当前正在下载的对象置空
             this.downloadingSnapshot.set(null);
 
         } finally {

@@ -207,7 +207,7 @@ public class RocksDBLogStorage implements LogStorage {
             this.logEntryEncoder = opts.getLogEntryCodecFactory().encoder();
             Requires.requireNonNull(this.logEntryDecoder, "Null log entry decoder");
             Requires.requireNonNull(this.logEntryEncoder, "Null log entry encoder");
-            // 生成db 相关的配置
+            // 使用了 rocksDB 的一些默认参数 忽略
             this.dbOptions = createDBOptions();
 
             // 设置写相关属性
@@ -217,7 +217,7 @@ public class RocksDBLogStorage implements LogStorage {
             this.totalOrderReadOptions = new ReadOptions();
             this.totalOrderReadOptions.setTotalOrderSeek(true);
 
-            // 将新配置写入到 configManger中
+            // 比如宕机的时候 log日志文件已经持久化的情况
             return initAndLoad(opts.getConfigurationManager());
         } catch (final RocksDBException e) {
             LOG.error("Fail to init RocksDBLogStorage, path={}.", this.path, e);
@@ -288,7 +288,7 @@ public class RocksDBLogStorage implements LogStorage {
                             if (entry.getOldPeers() != null) {
                                 confEntry.setOldConf(new Configuration(entry.getOldPeers()));
                             }
-                            // 这里将 变更配置加载到 配置管理器
+                            // 这里将 往期的所有配置信息都填充到 confManager 中
                             if (confManager != null) {
                                 confManager.add(confEntry);
                             }

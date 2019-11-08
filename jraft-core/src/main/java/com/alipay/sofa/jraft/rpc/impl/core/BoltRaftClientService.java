@@ -79,7 +79,7 @@ public class BoltRaftClientService extends AbstractBoltClientService implements 
     // cached node options
     private NodeOptions                             nodeOptions;
     /**
-     * 抽象为 通过组的 jraft 节点  拥有leader 更换 获取每个peer信息等api
+     * 复制机组
      */
     private final ReplicatorGroup                   rgGroup;
 

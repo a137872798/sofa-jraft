@@ -39,7 +39,7 @@ import com.google.protobuf.Message;
 
 /**
  * Maintain routes to raft groups.
- * 路由表对象   维护到 raftGroup 的路由信息
+ * 路由表对象   内部维护了 当前group的所有node 节点 并具备返回leader 的能力
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Apr-09 10:41:21 AM
@@ -62,7 +62,7 @@ public class RouteTable {
 
     /**
      * Update configuration of group in route table.
-     * 更新路由表配置
+     * 更新路由表配置   对应到 RaftGroupService 的信息  该对象会从中找到 leader 并返回
      * @param groupId raft group id  代表一个raft组id
      * @param conf    configuration to update  代表一组 peerId 也可以理解为一组地址
      * @return true on success
@@ -71,6 +71,7 @@ public class RouteTable {
         Requires.requireTrue(!StringUtils.isBlank(groupId), "Blank group id");
         Requires.requireNonNull(conf, "Null configuration");
 
+        // 生成以组为单位的映射  一个table中可以存在多个组
         final GroupConf gc = getOrCreateGroupConf(groupId);
         final StampedLock stampedLock = gc.stampedLock;
         // 加写锁
@@ -89,7 +90,7 @@ public class RouteTable {
 
 
     /**
-     * 先为 groupId 填充对应的配置对象
+     * 创建以组为单位的 集群信息
      * @param groupId
      * @return
      */
@@ -157,7 +158,7 @@ public class RouteTable {
 
     /**
      * Update leader info.
-     * 更新leader
+     * 根据 groupId 找到 对应的groupConf 之后设置leader
      * @param groupId raft group id
      * @param leader  peer of leader
      * @return true on success
@@ -184,7 +185,7 @@ public class RouteTable {
 
     /**
      * Update leader info.
-     * 更新leader 信息
+     * 更新路由表中的leader 信息 因为本地已经保存了 集群中所有节点的信息 只要访问某个节点就能知道raft组中的leader
      * @param groupId   raft group id
      * @param leaderStr peer string of leader
      * @return true on success
@@ -231,7 +232,7 @@ public class RouteTable {
 
     /**
      * Blocking the thread until query_leader finishes.
-     * 刷新leader 信息  该方法一般是周期性调用
+     * 从raftGroup 中找到leader
      * @param groupId   raft group id
      * @param timeoutMs timeout millis
      * @return operation status
@@ -242,19 +243,20 @@ public class RouteTable {
         Requires.requireTrue(!StringUtils.isBlank(groupId), "Blank group id");
         Requires.requireTrue(timeoutMs > 0, "Invalid timeout: " + timeoutMs);
 
-        // 通过groupId 找到对应的 groupConf 之后再找到 该配置中所有节点信息
+        // 通过groupId 找到当前组中所有的节点
         final Configuration conf = getConfiguration(groupId);
         if (conf == null) {
             return new Status(RaftError.ENOENT,
                 "Group %s is not registered in RouteTable, forgot to call updateConfiguration?", groupId);
         }
         final Status st = Status.OK();
+        // 构建一个查询leader的请求
         final CliRequests.GetLeaderRequest.Builder rb = CliRequests.GetLeaderRequest.newBuilder();
         rb.setGroupId(groupId);
         final CliRequests.GetLeaderRequest request = rb.build();
         TimeoutException timeoutException = null;
         for (final PeerId peer : conf) {
-            // 找到group 中所有节点 挨个进行连接
+            // 找到group 中所有节点 挨个进行连接  这里是允许访问不到个别节点的 因为任意一个节点都包含leader 信息
             if (!cliClientService.connect(peer.getEndpoint())) {
                 if (st.isOk()) {
                     st.setError(-1, "Fail to init channel to %s", peer);
@@ -265,6 +267,7 @@ public class RouteTable {
                 continue;
             }
             // 发送获取leader 的请求 某个group 中每个节点都应该能返回leader (都知道哪个节点是leader)
+            // 这里返回的leader 可能是 已经失效的节点
             final Future<Message> result = cliClientService.getLeader(peer.getEndpoint(), request, null);
             try {
                 final Message msg = result.get(timeoutMs, TimeUnit.MILLISECONDS);
@@ -276,6 +279,7 @@ public class RouteTable {
                         st.setError(-1, "%s, %s", savedMsg, ((RpcRequests.ErrorResponse) msg).getErrorMsg());
                     }
                 } else {
+                    // 成功获取到leader 信息
                     final CliRequests.GetLeaderResponse response = (CliRequests.GetLeaderResponse) msg;
                     // 使用某个节点更新leader
                     updateLeader(groupId, response.getLeaderId());

@@ -344,6 +344,9 @@ public class NodeImpl implements Node, RaftServerService {
          */
         Stage          stage;
         int            nchanges;
+        /**
+         * 每当该对象重置过一次后 版本就会加1
+         */
         long           version;
         List<PeerId>   newPeers    = new ArrayList<>();
         List<PeerId>   oldPeers    = new ArrayList<>();
@@ -428,7 +431,12 @@ public class NodeImpl implements Node, RaftServerService {
             reset(null);
         }
 
+        /**
+         * 根据状态来重置 当通过node.init 触发时 status 为ok
+         * @param st
+         */
         void reset(final Status st) {
+            // 这里按照当前集群状态来 关闭状态机
             if (st != null && st.isOk()) {
                 this.node.stopReplicator(this.newPeers, this.oldPeers);
             } else {
@@ -555,6 +563,7 @@ public class NodeImpl implements Node, RaftServerService {
         opts.setFilterBeforeCopyRemote(this.options.isFilterBeforeCopyRemote());
         // get snapshot throttle
         opts.setSnapshotThrottle(this.options.getSnapshotThrottle());
+        // 核心就是删除了多余的快照文件 只保留最后一个  为什么不都删除呢  ???
         return this.snapshotExecutor.init(opts);
     }
 
@@ -565,7 +574,7 @@ public class NodeImpl implements Node, RaftServerService {
     private boolean initLogStorage() {
         // 确保状态机以及启动
         Requires.requireNonNull(this.fsmCaller, "Null fsm caller");
-        // 默认创建 基于RocksDB 的存储器
+        // 默认创建 基于RocksDB 的存储器  logUri是用户设置的
         this.logStorage = this.serviceFactory.createLogStorage(this.options.getLogUri(), this.raftOptions);
         // 初始化日志管理器 外部通过该对象访问logStorage
         this.logManager = new LogManagerImpl();
@@ -573,11 +582,13 @@ public class NodeImpl implements Node, RaftServerService {
         final LogManagerOptions opts = new LogManagerOptions();
         opts.setLogEntryCodecFactory(this.serviceFactory.createLogEntryCodecFactory());
         opts.setLogStorage(this.logStorage);
+        // 该对象内部持有 configManager 这样每当将新的集群配置写入到 LogManager时 也会修改confManager
         opts.setConfigurationManager(this.configManager);
         opts.setFsmCaller(this.fsmCaller);
         opts.setNodeMetrics(this.metrics);
         opts.setDisruptorBufferSize(this.raftOptions.getDisruptorBufferSize());
         opts.setRaftOptions(this.raftOptions);
+        // 在最后 logManager 会启动disruptor 对象 用于处理用户传入的任务
         return this.logManager.init(opts);
     }
 
@@ -594,6 +605,7 @@ public class NodeImpl implements Node, RaftServerService {
             LOG.error("Node {} init meta storage failed, uri={}.", this.serverId, this.options.getRaftMetaUri());
             return false;
         }
+        // metaStorage 在初始化完成时会从本地元数据文件读取任期和投票对象  如果不是重启 term 默认为1 voteFor 默认为空节点
         // 获取当前任期
         this.currTerm = this.metaStorage.getTerm();
         // 获取当前投票对象
@@ -664,9 +676,11 @@ public class NodeImpl implements Node, RaftServerService {
         // 设置一个终止的回调对象
         opts.setAfterShutdown(status -> afterShutdown());
         opts.setLogManager(this.logManager);
+        // 在这里将状态机设置到caller 中
         opts.setFsm(this.options.getFsm());
         opts.setClosureQueue(this.closureQueue);
         opts.setNode(this);
+        // bootstrapId  默认为 term  index = 0  的peerId
         opts.setBootstrapId(bootstrapId);
         opts.setDisruptorBufferSize(this.raftOptions.getDisruptorBufferSize());
         // 初始化状态机调用者
@@ -782,6 +796,11 @@ public class NodeImpl implements Node, RaftServerService {
         return true;
     }
 
+    /**
+     * 根据选举时间 生成心跳时间
+     * @param electionTimeout
+     * @return
+     */
     private int heartbeatTimeout(final int electionTimeout) {
         return Math.max(electionTimeout / this.raftOptions.getElectionHeartbeatFactor(), 10);
     }
@@ -862,6 +881,9 @@ public class NodeImpl implements Node, RaftServerService {
                 return randomTimeout(timeoutMs);
             }
         };
+        /**
+         * leader 检测自己与follower是否断开连接的定时任务  注意这里明确设置了超时时间 为election 的一半
+         */
         this.stepDownTimer = new RepeatedTimer("JRaft-StepDownTimer", this.options.getElectionTimeoutMs() >> 1) {
 
             @Override
@@ -869,6 +891,9 @@ public class NodeImpl implements Node, RaftServerService {
                 handleStepDownTimeout();
             }
         };
+        /**
+         * 定期生成快照
+         */
         this.snapshotTimer = new RepeatedTimer("JRaft-SnapshotTimer", this.options.getSnapshotIntervalSecs() * 1000) {
 
             @Override
@@ -877,8 +902,10 @@ public class NodeImpl implements Node, RaftServerService {
             }
         };
 
+        // 该对象内部包含了node 在所有时期对应的节点集群快照
         this.configManager = new ConfigurationManager();
 
+        // 当用户将任务设置到 node 中 就是通过disruptor 来接收的
         this.applyDisruptor = DisruptorBuilder.<LogEntryAndClosure> newInstance() //
             .setRingBufferSize(this.raftOptions.getDisruptorBufferSize()) //
             .setEventFactory(new LogEntryAndClosureFactory()) //
@@ -886,7 +913,7 @@ public class NodeImpl implements Node, RaftServerService {
             .setProducerType(ProducerType.MULTI) //
             .setWaitStrategy(new BlockingWaitStrategy()) //
             .build();
-        // 设置事件处理器 专门处理写入日志的请求 用户的一切请求应该都是作为Log并只能写入到 leader中 应该就是对应这里
+        // 设置事件处理器 该事件处理器 要求必须要本节点为leader 才能提交任务 用户提交任务的时候又是怎么知道哪个是leader呢???
         this.applyDisruptor.handleEventsWith(new LogEntryAndClosureHandler());
         this.applyDisruptor.setDefaultExceptionHandler(new LogExceptionHandler<Object>(getClass().getSimpleName()));
         // 返回任务队列用于添加任务
@@ -896,7 +923,7 @@ public class NodeImpl implements Node, RaftServerService {
                 new DisruptorMetricSet(this.applyQueue));
         }
 
-        // 创建状态机对象
+        // 初始化一个状态机 caller 对象 作为一个中介吧 相当于该对象内部有固定的逻辑 然后状态机是用户自行实现的
         this.fsmCaller = new FSMCallerImpl();
         // 初始化Log存储
         if (!initLogStorage()) {
@@ -913,7 +940,7 @@ public class NodeImpl implements Node, RaftServerService {
             LOG.error("Node {} initFSMCaller failed.", getNodeId());
             return false;
         }
-        // 初始化投票箱对象
+        // 初始化投票箱对象  每次提交的任务都必须要获得半数节点以上的票才能提交成功 而ballotBox 内部包含了多个 apply 到 node 却还没有提交的任务
         this.ballotBox = new BallotBox();
         final BallotBoxOptions ballotBoxOpts = new BallotBoxOptions();
         ballotBoxOpts.setWaiter(this.fsmCaller);
@@ -923,12 +950,13 @@ public class NodeImpl implements Node, RaftServerService {
             return false;
         }
 
+        // 初始化快照存储对象  如果存在快照文件会初始化reader 对象 并触发一个 firstLoadSnapshot 任务 将快照中的数据设置到本地  具体实现由用户定义
         if (!initSnapshotStorage()) {
             LOG.error("Node {} initSnapshotStorage failed.", getNodeId());
             return false;
         }
 
-        // 检查下标是否正常
+        // 如果有快照id 那么 firstLogIndex 必须大于它  如果无快照id 也就是没有在本地找到快照文件 那么 默认的firstLogIndex = 1 也满足条件
         final Status st = this.logManager.checkConsistency();
         if (!st.isOk()) {
             LOG.error("Node {} is initialized with inconsistent log, status={}.", getNodeId(), st);
@@ -938,22 +966,27 @@ public class NodeImpl implements Node, RaftServerService {
         this.conf.setId(new LogId());
         // if have log using conf in log, else using conf in options
         if (this.logManager.getLastLogIndex() > 0) {
+            // 更新成 logManager中最新的配置
             this.conf = this.logManager.checkAndSetConfiguration(this.conf);
         } else {
+            // 代表是首次启动 jraft 而不是 重启 那么就使用一开始设置的配置组 也就是一开始用户确定的 集群中应该存在的node节点
             this.conf.setConf(this.options.getInitialConf());
         }
 
         // TODO RPC service and ReplicatorGroup is in cycle dependent, refactor it
         this.replicatorGroup = new ReplicatorGroupImpl();
-        // 专门用于投票的client
+        // 这里启动了一个 客户端对象
         this.rpcService = new BoltRaftClientService(this.replicatorGroup);
         final ReplicatorGroupOptions rgOpts = new ReplicatorGroupOptions();
+        // 心跳时间 要 远小于 检测心跳的时间 否则如果丢失一次心跳就开始选举是不合理的 可能是 延时等情况
         rgOpts.setHeartbeatTimeoutMs(heartbeatTimeout(this.options.getElectionTimeoutMs()));
         rgOpts.setElectionTimeoutMs(this.options.getElectionTimeoutMs());
         rgOpts.setLogManager(this.logManager);
         rgOpts.setBallotBox(this.ballotBox);
         rgOpts.setNode(this);
+        // 这里循环依赖了
         rgOpts.setRaftRpcClientService(this.rpcService);
+        // 获取快照的存储中心
         rgOpts.setSnapshotStorage(this.snapshotExecutor != null ? this.snapshotExecutor.getSnapshotStorage() : null);
         rgOpts.setRaftOptions(this.raftOptions);
         rgOpts.setTimerManager(this.timerManager);
@@ -961,10 +994,12 @@ public class NodeImpl implements Node, RaftServerService {
         // Adds metric registry to RPC service.
         this.options.setMetricRegistry(this.metrics.getMetricRegistry());
 
+        // 初始化 client 内部的线程池
         if (!this.rpcService.init(this.options)) {
             LOG.error("Fail to init rpc service.");
             return false;
         }
+        // 只是初始化一些通用配置 当某个leader 成功选举后 开始添加 复制机对象这时 会从公共配置中抽取属性并初始化
         this.replicatorGroup.init(new NodeId(this.groupId, this.serverId), rgOpts);
 
         this.readOnlyService = new ReadOnlyServiceImpl();
@@ -973,12 +1008,13 @@ public class NodeImpl implements Node, RaftServerService {
         rosOpts.setNode(this);
         rosOpts.setRaftOptions(this.raftOptions);
 
+        // 初始化只读服务  这里会将 readOnlyService 作为 LastAppliedIndexListener 设置到 caller 中
         if (!this.readOnlyService.init(rosOpts)) {
             LOG.error("Fail to init readOnlyService.");
             return false;
         }
 
-        // set state to follower
+        // set state to follower  初始情况大家都是 follower 需要等待第一次心跳超时 并且此时 prevote 会直接通过因为所有node 的 leaderId 都是空的
         this.state = State.STATE_FOLLOWER;
 
         if (LOG.isInfoEnabled()) {
@@ -988,13 +1024,18 @@ public class NodeImpl implements Node, RaftServerService {
 
         if (this.snapshotExecutor != null && this.options.getSnapshotIntervalSecs() > 0) {
             LOG.debug("Node {} start snapshot timer, term={}.", getNodeId(), this.currTerm);
+            // 开始启动快照任务 无论是 leader 还是 follower 都可以启动快照任务  是否需要安装快照是根据 当前的 偏移量决定的比如 长时间没有写入数据 偏移量没有发生变化也就不需要保存快照了
+            // 而用户生成的快照文件地址是由 用户自己定义的 只是 在 writer 对象中保存了一个 元数据映射  然后读取快照时 用户能访问到reader 对象 也就知道要读取的文件地址了
             this.snapshotTimer.start();
         }
 
+        // 如果当前集群中配置的 节点不为空
         if (!this.conf.isEmpty()) {
+            // 在这里启动了 选举定时任务 并设置了初始的心跳时间
             stepDown(this.currTerm, false, new Status());
         }
 
+        // 这里只是将自身添加到 nodeManager 中吗 而不是group 中所有node ???
         if (!NodeManager.getInstance().add(this)) {
             LOG.error("NodeManager add {} failed.", getNodeId());
             return false;
@@ -1003,6 +1044,7 @@ public class NodeImpl implements Node, RaftServerService {
         // Now the raft node is started , have to acquire the writeLock to avoid race
         // conditions
         this.writeLock.lock();
+        // 如果只有自己 直接成为leader
         if (this.conf.isStable() && this.conf.getConf().size() == 1 && this.conf.getConf().contains(this.serverId)) {
             // The group contains only this server which must be the LEADER, trigger
             // the timer immediately.
@@ -1188,10 +1230,11 @@ public class NodeImpl implements Node, RaftServerService {
             }
         }
         // init commit manager
-        // 初始化投票箱对象
+        // 初始化投票箱对象  只有初始化之后才可以使用 默认情况下 lastLogIndex = 0 而 firstLogIndex = 1 这样就说明投票箱从1开始使用
         this.ballotBox.resetPendingIndex(this.logManager.getLastLogIndex() + 1);
         // Register _conf_ctx to reject configuration changing before the first log
-        // is committed.  检测当前配置信息对象是否正处于其他状态 必须确保为 none  什么情况不为 none???
+        // is committed.
+        // 每当调用 stepDown 时 都会重置confCtx 如果繁忙代表 出现了预期外的状况
         if (this.confCtx.isBusy()) {
             throw new IllegalStateException();
         }
@@ -1216,6 +1259,8 @@ public class NodeImpl implements Node, RaftServerService {
         if (!this.state.isActive()) {
             return;
         }
+        // 当node 进行init 时 会调用该方法 同时node角色为follower 所以不会进入下面的分支 目的是为了调用 confCtx.reset
+
         // 如果当前节点是 候选人 该场景对应于 收到了更新任期的请求 那么本节点所在任期的选举已经无效了 就停止选举
         if (this.state == State.STATE_CANDIDATE) {
             stopVoteTimer();
@@ -1238,9 +1283,9 @@ public class NodeImpl implements Node, RaftServerService {
         // soft state in memory
         // 强制设置为 跟随者
         this.state = State.STATE_FOLLOWER;
-        // TODO 这个晚点看
+        // 当node 触发init 时会调用该方法
         this.confCtx.reset();
-        // 设置leader 更新时间
+        // 设置leader 更新时间   每个节点在启动后都会通过该方法设置一个初始的时间 然后根据 选举定时任务 判断是否开始选举
         updateLastLeaderTimestamp(Utils.monotonicMs());
         // 如果正在执行下载快照任务 要先进行打断 (就是 follower 从leader 拉取快照数据的动作)
         // 这招可以用  就是通过 异步执行一个任务(future)   正常情况下 任务完成 才设置需要的数据 而如果调用cancel 实际上
@@ -1334,7 +1379,7 @@ public class NodeImpl implements Node, RaftServerService {
         this.writeLock.lock();
         try {
             final int size = tasks.size();
-            // 因为 只有leader 才允许写入事件   TODO 这里要注意 不同的 errorState closuer会以怎样的策略去应对
+            // 因为 只有leader 才允许写入事件
             if (this.state != State.STATE_LEADER) {
                 final Status st = new Status();
                 if (this.state != State.STATE_TRANSFERRING) {
@@ -1367,7 +1412,7 @@ public class NodeImpl implements Node, RaftServerService {
                 }
                 // 开始向投票箱提交任务  也就是 只有半数(以上) 成功提交任务才返回正常提交
                 // 因为集群内部可能发生变动 这里将变动前后的节点都传入了 看看它是如何应对的
-                // 因为一开始pendingIndex =  会导致无法添加任务 并为回调对象设置错误结果  如果成功添加任务 应该是在某个定时器中做处理
+                // 因为一开始pendingIndex = 0 会导致无法添加任务 并为回调对象设置错误结果
                 if (!this.ballotBox.appendPendingTask(this.conf.getConf(),
                     this.conf.isStable() ? null : this.conf.getOldConf(), task.done)) {
                     Utils.runClosureInThread(task.done, new Status(RaftError.EINTERNAL, "Fail to append task."));
@@ -1589,9 +1634,7 @@ public class NodeImpl implements Node, RaftServerService {
     }
 
     /**
-     * 在 rhea 模块中 任务首先提交到了statemachine 上 之后委托给raftRawKVStore 最后 转发到node上执行
-     * 那么一般化来讲是什么样  还是通过状态机向node 发起任务???
-     * 将任务提交到节点 这里必须确保本节点是 leader 否则不接受任务
+     * 一般的操作是用户封装 一个 processor 内部维护 node 引用 然后发起请求 包装成task 并提交到node 上
      * @param task task to apply
      */
     @Override
@@ -3376,6 +3419,11 @@ public class NodeImpl implements Node, RaftServerService {
         }
     }
 
+    /**
+     * 停止复制机
+     * @param keep
+     * @param drop
+     */
     private void stopReplicator(final List<PeerId> keep, final List<PeerId> drop) {
         if (drop != null) {
             for (final PeerId peer : drop) {

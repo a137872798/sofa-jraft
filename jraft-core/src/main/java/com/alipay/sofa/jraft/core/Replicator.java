@@ -1257,10 +1257,14 @@ public class Replicator implements ThreadId.OnError {
         }
     }
 
+    /**
+     * 销毁本复制机对象
+     */
     void destroy() {
         final ThreadId savedId = this.id;
         LOG.info("Replicator {} is going to quit", savedId);
         this.id = null;
+        // 置空reader 引用
         releaseReader();
         // Unregister replicator metric set
         if (this.options.getNode().getNodeMetrics().isEnabled()) {
@@ -2032,6 +2036,11 @@ public class Replicator implements ThreadId.OnError {
 
     }
 
+    /**
+     * 当关闭状态机时 通过ESTOP 来触发 onError 从而触发关闭逻辑
+     * @param id
+     * @return
+     */
     public static boolean stop(final ThreadId id) {
         id.setError(RaftError.ESTOP.getNumber());
         return true;

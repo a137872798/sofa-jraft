@@ -107,7 +107,7 @@ public class LogManagerImpl implements LogManager {
     private volatile boolean                                 hasError;
     private long                                             nextWaitId;
     /**
-     * 刷盘的id
+     * 该index 对应的数据已经刷盘到storage中
      */
     private LogId                                            diskId                 = new LogId(0, 0);
     /**
@@ -256,7 +256,7 @@ public class LogManagerImpl implements LogManager {
     public boolean init(final LogManagerOptions opts) {
         this.writeLock.lock();
         try {
-            // 日志存储对象必须被初始化
+            // storage必须被初始化
             if (opts.getLogStorage() == null) {
                 LOG.error("Fail to init log manager, log storage is null");
                 return false;
@@ -272,19 +272,20 @@ public class LogManagerImpl implements LogManager {
             lsOpts.setConfigurationManager(this.configManager);
             lsOpts.setLogEntryCodecFactory(opts.getLogEntryCodecFactory());
 
-            // 就是 创建了 rocksDB 相关的 对象 并拉取残存的数据 同时更新 firstLogIndex 和 配置
+            // 就是 创建了 rocksDB 相关的 对象 并拉取残存的数据 同时更新 firstLogIndex 和 配置 不过firstLogIndex是在什么时候设置的???
             if (!this.logStorage.init(lsOpts)) {
                 LOG.error("Fail to init logStorage");
                 return false;
             }
             // 这时 偏移量已经得到更新了
+            // 如果是重新启动的情况 可能上次最后的数据还没有生成快照 所以这里会残留一些 也就是firstLogIndex != lastLogIndex
             this.firstLogIndex = this.logStorage.getFirstLogIndex();
             this.lastLogIndex = this.logStorage.getLastLogIndex();
-            // 代表刷盘的起始偏移量
+            // 代表刷盘的起始偏移量 不是快照偏移量
             this.diskId = new LogId(this.lastLogIndex, getTermFromLogStorage(this.lastLogIndex));
-            // 获取到状态机对象
+            // 获取到状态机caller对象
             this.fsmCaller = opts.getFsmCaller();
-            // 生成高性能并发队列 并设置了一个线程工厂
+            // 该任务队列内保留的是  log相关的事件
             this.disruptor = DisruptorBuilder.<StableClosureEvent> newInstance() //
                     .setEventFactory(new StableClosureEventFactory()) // 该工厂总是生成一个 稳定的回调对象
                     .setRingBufferSize(opts.getDisruptorBufferSize()) //
@@ -292,11 +293,12 @@ public class LogManagerImpl implements LogManager {
                     .setProducerType(ProducerType.MULTI) //
                     /*
                      *  Use timeout strategy in log manager. If timeout happens, it will called reportError to halt the node.
+                     * 这里使用了超时异常 而不是阻塞策略
                      */
                     .setWaitStrategy(new TimeoutBlockingWaitStrategy(
                         this.raftOptions.getDisruptorPublishEventWaitTimeoutSecs(), TimeUnit.SECONDS)) // 指定阻塞时长
                     .build();
-            // 设置处理事件对应的 handler  该对象就是将生成的事件 写入到 rocksDB 中  什么时候会往队列中插入事件呢???
+            // 设置处理事件对应的 handler
             this.disruptor.handleEventsWith(new StableClosureEventHandler());
             // 设置异常处理器  异常时 打印日志 且委托给状态机
             this.disruptor.setDefaultExceptionHandler(new LogExceptionHandler<Object>(this.getClass().getSimpleName(),
@@ -871,7 +873,7 @@ public class LogManagerImpl implements LogManager {
         LOG.debug("set snapshot: {}", meta);
         this.writeLock.lock();
         try {
-            // 代表不需要写入
+            // 代表不需要写入  上锁后进行检查是常用套路 类似于双重锁检查
             if (meta.getLastIncludedIndex() <= this.lastSnapshotId.getIndex()) {
                 return;
             }
@@ -893,7 +895,7 @@ public class LogManagerImpl implements LogManager {
             // 生成配置实体
             final ConfigurationEntry entry = new ConfigurationEntry(new LogId(meta.getLastIncludedIndex(),
                 meta.getLastIncludedTerm()), conf, oldConf);
-            // snapshot 字段就记录了最新一次写入的快照对象元数据
+            // snapshot 字段就记录了最新一次写入的快照对象元数据 该对象是设置在node 中的
             this.configManager.setSnapshot(entry);
             // 获取快照数据 对应的任期
             final long term = unsafeGetTerm(meta.getLastIncludedIndex());
@@ -921,7 +923,7 @@ public class LogManagerImpl implements LogManager {
                 // some log around last_snapshot_index is probably needed by some
                 // followers
                 // TODO if there are still be need?
-                // 这里在写入快照后 没有立即截取到最新的部分  可能有些人正在拉取这部分的数据
+                // 这里在写入快照后 没有立即截取到最新的部分  可能有些人正在拉取这部分的数据  这里还不太明白 不过对具体流程理解没有影响
                 if (savedLastSnapshotIndex > 0) {
                     truncatePrefix(savedLastSnapshotIndex + 1);
                 }
@@ -1128,6 +1130,7 @@ public class LogManagerImpl implements LogManager {
         if (index == 0) {
             return 0;
         }
+        //
         if (index > this.lastLogIndex) {
             return 0;
         }
@@ -1535,11 +1538,13 @@ public class LogManagerImpl implements LogManager {
             Requires.requireTrue(this.lastLogIndex >= 0);
             // 如果快照是0 firstLogIndex必须是1  firstLogIndex 可能就是 快照的尾部
             if (this.lastSnapshotId.equals(new LogId(0, 0))) {
+                // 如果 logStorage 没有读取到下标 该值默认是1  在logStorage 中 有种特殊的key 对应的值为 firstLogIndex
                 if (this.firstLogIndex == 1) {
                     return Status.OK();
                 }
                 return new Status(RaftError.EIO, "Missing logs in (0, %d)", this.firstLogIndex);
             } else {
+                // 也就是 firstLogIndex 一定要大于快照下标
                 if (this.lastSnapshotId.getIndex() >= this.firstLogIndex - 1
                     && this.lastSnapshotId.getIndex() <= this.lastLogIndex) {
                     return Status.OK();

@@ -55,6 +55,7 @@ public class CounterStateMachine extends StateMachineAdapter {
     private final AtomicLong    value      = new AtomicLong(0);
     /**
      * Leader term
+     * 通过检测 leader 的上线和下线 判断该节点是否是leader 节点
      */
     private final AtomicLong    leaderTerm = new AtomicLong(-1);
 

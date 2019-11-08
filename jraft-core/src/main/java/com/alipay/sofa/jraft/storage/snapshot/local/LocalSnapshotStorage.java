@@ -130,9 +130,8 @@ public class LocalSnapshotStorage implements SnapshotStorage {
             return false;
         }
 
-        // delete temp snapshot   这里是没有阀门的情况
+        // delete temp snapshot
         if (!this.filterBeforeCopyRemote) {
-            // 注意临时文件的生成时机
             final String tempSnapshotPath = this.path + File.separator + TEMP_PATH;
             final File tempFile = new File(tempSnapshotPath);
             if (tempFile.exists()) {
@@ -167,16 +166,17 @@ public class LocalSnapshotStorage implements SnapshotStorage {
             Collections.sort(snapshots);
             final int snapshotCount = snapshots.size();
 
+            // 注意这里保留了最后一个快照文件
             for (int i = 0; i < snapshotCount - 1; i++) {
                 final long index = snapshots.get(i);
-                // 找到对应的快照文件路径
                 final String snapshotPath = getSnapshotPath(index);
+                // 就是删除文件
                 if (!destroySnapshot(snapshotPath)) {
                     return false;
                 }
             }
             this.lastSnapshotIndex = snapshots.get(snapshotCount - 1);
-            // 增加引用计数  也就是在 init 之前 所有快照文件都没有引用计数
+            // 为最后一个快照文件增加引用计数 避免被删除 因为删除前要确保引用计数为0
             ref(this.lastSnapshotIndex);
         }
 

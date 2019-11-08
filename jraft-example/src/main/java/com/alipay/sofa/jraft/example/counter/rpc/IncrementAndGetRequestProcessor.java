@@ -41,6 +41,9 @@ public class IncrementAndGetRequestProcessor extends AsyncUserProcessor<Incremen
 
     private static final Logger LOG = LoggerFactory.getLogger(IncrementAndGetRequestProcessor.class);
 
+    /**
+     * 持有了 CounterServer 的引用  然后CounterServer 中又有 node 和 状态机的引用 这样processor 就可以直接操作状态机了
+     */
     private final CounterServer counterServer;
 
     public IncrementAndGetRequestProcessor(CounterServer counterServer) {
@@ -48,13 +51,23 @@ public class IncrementAndGetRequestProcessor extends AsyncUserProcessor<Incremen
         this.counterServer = counterServer;
     }
 
+    /**
+     * 该对象设置在 填入 node 的 rpcServer中
+     * @param bizCtx
+     * @param asyncCtx
+     * @param request
+     */
     @Override
     public void handleRequest(final BizContext bizCtx, final AsyncContext asyncCtx, final IncrementAndGetRequest request) {
+        // 首先要检测 leader是否已经失效 或者该节点本身就不是leader  因为通过routeTable 获取到的leader 可能已经失效了 而follower 没有察觉 这时当请求已经进入到node 时 需要再判断一次
         if (!this.counterServer.getFsm().isLeader()) {
+            // 将本次失败的leaderId 返回
             asyncCtx.sendResponse(this.counterServer.redirect());
             return;
         }
 
+        // 如果成功写入到 多数节点 才算是真正写入， 这时会在res 中设置结果 否则应该是写入一个异常
+        // 如果用户短时间内发起多个请求 而没有等待 服务端确认会怎么处理 必须确保前面的操作成功才能执行后面的操作吗 还是 每次操作是相互独立的
         final ValueResponse response = new ValueResponse();
         final IncrementAndAddClosure closure = new IncrementAndAddClosure(counterServer, request, response,
                 status -> {
@@ -66,12 +79,14 @@ public class IncrementAndGetRequestProcessor extends AsyncUserProcessor<Incremen
                 });
 
         try {
+            // 需要将入参封装成task
             final Task task = new Task();
             task.setDone(closure);
             task.setData(ByteBuffer
                 .wrap(SerializerManager.getSerializer(SerializerManager.Hessian2).serialize(request)));
 
             // apply task to raft group.
+            // 用户的单个请求被封装成task 对象 并提交到node上
             counterServer.getNode().apply(task);
         } catch (final CodecException e) {
             LOG.error("Fail to encode IncrementAndGetRequest", e);
