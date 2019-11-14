@@ -113,6 +113,7 @@ public class LocalRaftMetaStorage implements RaftMetaStorage {
         final ProtoBufFile pbFile = newPbFile();
         try {
             // 尝试加载 this.path + File.separator + RAFT_META 路径下文件的数据  持久化时 将任期和 投票对象 序列化成StablePBMeta 并存入到 文件中
+            // 这里采用某个格式是为了最大化性能(利用protolBuf)
             final StablePBMeta meta = pbFile.load();
             if (meta != null) {
                 this.term = meta.getTerm();

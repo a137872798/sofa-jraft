@@ -43,8 +43,10 @@ public final class RaftServiceFactory {
     /**
      * Create and initialize a raft node with node options.
      * Throw {@link IllegalStateException} when fail to initialize.
+     * 通过该工厂方法 快捷创建node对象
      */
     public static Node createAndInitRaftNode(final String groupId, final PeerId serverId, final NodeOptions opts) {
+        // 创建节点时 增加一个全局节点数 同时 初始化一些基本属性
         final Node ret = createRaftNode(groupId, serverId);
         // 创建节点的同时进行初始化
         if (!ret.init(opts)) {

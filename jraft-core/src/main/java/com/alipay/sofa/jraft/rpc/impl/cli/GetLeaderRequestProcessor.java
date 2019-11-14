@@ -65,8 +65,7 @@ public class GetLeaderRequestProcessor extends BaseCliRequestProcessor<GetLeader
     }
 
     /**
-     * 原本 父类方法会通过peerId 和 groupId 获取 node 信息 (从NodeManager 中)
-     * 这里是有可能获取到无效的leader的 在某个leader 无法连接到其他节点时 而follower 检测心跳还没有超时 （follower检测心跳超时的时间是leader自我检测的2倍）
+     * 从集群中找到leader
      * @param request
      * @param done
      * @return
@@ -77,6 +76,7 @@ public class GetLeaderRequestProcessor extends BaseCliRequestProcessor<GetLeader
         // 获取请求体中的目标group
         String groupId = getGroupId(request);
 
+        // 默认情况下不会设置peerId
         if (request.hasPeerId()) {
             String peerIdStr = getPeerId(request);
             PeerId peer = new PeerId();
@@ -91,7 +91,8 @@ public class GetLeaderRequestProcessor extends BaseCliRequestProcessor<GetLeader
                 return RpcResponseFactory.newResponse(RaftError.EINVAL, "Fail to parse peer id %", peerIdStr);
             }
         } else {
-            // 没有设置peerId 时走这条分支 这个manager 应该是以进程为单位的 这里是查询 某台机器上创建了多少node 并且是同组的  最少也会有一个
+            // 没有设置peerId 时走这条分支 这个manager 应该是以进程为单位的 这里是查询 某台机器上创建了多少node
+            // 并且是同组的  如果正常使用的情况下最少也会有一个
             nodes = NodeManager.getInstance().getNodesByGroupId(groupId);
         }
         // 代表server 还没有启动

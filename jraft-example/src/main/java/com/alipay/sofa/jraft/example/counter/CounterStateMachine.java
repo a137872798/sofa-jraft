@@ -103,6 +103,11 @@ public class CounterStateMachine extends StateMachineAdapter {
         }
     }
 
+    /**
+     * 注意保存快照是 如何利用 writer 对象的
+     * @param writer
+     * @param done
+     */
     @Override
     public void onSnapshotSave(final SnapshotWriter writer, final Closure done) {
         final long currVal = this.value.get();

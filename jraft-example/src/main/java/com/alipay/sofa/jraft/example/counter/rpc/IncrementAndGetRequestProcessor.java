@@ -52,7 +52,7 @@ public class IncrementAndGetRequestProcessor extends AsyncUserProcessor<Incremen
     }
 
     /**
-     * 该对象设置在 填入 node 的 rpcServer中
+     * 处理业务请求  注意存在乱序的可能
      * @param bizCtx
      * @param asyncCtx
      * @param request
@@ -66,9 +66,9 @@ public class IncrementAndGetRequestProcessor extends AsyncUserProcessor<Incremen
             return;
         }
 
-        // 如果成功写入到 多数节点 才算是真正写入， 这时会在res 中设置结果 否则应该是写入一个异常
-        // 如果用户短时间内发起多个请求 而没有等待 服务端确认会怎么处理 必须确保前面的操作成功才能执行后面的操作吗 还是 每次操作是相互独立的
+        // 用户每次发起的请求 应该是无序的 而状态机会根据收到的顺序进行处理
         final ValueResponse response = new ValueResponse();
+        // 创建一个回调对象  回调对象也需要用户自定义
         final IncrementAndAddClosure closure = new IncrementAndAddClosure(counterServer, request, response,
                 status -> {
                     if (!status.isOk()) {

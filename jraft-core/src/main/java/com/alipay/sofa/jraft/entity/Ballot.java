@@ -91,7 +91,6 @@ public class Ballot {
         // 清除 Ballot的 旧数据
         this.peers.clear();
         this.oldPeers.clear();
-        // 新旧集群的成功数都为0
         quorum = oldQuorum = 0;
         int index = 0;
         if (conf != null) {

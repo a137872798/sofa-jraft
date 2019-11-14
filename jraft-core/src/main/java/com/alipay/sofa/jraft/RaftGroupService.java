@@ -93,14 +93,21 @@ public class RaftGroupService {
      * @param groupId  本节点对应的组id
      * @param serverId  本node对应的服务地址
      * @param nodeOptions
-     * @param rpcServer  封装作为 服务器的职能
+     * @param rpcServer
      */
     public RaftGroupService(final String groupId, final PeerId serverId, final NodeOptions nodeOptions,
                             final RpcServer rpcServer) {
-        // 默认情况下 不共享 服务器 如果共享可以节省资源 不过会共用线程池
         this(groupId, serverId, nodeOptions, rpcServer, false);
     }
 
+    /**
+     *
+     * @param groupId
+     * @param serverId
+     * @param nodeOptions
+     * @param rpcServer
+     * @param sharedRpcServer  该标识如果为 true 那么调用shutdown 时 无法停止该 server
+     */
     public RaftGroupService(final String groupId, final PeerId serverId, final NodeOptions nodeOptions,
                             final RpcServer rpcServer, final boolean sharedRpcServer) {
         super();
@@ -143,7 +150,7 @@ public class RaftGroupService {
             throw new IllegalArgumentException("Blank group id" + this.groupId);
         }
         //Adds RPC server to Server.
-        //将地址注册到NodeManager中
+        //将本服务对应的地址注册到NodeManager中  如果 NodeManager 是 针对JVM 级别的 那么 在本机启动的所有节点都会注册到这里
         NodeManager.getInstance().addAddress(this.serverId.getEndpoint());
 
         // 创建 node对象并执行init

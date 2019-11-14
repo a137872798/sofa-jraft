@@ -247,14 +247,16 @@ public class FSMCallerImpl implements FSMCaller {
         // 从opts 中获取需要的属性
         this.logManager = opts.getLogManager();
         this.fsm = opts.getFsm();
+        // 回调对象被存放到该队列中
         this.closureQueue = opts.getClosureQueue();
         // 该对象关联到 node 中的 afterShutdown
         this.afterShutdown = opts.getAfterShutdown();
         this.node = opts.getNode();
         this.nodeMetrics = this.node.getNodeMetrics();
-        // 默认的 BootstrapId index 和 term 都是0
+        // BootstrapId index 和 term 都是0
         this.lastAppliedIndex.set(opts.getBootstrapId().getIndex());
         // 触发监听器
+        // readOnlyServiceImpl 会在该对象初始化完后 才设置到里面
         notifyLastAppliedIndexUpdated(this.lastAppliedIndex.get());
         this.lastAppliedTerm = opts.getBootstrapId().getTerm();
         // 指定多生产者方式

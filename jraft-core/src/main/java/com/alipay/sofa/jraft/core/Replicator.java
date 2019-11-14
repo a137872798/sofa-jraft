@@ -1205,7 +1205,7 @@ public class Replicator implements ThreadId.OnError {
     /**
      * 当发现本节点已经落后于其他节点时触发
      * @param code
-     * @param beforeDestroy  代表是否要先销毁数据
+     * @param beforeDestroy  是否在销毁前触发的
      */
     private void notifyOnCaughtUp(final int code, final boolean beforeDestroy) {
         // 如果没有设置 追赶用的回调对象 无视该方法  该回调最后会通向 node.onCaughtUp()
@@ -1672,7 +1672,7 @@ public class Replicator implements ThreadId.OnError {
             sb.append(", success");
             LOG.debug(sb.toString());
         }
-        // success
+        // success  当响应结果的任期比当前节点新时
         if (response.getTerm() != r.options.getTerm()) {
             r.resetInflights();
             r.state = State.Probe;

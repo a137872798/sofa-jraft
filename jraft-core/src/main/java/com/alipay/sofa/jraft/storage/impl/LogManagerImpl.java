@@ -272,16 +272,19 @@ public class LogManagerImpl implements LogManager {
             lsOpts.setConfigurationManager(this.configManager);
             lsOpts.setLogEntryCodecFactory(opts.getLogEntryCodecFactory());
 
-            // 就是 创建了 rocksDB 相关的 对象 并拉取残存的数据 同时更新 firstLogIndex 和 配置 不过firstLogIndex是在什么时候设置的???
+            // 就是 创建了 rocksDB 相关的 对象 并拉取残存的数据 同时更新 firstLogIndex 和 配置
             if (!this.logStorage.init(lsOpts)) {
                 LOG.error("Fail to init logStorage");
                 return false;
             }
-            // 这时 偏移量已经得到更新了
-            // 如果是重新启动的情况 可能上次最后的数据还没有生成快照 所以这里会残留一些 也就是firstLogIndex != lastLogIndex
+            // 在初始化节点如果 之前文件中没有数据 那么 firstLogIndex 为1
+            // 如果存在 FirstLogIndex元数据 就更新成对应的值
+            // 如果存在文件而文件中没有firstLogIndex的元数据  这里直接访问rocksDB的数据(seekFirst)
+            // 除了初始化时会保存firstLogIndex 还有什么时候会保存 (因为该属性的作用应该是为了快捷获取首个标识 那么如果在使用过程中不更新它也没有意义)
             this.firstLogIndex = this.logStorage.getFirstLogIndex();
+            // 基本同上 不过lastLogIndex不需要被保存
             this.lastLogIndex = this.logStorage.getLastLogIndex();
-            // 代表刷盘的起始偏移量 不是快照偏移量
+            // 代表刷盘的起始偏移量 不是快照偏移量  初始化时数据肯定是保存在文件中 这里取最后的位置作为刷盘起点
             this.diskId = new LogId(this.lastLogIndex, getTermFromLogStorage(this.lastLogIndex));
             // 获取到状态机caller对象
             this.fsmCaller = opts.getFsmCaller();
@@ -298,7 +301,7 @@ public class LogManagerImpl implements LogManager {
                     .setWaitStrategy(new TimeoutBlockingWaitStrategy(
                         this.raftOptions.getDisruptorPublishEventWaitTimeoutSecs(), TimeUnit.SECONDS)) // 指定阻塞时长
                     .build();
-            // 设置处理事件对应的 handler
+            // 设置处理事件对应的 handler  StableClosure 代表内部包含数据是需要被持久化的回调对象
             this.disruptor.handleEventsWith(new StableClosureEventHandler());
             // 设置异常处理器  异常时 打印日志 且委托给状态机
             this.disruptor.setDefaultExceptionHandler(new LogExceptionHandler<Object>(this.getClass().getSimpleName(),
@@ -593,7 +596,7 @@ public class LogManagerImpl implements LogManager {
                 int writtenSize = 0;
                 for (int i = 0; i < entriesCount; i++) {
                     final LogEntry entry = toAppend.get(i);
-                    // 累加 写入的长度
+                    // 累加 写入的长度  如果data 为null 写入0
                     writtenSize += entry.getData() != null ? entry.getData().remaining() : 0;
                 }
                 this.nodeMetrics.recordSize("append-logs-bytes", writtenSize);
@@ -746,7 +749,7 @@ public class LogManagerImpl implements LogManager {
                 LogManagerImpl.this.shutDownLatch.countDown();
                 return;
             }
-            // 获取回调对象
+            // 获取回调对象 (该回调是针对本次添加的 entries 的 每个entry 还有自己的回调对象)
             final StableClosure done = event.done;
 
             // 如果回调对象中存在 要写入的数据 将实体写入到 ab 中
@@ -757,8 +760,7 @@ public class LogManagerImpl implements LogManager {
             } else {
                 // 如果回调事件中携带数据 就存放到appendBatch 中 等积累到一定量才存储
                 // 如果没有携带数据 就代表是某种指令 或者本次 LogEntry 携带的是 conf 会强制触发刷盘
-                // 如果要获取 最新下标 那么就会将当前数据全部刷盘 等下 如果当前数据还没有写入半数呢
-                // 好像根据raft 论文 来描述 当该节点向其他节点拉票的时候他们发现该节点数据滞后 不会给他票
+                // 如果要获取 最新下标 那么就会将当前数据全部刷盘 等下 即使当前数据没有真正提交 因为即使某个节点数据超前 如果它没有成为leader 还是会保持跟新的leader一致(也就是去除掉超前的数据)
                 this.lastId = this.ab.flush();
                 boolean ret = true;
                 switch (event.type) {
@@ -1527,7 +1529,7 @@ public class LogManagerImpl implements LogManager {
     }
 
     /**
-     * 检查一致性
+     * 检查一致性  当首次加载时  如果rocksDB 的firstLogIndex 比 快照偏移量小是不正常的 因为快照的生成就意味着这部分数据被删除了
      * @return
      */
     @Override
@@ -1538,13 +1540,13 @@ public class LogManagerImpl implements LogManager {
             Requires.requireTrue(this.lastLogIndex >= 0);
             // 如果快照是0 firstLogIndex必须是1  firstLogIndex 可能就是 快照的尾部
             if (this.lastSnapshotId.equals(new LogId(0, 0))) {
-                // 如果 logStorage 没有读取到下标 该值默认是1  在logStorage 中 有种特殊的key 对应的值为 firstLogIndex
+                // 如果 logStorage 中没有数据 该值默认是1
                 if (this.firstLogIndex == 1) {
                     return Status.OK();
                 }
                 return new Status(RaftError.EIO, "Missing logs in (0, %d)", this.firstLogIndex);
             } else {
-                // 也就是 firstLogIndex 一定要大于快照下标
+                // 也就是 firstLogIndex 一定要大于(等于)快照下标
                 if (this.lastSnapshotId.getIndex() >= this.firstLogIndex - 1
                     && this.lastSnapshotId.getIndex() <= this.lastLogIndex) {
                     return Status.OK();

@@ -33,7 +33,7 @@ import com.alipay.sofa.jraft.util.Utils;
 
 /**
  * Closure queue implementation.
- * 回调对象队列实现类
+ * 回调对象队列实现类  可以通过优化并发模型来提升性能吗 在并发数高的情况 性能会下降
  * @author boyan (boyan@alibaba-inc.com)
  *
  * 2018-Mar-28 11:44:01 AM

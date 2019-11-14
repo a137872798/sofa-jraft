@@ -77,7 +77,7 @@ public class RouteTable {
         // 加写锁
         final long stamp = stampedLock.writeLock();
         try {
-            // 这里没有设置leader 只是如果和 conf 有出入 移除 leader
+            // 因为当前配置已经更新了 如果没有leader 就要去掉
             gc.conf = conf;
             if (gc.leader != null && !gc.conf.contains(gc.leader)) {
                 gc.leader = null;

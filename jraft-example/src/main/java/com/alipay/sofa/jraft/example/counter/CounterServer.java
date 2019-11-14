@@ -43,7 +43,7 @@ import com.alipay.sofa.jraft.rpc.RaftRpcServerFactory;
 public class CounterServer {
 
     /**
-     * 内部存在一个 group 服务 要使用某个node 前必须确保 该对象被
+     * 内部存在一个 group 服务 要使用某个node 前必须确保 该对象被初始化
      */
     private RaftGroupService    raftGroupService;
     private Node                node;
@@ -68,8 +68,9 @@ public class CounterServer {
         final RpcServer rpcServer = new RpcServer(serverId.getPort());
         // 为该对象增加 默认的请求处理器
         RaftRpcServerFactory.addRaftRequestProcessors(rpcServer);
-        // 注册业务处理器
+        // 注册业务处理器   获取 针对获取counter 的请求
         rpcServer.registerUserProcessor(new GetValueRequestProcessor(this));
+        // 增加counter 的请求
         rpcServer.registerUserProcessor(new IncrementAndGetRequestProcessor(this));
         // 初始化状态机 状态机由用户自己实现 主要是实现提交任务 保存快照(的逻辑) 下载快照(后的逻辑)
         this.fsm = new CounterStateMachine();

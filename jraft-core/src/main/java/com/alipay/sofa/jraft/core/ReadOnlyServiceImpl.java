@@ -63,7 +63,7 @@ import com.lmax.disruptor.dsl.ProducerType;
 
 /**
  * Read-only service implementation.
- * 只读服务  包含线性一致读相关逻辑
+ * 只读服务  包含线性一致读相关逻辑 TODO 稍后看
  * @author dennis
  */
 public class ReadOnlyServiceImpl implements ReadOnlyService, LastAppliedLogIndexListener {

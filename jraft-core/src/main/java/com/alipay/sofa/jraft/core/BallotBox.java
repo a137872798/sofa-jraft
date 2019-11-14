@@ -108,7 +108,7 @@ public class BallotBox implements Lifecycle<BallotBoxOptions>, Describer {
      */
     @Override
     public boolean init(final BallotBoxOptions opts) {
-        // 必须包含状态机 和回调队列
+        // 必须包含caller 和回调队列
         if (opts.getWaiter() == null || opts.getClosureQueue() == null) {
             LOG.error("waiter or closure queue is null.");
             return false;
@@ -214,7 +214,7 @@ public class BallotBox implements Lifecycle<BallotBoxOptions>, Describer {
      * committed until a log at the new term becomes committed, so
      * |newPendingIndex| should be |last_log_index| + 1.
      *
-     * 当某个对象变成leader 后触发
+     * 当某个对象变成leader后触发
      * @param newPendingIndex pending index of new leader
      * @return returns true if reset success
      */
@@ -233,10 +233,9 @@ public class BallotBox implements Lifecycle<BallotBoxOptions>, Describer {
                     this.lastCommittedIndex);
                 return false;
             }
-            // 更新index  该pendingIndex 对应LogManager 的下标  也就是每往里面添加一个LogEntry 在收到半数的票数前 该值都不会发生变化 代表用户的某个任务未在集群范围内进行提交
-            // 同时借助优先队列的特性 确保 client 端收到结果后一定是按照顺序处理  server端 (follower) 可以选择是否按照收到req 的顺序处理任务 按照是否启用pieline 模式
-            // 但是如果发生乱序的话这样设置的意义也不大吧
+            // 该值代表已经提交到了哪里  (也就是在半数node刷盘成功)
             this.pendingIndex = newPendingIndex;
+            // 这里设置下标是做什么???
             this.closureQueue.resetFirstIndex(newPendingIndex);
             return true;
         } finally {
@@ -248,8 +247,7 @@ public class BallotBox implements Lifecycle<BallotBoxOptions>, Describer {
      * Called by leader, otherwise the behavior is undefined
      * Store application context before replication.
      *
-     * 该方法的调用场景是 当向一个node提交任务时  会尝试向其他所有节点提交 当超过半数成功后才会返回成功
-     * 当 node.apply 传入了多个 LogEntry 时 会创建多个 ballot对象 每个对象都对应整个集群中的投票动作
+     * 向投票箱设置等待中的任务 (也就是需要等待成功刷盘到半数follower)
      * @param conf      current configuration   一个集群
      * @param oldConf   old configuration       旧集群节点
      * @param done      callback                处理完成后的回调方法
@@ -265,8 +263,7 @@ public class BallotBox implements Lifecycle<BallotBoxOptions>, Describer {
         // 改进的写锁
         final long stamp = this.stampedLock.writeLock();
         try {
-            // 确保pendingIndex 大于 0 默认值应该就是0
-            // 难道是在定时任务中做了什么 但是这样就成异步了啊 也就是用户一旦提交任务 无需确定是否投票了 完全根据回调对象的结果来确定执行逻辑
+            // 必须确保投票箱的下标有效
             if (this.pendingIndex <= 0) {
                 LOG.error("Fail to appendingTask, pendingIndex={}.", this.pendingIndex);
                 return false;

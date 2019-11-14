@@ -62,9 +62,8 @@ public abstract class NodeRequestProcessor<T extends Message> extends RpcRequest
         final String peerIdStr = getPeerId(request);
         if (peer.parse(peerIdStr)) {
             final String groupId = getGroupId(request);
-            // 尝试从NodeManager中搜索node信息
+            // 尝试从NodeManager中搜索node信息  当 RaftGroupService 启动时 会将node 注册到 NodeManager 中 这里相当于是判断该地址是否真的有对应的节点
             final Node node = NodeManager.getInstance().get(groupId, peer);
-            // 这个node 是什么时候插入nodeManager的???
             if (node != null) {
                 return processRequest0((RaftServerService) node, request, done);
             } else {

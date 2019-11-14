@@ -254,14 +254,23 @@ public class NodeImpl implements Node, RaftServerService {
 
     /**
      * Node service event.
-     *
+     * 用户提交的事件最后会被封装成该对象
      * @author boyan (boyan@alibaba-inc.com)
      *
      * 2018-Apr-03 4:29:55 PM
      */
     private static class LogEntryAndClosure {
+        /**
+         * 用户请求实体
+         */
         LogEntry       entry;
+        /**
+         * 用户的回调
+         */
         Closure        done;
+        /**
+         * 期待的任期 不匹配将不会处理本次任务
+         */
         long           expectedTerm;
         CountDownLatch shutdownLatch;
 
@@ -304,7 +313,7 @@ public class NodeImpl implements Node, RaftServerService {
                     // 执行队列中所有任务
                     executeApplyingTasks(this.tasks);
                 }
-                // 在全局范围内 将活跃节点数量减少
+                // 在全局范围内 (这个范围应该是JVM级别)将活跃节点数量减少
                 final int num = GLOBAL_NUM_NODES.decrementAndGet();
                 LOG.info("The number of active nodes decrement to {}.", num);
                 // 唤醒join 的主线程
@@ -527,7 +536,7 @@ public class NodeImpl implements Node, RaftServerService {
         this.serverId = serverId != null ? serverId.copy() : null;
         // 当前状态属于 未初始化
         this.state = State.STATE_UNINITIALIZED;
-        // 当一个节点 初始化时 当前任期为0  会跟当前集群同步吗 如果一个节点出现异常重启后会以什么方式重新加入到该集群呢???
+        // 当一个节点 初始化时 当前任期为0  会跟当前集群同步吗 如果一个节点出现异常重启后会以什么方式重新加入到该集群呢???  或者说如何检测到一个节点启动是重新加入到某个集群中
         this.currTerm = 0;
         // 将当前时间作为最后更新leader的时间
         updateLastLeaderTimestamp(Utils.monotonicMs());
@@ -535,7 +544,7 @@ public class NodeImpl implements Node, RaftServerService {
         this.confCtx = new ConfigurationCtx(this);
         // 这个字段应该是记录需要唤醒的目标 候选人
         this.wakingCandidate = null;
-        // 当某个节点被创建时 更新全局节点总数  既然是全局范围内 肯定是在哪里 获取到了 本集群其他节点的信息
+        // 这个全局范围内的节点数 也是JVM 级别的 跟NodeManager 同级
         final int num = GLOBAL_NUM_NODES.incrementAndGet();
         LOG.info("The number of active nodes increment to {}.", num);
     }
@@ -593,7 +602,7 @@ public class NodeImpl implements Node, RaftServerService {
     }
 
     /**
-     * 初始化元数据存储
+     * 该storage 是用于存储任期以及voteId信息的，便于追踪吧   基于文件实现 而不是rocksDB
      * @return
      */
     private boolean initMetaStorage() {
@@ -605,10 +614,9 @@ public class NodeImpl implements Node, RaftServerService {
             LOG.error("Node {} init meta storage failed, uri={}.", this.serverId, this.options.getRaftMetaUri());
             return false;
         }
-        // metaStorage 在初始化完成时会从本地元数据文件读取任期和投票对象  如果不是重启 term 默认为1 voteFor 默认为空节点
-        // 获取当前任期
+        // metaStorage 在初始化完成时会从本地元数据文件读取任期和投票对象
+        // 如果不是重启 term 默认为0 voteFor 默认为空节点
         this.currTerm = this.metaStorage.getTerm();
-        // 获取当前投票对象
         this.votedId = this.metaStorage.getVotedFor().copy();
         return true;
     }
@@ -642,7 +650,7 @@ public class NodeImpl implements Node, RaftServerService {
             if (this.state != State.STATE_FOLLOWER) {
                 return;
             }
-            // 如果当前leader 还在正常工作就不需要为别的节点投票了 就是看最后收到leader消息的时间戳是否在指定范围内
+            // 如果当前leader 还在正常工作就不需要更改为候选人 就是看最后收到leader消息的时间戳是否在指定范围内
             if (isCurrentLeaderValid()) {
                 return;
             }
@@ -819,7 +827,7 @@ public class NodeImpl implements Node, RaftServerService {
         Requires.requireNonNull(opts, "Null node options");
         Requires.requireNonNull(opts.getRaftOptions(), "Null raft options");
         Requires.requireNonNull(opts.getServiceFactory(), "Null jraft service factory");
-        // 该对象是一个工厂内 内部存放了 很多快捷创建对应对象的方法
+        // 该工厂是 存储相关的工厂
         this.serviceFactory = opts.getServiceFactory();
         this.options = opts;
         this.raftOptions = opts.getRaftOptions();
@@ -833,6 +841,7 @@ public class NodeImpl implements Node, RaftServerService {
         }
 
         // 一般不是由用户直接创建node 的 而是先创建一个 RaftGroupService  并设置必要的参数 在启动时 本节点会自动设置到 nodeManager中
+        // 而 NodeManager 是记录本JVM 下创建了多少node
         if (!NodeManager.getInstance().serverExists(this.serverId.getEndpoint())) {
             LOG.error("No RPC server attached to, did you forget to call addService?");
             return false;
@@ -848,10 +857,9 @@ public class NodeImpl implements Node, RaftServerService {
         // 注意下面的定时任务 只是创建而没有执行 因为不同的任务对应不同的角色 在初始化阶段只需要开启election任务就可以了
 
         /**
-         * 投票任务 在某个节点变成 候选人后该任务就会启动 而在确定leader时任务会停止
-         * 就是为了避免在一轮中没有确定leader 需要一个机制来触发下次的投票
-         * 以整个集群来将 当先发现自己变成候选人的节点向其他节点发起投票申请后 其他节点还会执行哪个检查心跳的定时任务吗
-         * TODO 如果本轮没有选出leader 那么下一轮是只有 上次的几个候选人能进行参选 还是 所有follower 又在哪块逻辑体现???
+         * 当某个节点变成候选人时 会开启该定时任务 之后如果本轮没有选出leader 那么下轮该节点继续作为candidate 避免预投票  这样下一轮candidate 可能会过多
+         * (某些follower也成功通过预投票) 因为此时已经确定 集群中没有leader 了
+         * (每次leader发送心跳时 会将其他节点变成 follower 这样在stepDown 中该定时任务会被关闭 如果某次每个candidate获得的票数不够 再下次定时任务中会继续触发选举 这样节省一轮预投票的开销)
          */
         this.voteTimer = new RepeatedTimer("JRaft-VoteTimer", this.options.getElectionTimeoutMs()) {
 
@@ -866,8 +874,15 @@ public class NodeImpl implements Node, RaftServerService {
                 return randomTimeout(timeoutMs);
             }
         };
+        // 这里有一种情况 第一轮选举比如产生一个 candidate 之后并没有获得足够的票数 并且此时集群中没有leader存在 这时candidate存在定时任务voteTimer
+        // 而其余follower存在定时任务electionTimer 他们的触发时间是相近的， 这时如果follower先发起预投票会通过(因为leader已经不存在了) 之后发起投票，而voteTimer还没有触发
+        // 原本的candidate此时的 voteId还是自身  在通过follower触发candidate的投票方法时 因为任期比它大 就会清除voteId  并且 能够从candidate中获得一票， 之后voteTimer触发
+        // 直接将voteId设置成自身  那么本轮的票数会多于总节点(就有可能出现一次选举中出现多个leader的情况)
+        // 如果voteTimer先触发就没有问题
+        // 如果voteTimer在 follower预投票成功 发起投票之间触发 那么此时他们的任期会相同就不会修改candidate的voteId了
+
         /**
-         * 对应follower 检测心跳的任务
+         * 对应follower 检测心跳的任务  这里的时间是不是应该比 voteTimer 略微长一点点
          */
         this.electionTimer = new RepeatedTimer("JRaft-ElectionTimer", this.options.getElectionTimeoutMs()) {
 
@@ -892,7 +907,7 @@ public class NodeImpl implements Node, RaftServerService {
             }
         };
         /**
-         * 定期生成快照
+         * 定期生成快照  TODO 这个先放一下
          */
         this.snapshotTimer = new RepeatedTimer("JRaft-SnapshotTimer", this.options.getSnapshotIntervalSecs() * 1000) {
 
@@ -902,7 +917,7 @@ public class NodeImpl implements Node, RaftServerService {
             }
         };
 
-        // 该对象内部包含了node 在所有时期对应的节点集群快照
+        // 该对象内部包含了node 在所有时期对应的节点集群快照  该对象会在初始化LogStorage时设置进去 这样读取到conf相关的信息时就会设置到configManager中
         this.configManager = new ConfigurationManager();
 
         // 当用户将任务设置到 node 中 就是通过disruptor 来接收的
@@ -913,7 +928,7 @@ public class NodeImpl implements Node, RaftServerService {
             .setProducerType(ProducerType.MULTI) //
             .setWaitStrategy(new BlockingWaitStrategy()) //
             .build();
-        // 设置事件处理器 该事件处理器 要求必须要本节点为leader 才能提交任务 用户提交任务的时候又是怎么知道哪个是leader呢???
+        // 设置事件处理器 该事件处理器 要求必须要本节点为leader 才能提交任务 用户配合routeTable 从一组node中找到leader后发送数据
         this.applyDisruptor.handleEventsWith(new LogEntryAndClosureHandler());
         this.applyDisruptor.setDefaultExceptionHandler(new LogExceptionHandler<Object>(getClass().getSimpleName()));
         // 返回任务队列用于添加任务
@@ -923,9 +938,10 @@ public class NodeImpl implements Node, RaftServerService {
                 new DisruptorMetricSet(this.applyQueue));
         }
 
-        // 初始化一个状态机 caller 对象 作为一个中介吧 相当于该对象内部有固定的逻辑 然后状态机是用户自行实现的
+        // 初始化一个状态机 caller 对象 作为一个门面类 相当于该对象内部有固定的逻辑 当用户提交任务后交由它处理之后才提交到用户定义的状态机中
         this.fsmCaller = new FSMCallerImpl();
-        // 初始化Log存储
+        // 初始化Log存储  核心逻辑是获取了firstLogIndex  以及生成diskId firstLogIndex 是作为快照的起点 那么应该就是在生成快照后更新firstLogIndex
+        // 而 diskId 是作为写入数据的起点
         if (!initLogStorage()) {
             LOG.error("Node {} initLogStorage failed.", getNodeId());
             return false;
@@ -951,6 +967,7 @@ public class NodeImpl implements Node, RaftServerService {
         }
 
         // 初始化快照存储对象  如果存在快照文件会初始化reader 对象 并触发一个 firstLoadSnapshot 任务 将快照中的数据设置到本地  具体实现由用户定义
+        // TODO 快照相关的都先放一下
         if (!initSnapshotStorage()) {
             LOG.error("Node {} initSnapshotStorage failed.", getNodeId());
             return false;
@@ -962,6 +979,7 @@ public class NodeImpl implements Node, RaftServerService {
             LOG.error("Node {} is initialized with inconsistent log, status={}.", getNodeId(), st);
             return false;
         }
+        // 当前集群新旧节点
         this.conf = new ConfigurationEntry();
         this.conf.setId(new LogId());
         // if have log using conf in log, else using conf in options
@@ -970,12 +988,13 @@ public class NodeImpl implements Node, RaftServerService {
             this.conf = this.logManager.checkAndSetConfiguration(this.conf);
         } else {
             // 代表是首次启动 jraft 而不是 重启 那么就使用一开始设置的配置组 也就是一开始用户确定的 集群中应该存在的node节点
+            // 也就是一开始集群内有哪些节点是由用户设置的
             this.conf.setConf(this.options.getInitialConf());
         }
 
         // TODO RPC service and ReplicatorGroup is in cycle dependent, refactor it
         this.replicatorGroup = new ReplicatorGroupImpl();
-        // 这里启动了一个 客户端对象
+        // 这里启动了一个 客户端对象 该客户端用于访问所有follower
         this.rpcService = new BoltRaftClientService(this.replicatorGroup);
         final ReplicatorGroupOptions rgOpts = new ReplicatorGroupOptions();
         // 心跳时间 要 远小于 检测心跳的时间 否则如果丢失一次心跳就开始选举是不合理的 可能是 延时等情况
@@ -1002,6 +1021,7 @@ public class NodeImpl implements Node, RaftServerService {
         // 只是初始化一些通用配置 当某个leader 成功选举后 开始添加 复制机对象这时 会从公共配置中抽取属性并初始化
         this.replicatorGroup.init(new NodeId(this.groupId, this.serverId), rgOpts);
 
+        // 初始化只读服务对象
         this.readOnlyService = new ReadOnlyServiceImpl();
         final ReadOnlyServiceOptions rosOpts = new ReadOnlyServiceOptions();
         rosOpts.setFsmCaller(this.fsmCaller);
@@ -1026,6 +1046,7 @@ public class NodeImpl implements Node, RaftServerService {
             LOG.debug("Node {} start snapshot timer, term={}.", getNodeId(), this.currTerm);
             // 开始启动快照任务 无论是 leader 还是 follower 都可以启动快照任务  是否需要安装快照是根据 当前的 偏移量决定的比如 长时间没有写入数据 偏移量没有发生变化也就不需要保存快照了
             // 而用户生成的快照文件地址是由 用户自己定义的 只是 在 writer 对象中保存了一个 元数据映射  然后读取快照时 用户能访问到reader 对象 也就知道要读取的文件地址了
+            // TODO 快照相关迟点看
             this.snapshotTimer.start();
         }
 
@@ -1035,7 +1056,6 @@ public class NodeImpl implements Node, RaftServerService {
             stepDown(this.currTerm, false, new Status());
         }
 
-        // 这里只是将自身添加到 nodeManager 中吗 而不是group 中所有node ???
         if (!NodeManager.getInstance().add(this)) {
             LOG.error("NodeManager add {} failed.", getNodeId());
             return false;
@@ -1096,7 +1116,6 @@ public class NodeImpl implements Node, RaftServerService {
         }
 
         // 确认本follower(现在整个组中都没有leader了) 最后有效的偏移量  如果当前有未刷盘的数据 无论是否写入超过半数 都会被强制刷盘
-        // 如果本节点写入了不存在的数据  投票的逻辑是怎样 需要确认一下 总之在这种情形下会强制刷盘未达到半数的数据
         final LogId lastLogId = this.logManager.getLastLogId(true);
 
         this.writeLock.lock();
@@ -1177,7 +1196,7 @@ public class NodeImpl implements Node, RaftServerService {
     // in writeLock
 
     /**
-     * 检验 leader 节点是否已经失去leaderShip
+     * 检验 是否需要降级
      * @param requestTerm  对应本次发起请求的leader 的任期
      * @param serverId
      */
@@ -1191,7 +1210,7 @@ public class NodeImpl implements Node, RaftServerService {
         } else if (this.state != State.STATE_FOLLOWER) {
             status.setError(RaftError.ENEWLEADER, "Candidate receives message from new leader with the same term.");
             stepDown(requestTerm, false, status);
-        // 本节点还是 follower 但是长时间没有收到leader 的心跳
+        // 针对任期一致 且本节点还是 follower 但是长时间没有收到leader 的心跳  也就是针对新节点或者是 某个leader上位 却没有连接到本节点
         } else if (this.leaderId.isEmpty()) {
             status.setError(RaftError.ENEWLEADER, "Follower receives message from new leader with the same term.");
             stepDown(requestTerm, false, status);
@@ -1225,12 +1244,14 @@ public class NodeImpl implements Node, RaftServerService {
             }
             LOG.debug("Node {} add replicator, term={}, peer={}.", getNodeId(), this.currTerm, peer);
             // 应该是在 stepDown 中将 复制机组重置了吧  这里向所有follower 发送探测信息(主要是告诉他们产生了新的leader)
+            // 其他节点发现任期落后就会调用 stepdown 更新任期 并关闭复制机
             if (!this.replicatorGroup.addReplicator(peer)) {
                 LOG.error("Fail to add replicator, peer={}.", peer);
             }
         }
         // init commit manager
-        // 初始化投票箱对象  只有初始化之后才可以使用 默认情况下 lastLogIndex = 0 而 firstLogIndex = 1 这样就说明投票箱从1开始使用
+        // 初始化投票箱对象  只有初始化之后才可以使用 默认情况下 lastLogIndex = 0
+        // 注意 在node.init 时还不会初始化 投票箱  必须要等待某个leader 被选举出来 因为某个节点如果不是leader 即使设置pendingIndex也是没有意义的
         this.ballotBox.resetPendingIndex(this.logManager.getLastLogIndex() + 1);
         // Register _conf_ctx to reject configuration changing before the first log
         // is committed.
@@ -1283,13 +1304,11 @@ public class NodeImpl implements Node, RaftServerService {
         // soft state in memory
         // 强制设置为 跟随者
         this.state = State.STATE_FOLLOWER;
-        // 当node 触发init 时会调用该方法
+        // 重置复制机组
         this.confCtx.reset();
         // 设置leader 更新时间   每个节点在启动后都会通过该方法设置一个初始的时间 然后根据 选举定时任务 判断是否开始选举
         updateLastLeaderTimestamp(Utils.monotonicMs());
         // 如果正在执行下载快照任务 要先进行打断 (就是 follower 从leader 拉取快照数据的动作)
-        // 这招可以用  就是通过 异步执行一个任务(future)   正常情况下 任务完成 才设置需要的数据 而如果调用cancel 实际上
-        // 主线程就无法得知任务究竟执行到哪步了 只能得到一个被关闭的结果 不会处在不确定的状态
         if (this.snapshotExecutor != null) {
             this.snapshotExecutor.interruptDownloadingSnapshots(term);
         }
@@ -1349,7 +1368,7 @@ public class NodeImpl implements Node, RaftServerService {
     }
 
     /**
-     * 每个 回调对象 对应一批待处理entry 如果node 发起下一次添加数据的请求 那么对应的entries会存放在另一个回调对象中
+     * node提交任务的回调  当成功触发时  往投票箱中增加一票 一但超过半数就可以触发用户的回调
      */
     class LeaderStableClosure extends LogManager.StableClosure {
 
@@ -1357,7 +1376,6 @@ public class NodeImpl implements Node, RaftServerService {
             super(entries);
         }
 
-        // 该回调意味着 将数据写入leader 成功 这样就在投票箱中增加了一票 之后只要半数节点添加成功就能在 任务回调中设置success
         @Override
         public void run(final Status status) {
             if (status.isOk()) {
@@ -1390,7 +1408,8 @@ public class NodeImpl implements Node, RaftServerService {
                 }
                 LOG.debug("Node {} can't apply, status={}.", getNodeId(), st);
                 for (int i = 0; i < size; i++) {
-                    // 使用指定status 触发回调函数   防止回调任务耗时过大 或者说 阻碍node本身的流程 使用额外的线程池去处理任务
+                    // 使用指定status 触发回调函数
+                    // 防止回调任务耗时过大 或者说 阻碍node本身的流程 使用额外的线程池去处理任务
                     Utils.runClosureInThread(tasks.get(i).done, st);
                 }
                 return;
@@ -1410,25 +1429,23 @@ public class NodeImpl implements Node, RaftServerService {
                     }
                     continue;
                 }
-                // 开始向投票箱提交任务  也就是 只有半数(以上) 成功提交任务才返回正常提交
-                // 因为集群内部可能发生变动 这里将变动前后的节点都传入了 看看它是如何应对的
-                // 因为一开始pendingIndex = 0 会导致无法添加任务 并为回调对象设置错误结果
+                // 投票箱对象会在 某个node 变成leader时 根据 LogManager.lastLogIndex+1 来初始化
                 if (!this.ballotBox.appendPendingTask(this.conf.getConf(),
                     this.conf.isStable() ? null : this.conf.getOldConf(), task.done)) {
                     Utils.runClosureInThread(task.done, new Status(RaftError.EINTERNAL, "Fail to append task."));
                     continue;
                 }
                 // set task entry info before adding to list.
-                // 为什么能确定数据一定是 data 类型呢 难道是根据执行的方法确定???
+                // 将任务添加到entries 中
                 task.entry.getId().setTerm(this.currTerm);
                 task.entry.setType(EnumOutter.EntryType.ENTRY_TYPE_DATA);
                 entries.add(task.entry);
             }
-            // 将数据添加到rocksDB 中纯异步框架的特点就是 回调环环相扣 也就是通过回调的叠加 在异步线程中做的处理越来越多 但是对主线程不影响
-            // 该方法还没有进行commited 只有当写入半数时 才会触发commited
-            // 每台机器都会commited 吗 怎么通知的呢 还有 有可能在commited 时失败吗
+
+            // 将一组任务写入到 LogManager 中 只有在任务队列的情况下才可能是批量任务 一般情况实际上还是单个任务
             this.logManager.appendEntries(entries, new LeaderStableClosure(entries));
             // update conf.first
+            // 处理完后尝试更新配置
             this.conf = this.logManager.checkAndSetConfiguration(this.conf);
         } finally {
             this.writeLock.unlock();
@@ -1635,6 +1652,7 @@ public class NodeImpl implements Node, RaftServerService {
 
     /**
      * 一般的操作是用户封装 一个 processor 内部维护 node 引用 然后发起请求 包装成task 并提交到node 上
+     * 注意node本身接受任务是单个单个处理的  在提交到caller时会封装成迭代器
      * @param task task to apply
      */
     @Override
@@ -1699,6 +1717,7 @@ public class NodeImpl implements Node, RaftServerService {
                 return RpcResponseFactory.newResponse(RaftError.EINVAL, "Node %s is not in active state, state %s.",
                     getNodeId(), this.state.name());
             }
+            // 解析想要成功 候选人的节点失败
             final PeerId candidateId = new PeerId();
             if (!candidateId.parse(request.getServerId())) {
                 LOG.warn("Node {} received PreVoteRequest from {} serverId bad format.", getNodeId(),
@@ -1709,29 +1728,33 @@ public class NodeImpl implements Node, RaftServerService {
             boolean granted = false;
             // noinspection ConstantConditions
             do {
-                // 这里发现该节点的leader 还是有效的 那么很可能打算只是发起投票的 节点与leader  的通信断了
-                // 如果本节点就是leader 的话  isCurrentLeaderValid 会是 false 就会进入到 } else if (request.getTerm() == this.currTerm + 1) {
-                // 这里应该是在找未收到leader 的节点有多少吧 达到指定值 才能真正进入投票节点 要排除掉某个节点通信失败的情况
+                // 如果在某一时刻某个follower在触发预投票时集群中存在2个leader 那么这里无法区分新旧 但是在leader向其他节点发起心跳的过程中旧的leader会自动下线 (同时leader自身的
+                // 检测任务也会帮助自己下线)
+                // 之前跟随旧的leader的节点又会发起预投票，这样就会与最新的leader构建连接
+
+                // 这里发现该节点的leader 还是有效的 那么很可能打算只是发起投票的节点与leader的通信断了
+                // 如果本节点就是leader 的话  isCurrentLeaderValid 会是 true leader在stepDownTimer中 (当丢失连接的follower少于半数时)会更新该值
+                // 这里应该是在找未收到leader心跳的节点有多少吧 达到指定值 才能真正进入投票节点 要排除掉某个节点通信失败的情况
                 if (this.leaderId != null && !this.leaderId.isEmpty() && isCurrentLeaderValid()) {
                     LOG.info(
                         "Node {} ignore PreVoteRequest from {}, term={}, currTerm={}, because the leader {}'s lease is still valid.",
                         getNodeId(), request.getServerId(), request.getTerm(), this.currTerm, this.leaderId);
                     break;
                 }
-                // 请求节点的任期 旧了 那么本机如果是leader 就要通过复制机往对应节点发送心跳 来让对方察觉到 新的leader
-                // 在投票环节 收到拉票请求的节点会将自身任期+1 且根据情况变更voteForId 但是leaderId 还没有变更
-                // 那么修改的地方应该就是通过复制机 让对端收到了相同任期的请求  再修改leaderId 为 发出请求的peer
+                // 当发生脑裂时 比如原先时 5，2 后来变成 2，2/3，3  当2，2中的leader因为自我检测下线时follower就会进行预投票，此时如果网络恢复就会进入这条分支 那么很有可能之前3，3的leader就没有
+                // 连接上该节点
+                // 一个新加入到集群的节点 也可以通过这里 加入到 集群中 当新加入的节点发现没有收到leader心跳发起预投票请求 而leader接受到后自动创建与该节点的连接
                 if (request.getTerm() < this.currTerm) {
                     LOG.info("Node {} ignore PreVoteRequest from {}, term={}, currTerm={}.", getNodeId(),
                         request.getServerId(), request.getTerm(), this.currTerm);
                     // A follower replicator may not be started when this node become leader, so we must check it.
                     checkReplicator(candidateId);
                     break;
-                // 这里是正常情况 因为在发起预投票时 client 还没有增加 任期 但是在请求体中发送的任期+1 也就超过同一时期其他节点的任期
+                // 这里是正常情况 因为在发起预投票时follower还没有增加任期 但是在请求体中发送的任期+1 也就超过同一时期其他节点的任期
                 } else if (request.getTerm() == this.currTerm + 1) {
                     // A follower replicator may not be started when this node become leader, so we must check it.
                     // check replicator state
-                    // 如果本节点就是leader 节点那么 通过复制机重新往client 发起探测请求  注意针对这种情况 appendEntry 2端的 任期是一样的
+                    // 如果本节点就是leader 那么有可能本届点竞选成功的时候创建复制机时关联到某个节点失败了 那么在这里重新创建连接
                     checkReplicator(candidateId);
                 }
                 doUnlock = false;
@@ -1744,6 +1767,8 @@ public class NodeImpl implements Node, RaftServerService {
                 this.writeLock.lock();
                 // 如果对端的数据比这个旧 那么肯定是 它通信断了 所以不能让它变成候选人
                 final LogId requestLastLogId = new LogId(request.getLastLogIndex(), request.getLastLogTerm());
+                // 注意偏移量相同也允许升级 如果某个leader 刚选举出来时给所有节点创建复制机连接 而某个机器设置失败了 之后leader在没有发送任何数据就下线了
+                // 然后发起预投票 那个节点还是允许成为候选人(此时所有节点偏移量相同)
                 granted = requestLastLogId.compareTo(lastLogId) >= 0;
 
                 LOG.info(
@@ -1753,7 +1778,7 @@ public class NodeImpl implements Node, RaftServerService {
             } while (false);
 
             return RequestVoteResponse.newBuilder() //
-                .setTerm(this.currTerm) //
+                .setTerm(this.currTerm) //  返回的是 follower 的任期
                 .setGranted(granted) //
                 .build();
         } finally {
@@ -1805,6 +1830,7 @@ public class NodeImpl implements Node, RaftServerService {
 
     /**
      * 处理拉票请求 在一个任期内 每个follower 应该只能给 一个候选人投票 这里要注意下是如何实现的
+     * 在预投票阶段是不会剔除 当前还在线的leader 的 而如果进入投票阶段 也就是当前候选人比一般的数据新(或相等) 同时 半数以上与leader 断开连接 那么现在leader 就需要让位了
      * @param request   data of the vote
      * @return
      */
@@ -1829,19 +1855,24 @@ public class NodeImpl implements Node, RaftServerService {
 
             // noinspection ConstantConditions
             do {
-                // check term 此时该follower 还在上一轮中   因为先变成候选人的少数节点 负责通知其他还在前一任期的节点 当前已经进入下一轮了 需要增加任期
+                // check term
+                // 一开始所有节点都在同一任期 最先通过预投票的节点会变成候选人 同时增加任期 这时发起投票请求他们的任期数已经加1 了
+                // 在预投票节点 每个节点没有票数限制 只要有请求的节点就可以根据条件是否满足确认是否发票 而在 投票节点每个节点只能给 候选人一票
+                // 收到任期相等的请求 可能就是某个候选人向另一个候选人拉票 或者 已经在本轮投过票的
                 if (request.getTerm() >= this.currTerm) {
                     LOG.info("Node {} received RequestVoteRequest from {}, term={}, currTerm={}.", getNodeId(),
                         request.getServerId(), request.getTerm(), this.currTerm);
-                    // increase current term, change state to follower  增加当前任期并变成follower
-                    // 也有可能是上个任期中的leader 节点 因为脑裂 生成了新的leader 这时旧的leader 要变成follower
+                    // increase current term, change state to follower
+                    // 如果当前集群存在旧的leader 那么让位
                     if (request.getTerm() > this.currTerm) {
+                        // 在这里会更新当前任期
                         stepDown(request.getTerm(), false, new Status(RaftError.EHIGHERTERMRESPONSE,
                             "Raft node receives higher term RequestVoteRequest."));
                     }
 
+                    // 代表产生脑裂 且多数节点又进入下一轮投票
                 } else {
-                    // ignore older term 如果因特殊原因导致收到了 旧的任期对应的数据 忽略
+                    // ignore older term 如果因特殊原因导致收到了 旧的任期对应的数据 忽略  同时在外层投票会失败
                     LOG.info("Node {} ignore RequestVoteRequest from {}, term={}, currTerm={}.", getNodeId(),
                         request.getServerId(), request.getTerm(), this.currTerm);
                     break;
@@ -1849,8 +1880,8 @@ public class NodeImpl implements Node, RaftServerService {
                 doUnlock = false;
                 this.writeLock.unlock();
 
-                // 刻意把幂等的操作移动到锁外
-                // 开始对比最新的数据了 该方法会强制将投票未超过半数的数据刷盘
+                // 刻意把耗时的操作移动到锁外
+                // 开始对比最新的数据了 该方法会强制刷盘数据 注意在leader 确认提交的情况就是已经有半数节点刷盘成功
                 final LogId lastLogId = this.logManager.getLastLogId(true);
 
                 doUnlock = true;
@@ -1861,10 +1892,9 @@ public class NodeImpl implements Node, RaftServerService {
                     break;
                 }
 
-                // 这里捋一下  首先成为leader的条件是 拿到超过半数的票  而 写入成功代表着写入半数的follower 这里某个候选人 要比一半的人数据新或相同 才能拿到票
-                // 也就是成为了 leader 那么 这些数据必然是有效的 提早的提交就没有问题(还没确认写入到半数节点)
-                // 如果候选人的数据 落后于 投票者 那么 还是拿不到票 即使刷盘成功 后面新的leader 出来  还是要根据新的leader对象定义的起点偏移量写入数据 此时应该会覆盖已经刷盘的数据吧
+                // 这里捋一下  首先成为leader的条件是 拿到超过半数的票  而 写入成功代表着写入(刷盘成功)半数的follower 这里某个候选人 要比一半的人数据新或相同 才能拿到票
                 final boolean logIsOk = new LogId(request.getLastLogIndex(), request.getLastLogTerm())
+                        // 这个比较是 优先比任期
                     .compareTo(lastLogId) >= 0;
 
                 // 通过 votedId == null 来保证一个follower 在某个任期中只能投给一个候选人
@@ -1972,6 +2002,7 @@ public class NodeImpl implements Node, RaftServerService {
 
     /**
      * server 接收从leader 传来的logEntry请求 到最后 还是委托给了node 来实现
+     * 如果leader 与某个节点的复制机创建失败了 之后受到 失败节点的预投票请求 会重新创建连接 也会发出该请求
      * @param request   data of the entries to append
      * @param done      callback  该回调内部嵌套了多层回调 包含 返回res给 client 的回调 和 client端处理res 的回调
      * @return
@@ -1981,8 +2012,7 @@ public class NodeImpl implements Node, RaftServerService {
         boolean doUnlock = true;
         final long startMs = Utils.monotonicMs();
         this.writeLock.lock();
-        // 这个实际上是 conf 的数量  request.getData.size() 才是LogEntry的数量
-        // 如果 不存在data 和 entries 代表本次是心跳请求
+        // 如果 不存在data 和 entries 代表本次是心跳/探测请求
         final int entriesCount = request.getEntriesCount();
         try {
             // 如果节点已经失活了 返回无法正常处理请求的结果
@@ -2002,7 +2032,7 @@ public class NodeImpl implements Node, RaftServerService {
                     request.getServerId());
             }
 
-            // Check stale term  数据已经过期了
+            // Check stale term  数据已经过期了  这里排除了 收到旧数据的情况
             if (request.getTerm() < this.currTerm) {
                 LOG.warn("Node {} ignore stale AppendEntriesRequest from {}, term={}, currTerm={}.", getNodeId(),
                     request.getServerId(), request.getTerm(), this.currTerm);
@@ -2012,14 +2042,18 @@ public class NodeImpl implements Node, RaftServerService {
                     .build();
             }
 
-            // Check term and state to step down  这里在检测 是否要更新本节点的角色 可能是从候选人变成跟随者 里面还有些细节待梳理
+            // Check term and state to step down  这里在检测 是否要更新本节点的角色
+            // 如果当前节点的任期比较旧 会将leaderId 更改成当前节点 同时任期也会更新 那么旧的leader 就无法写入了
+            // 那么 数据可能出现重复(旧的leader写入一部分数据) 此时怎么删除旧的数据???
             checkStepDown(request.getTerm(), serverId);
-            // 代表leader发生了变化 TODO 这段先不看 主要先理清 logEntry 是如何添加到 follower 上的
+            // 在checkStepDown中 如果当前节点没有leader 会被设置成serverId   如果当前节点的任期比请求参数的任期小 也会设置成 serverId
+            // 代表当前存在2个leader   只有当前任期 超过请求节点任期时才会进入这里
             if (!serverId.equals(this.leaderId)) {
                 LOG.error("Another peer {} declares that it is the leader at term {} which was occupied by leader {}.",
                     serverId, this.currTerm, this.leaderId);
                 // Increase the term by 1 and make both leaders step down to minimize the
                 // loss of split brain
+                // 这里更新了任期 当前leader 会无效 该节点之后会重新发起选举
                 stepDown(request.getTerm() + 1, false, new Status(RaftError.ELEADERCONFLICT,
                     "More than one leader in the same term."));
                 return AppendEntriesResponse.newBuilder() //
@@ -2040,14 +2074,11 @@ public class NodeImpl implements Node, RaftServerService {
                     this.groupId, this.serverId);
             }
 
-            // 获取上次写入 LogManager 的数据 以及对应的任期 这时数据可能还没持久化 而是仅仅写入了 leader的内存
+            // 当前leader 上次刷盘的偏移量  可能有另一个leader 也尝试提交数据 同时没有在半数成功刷盘 那么就会出现这种情况
             final long prevLogIndex = request.getPrevLogIndex();
             final long prevLogTerm = request.getPrevLogTerm();
-            // ** 关键点 如果从follower上拉取数据对应的任期不对 则可能该follower 有部分数据尚未写入吗???
-            // 没找到的情况返回0   2个任期会不匹配这时应该要同步阻塞安装快照???  用户是否必须要等 某个提交成功的数据 完全写入到所有节点才
-            // 允许提交下个任务 应该是不会采用这么慢的方式 那么这里返回失败请求会如何处理呢 又或者中途更换了leader 那么 虽然找到了数据但是
-            // 任期还是不匹配 如何处理???
             final long localPrevLogTerm = this.logManager.getTerm(prevLogIndex);
+            // 代表 这部分数据是由 旧的leader 写入的 那么这段数据应该要被覆盖  此时返回的是未刷盘的偏移量 如何处理这种情况???
             if (localPrevLogTerm != prevLogTerm) {
                 final long lastLogIndex = this.logManager.getLastLogIndex();
 
@@ -2160,7 +2191,7 @@ public class NodeImpl implements Node, RaftServerService {
             final FollowerStableClosure closure = new FollowerStableClosure(request, AppendEntriesResponse.newBuilder()
                     // 如果上面发现leader 发生了变化 currTerm 会更新成最新的任期
                 .setTerm(this.currTerm), this, done, this.currTerm);
-            // 同样只是写入到内存中异步刷盘 并在刷盘成功后触发回调
+            // 只有刷盘成功后才会触发回调  也就是 leader 提交数据 意味着在半数节点刷盘成功
             // 该方法在leader 中触发回调会修改投票箱的数据 并触发replicator 的复制机制
             this.logManager.appendEntries(entries, closure);
             // update configuration after _log_manager updated its memory status
@@ -2321,6 +2352,7 @@ public class NodeImpl implements Node, RaftServerService {
         // 存活节点数超过 半数 那么该leader 就还生效  应该是这样的 发生网络分区时 发现半数无法通信上 那么对应的半数在心跳时间内没有收到leader的req 会尝试进行选举，所以本节点就不应该作为
         // leader 了 自动变更角色  而只要有半数 还能收到请求  剩余的节点即使发起 prevote 也无法成功
         if (aliveCount >= peers.size() / 2 + 1) {
+            // 作为leader 会定时 更新为自己的lastLeaderTimestamp  也就是预投票阶段 找到leader 会被leader 否决
             updateLastLeaderTimestamp(startLease);
             return true;
         }
@@ -2359,7 +2391,6 @@ public class NodeImpl implements Node, RaftServerService {
             // 检测无效的节点
             checkDeadNodes(this.conf.getConf(), monotonicNowMs);
             if (!this.conf.getOldConf().isEmpty()) {
-                // 如果存在旧配置也检测一遍  2套配置会怎么样 存在2套leader吗???
                 checkDeadNodes(this.conf.getOldConf(), monotonicNowMs);
             }
         } finally {
@@ -2449,7 +2480,7 @@ public class NodeImpl implements Node, RaftServerService {
     }
 
     /**
-     * 当状态机终止时触发
+     * 当caller终止时触发
      */
     private void afterShutdown() {
         List<Closure> savedDoneList = null;
@@ -2607,7 +2638,8 @@ public class NodeImpl implements Node, RaftServerService {
                 return;
             }
             // check response term
-            // 代表对端的任期更高 将本节点角色修改(降级)
+            // 代表对端的任期更高 将本节点角色修改(降级)  也就是出现网络分区 分离的节点占多数 又诞生了一个新的候选人 这里(投票时是允许发到其他候选人上的 只不过不给票) 这样那片节点的任期就普遍比
+            // 这批的高
             if (response.getTerm() > this.currTerm) {
                 LOG.warn("Node {} received invalid RequestVoteResponse from {}, term={}, expect={}.", getNodeId(),
                     peerId, response.getTerm(), this.currTerm);
@@ -2683,17 +2715,17 @@ public class NodeImpl implements Node, RaftServerService {
                     getNodeId(), peerId, this.state);
                 return;
             }
-            // 在同一任期才有处理的必要
+            // 发出该请求的任期与现在一致才有意义
             if (term != this.currTerm) {
                 LOG.warn("Node {} received invalid PreVoteResponse from {}, term={}, currTerm={}.", getNodeId(),
                     peerId, term, this.currTerm);
                 return;
             }
-            // 代表对端已经进入下一轮选举了
+            // 代表对端已经进入下一轮选举了   可能发生了脑裂 后来恢复的时候 2边节点任期已经不同了 这时要做同步
             if (response.getTerm() > this.currTerm) {
                 LOG.warn("Node {} received invalid PreVoteResponse from {}, term {}, expect={}.", getNodeId(), peerId,
                     response.getTerm(), this.currTerm);
-                // follower 也可以调用该方法
+                // 这里同步任期 关闭复制机
                 stepDown(response.getTerm(), false, new Status(RaftError.EHIGHERTERMRESPONSE,
                     "Raft node receives higher term pre_vote_response."));
                 return;
@@ -2755,7 +2787,8 @@ public class NodeImpl implements Node, RaftServerService {
 
     /**
      * 预投票  in writeLock
-     * 当某个follower在超过检测时间 还没有收到leader 的新数据时触发
+     * 当某个follower在超过检测时间 还没有收到leader 的新数据时触发  因为单节点没收到 leader 心跳不一定就是leader宕机了 需要超过半数确认没收到消息
+     * 也就是最先超时的节点并不会变成候选节点
      */
     private void preVote() {
         long oldTerm;
@@ -2769,31 +2802,35 @@ public class NodeImpl implements Node, RaftServerService {
                 return;
             }
             // 如果该节点不属于新的配置中 也就是该节点从集群中被剔除了 不具备投票的条件  这里针对的是conf 发生变化
-            // TODO 之后要考虑有关这里的逻辑
             if (!this.conf.contains(this.serverId)) {
                 LOG.warn("Node {} can't do preVote as it is not in conf <{}>.", getNodeId(), this.conf);
                 return;
             }
+            // 记录当前的任期
             oldTerm = this.currTerm;
         } finally {
             this.writeLock.unlock();
         }
 
         // flush 代表本次要将之前未刷盘的数据全部刷盘 且返回最后一个刷盘成功的数据的 LogId
+        // 如果leader未写入半数(未提交) 时发生了宕机 那么 follower可能就会包含实际上leader未成功提交的数据  不过在raft论文中提到了这点(也就是这种情况是符合raft 的)
+        // 如果这个携带新数据的 follower 最后变成了leader 那么 这些之前未提交的数据会写入到follower 吗 又是从哪里开始写入???
         final LogId lastLogId = this.logManager.getLastLogId(true);
 
         boolean doUnlock = true;
         this.writeLock.lock();
         try {
             // pre_vote need defense ABA after unlock&writeLock
-            // 在等待刷盘的时候 已经收到了其他leader的请求 同时更新了 任期 那么就不需要发起请求了
+            // 在等待刷盘的时候 已经收到了其他节点发起的投票请求 (当节点从follower 变成候选人时 会更新预投票阶段接触到的所有节点的任期)
+            // 此时就没有必要选举自身了
+            // 这样减少了滞后的节点 变成候选人的可能性
             if (oldTerm != this.currTerm) {
                 LOG.warn("Node {} raise term {} when get lastLogId.", getNodeId(), this.currTerm);
                 return;
             }
             // 初始化一个投票上下文
             this.prevVoteCtx.init(this.conf.getConf(), this.conf.isStable() ? null : this.conf.getOldConf());
-            // 获取所有节点
+            // 获取所有节点 (包含所有新老节点 无论新老配置 只要某组满足条件 就认为本次预投票通过)
             for (final PeerId peer : this.conf.listPeers()) {
                 // 跳过本节点
                 if (peer.equals(this.serverId)) {
@@ -2812,6 +2849,10 @@ public class NodeImpl implements Node, RaftServerService {
                     .setServerId(this.serverId.toString()) //
                     .setPeerId(peer.toString()) // 代表其他follower的信息
                     .setTerm(this.currTerm + 1) // next term 注意这里选择的任期 是 下一次的
+                        // 记录当前最新写入的位置 用来判断数据新旧 这样才能决定是否要拒绝本次预投票请求   (也就是预投票阶段其他节点不仅需要与leader 断开连接 且数据必须比半数要新)
+                        // 实际上比半数新这个环节 就是确保 当前follower 的数据都是提交成功的 试想如果在与leader断开连接后 强制刷盘了leader 未提交的数据 那么 能够比半数新
+                        // 也就是leader 本身也能写入成功 而如果最后leader写入的是某个本身就无法写入成功的数据 比如发生了脑裂 任期还是旧的 那么在prevote阶段 还是被半数节点否决 无法
+                        // 变成候选人
                     .setLastLogIndex(lastLogId.getIndex()) //
                     .setLastLogTerm(lastLogId.getTerm()) //
                     .build();

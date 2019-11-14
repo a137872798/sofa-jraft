@@ -235,9 +235,9 @@ public class RocksDBLogStorage implements LogStorage {
      * @throws RocksDBException
      */
     private boolean initAndLoad(final ConfigurationManager confManager) throws RocksDBException {
-        // 代表firstLogIndex 还没有被设置
+        // 代表firstLogIndex 还没有被设置  如果本地文件中包含了firstLogIndex 的元数据信息 就更新index
         this.hasLoadFirstLogIndex = false;
-        // 首个日志文件下标初始值为 1  也可以看作是 还没有读取firstIndex
+        // 首个日志文件下标初始值为 1
         this.firstLogIndex = 1;
         final List<ColumnFamilyDescriptor> columnFamilyDescriptors = new ArrayList<>();
         // 创建列族配置
@@ -302,7 +302,7 @@ public class RocksDBLogStorage implements LogStorage {
                     if (Arrays.equals(FIRST_LOG_IDX_KEY, ks)) {
                         // 更新firstLogIndex  同时更新 hasSetFirstLogIndex 标识
                         setFirstLogIndex(Bits.getLong(bs, 0));
-                        // 丢弃之前的数据
+                        // ***丢弃之前的数据
                         truncatePrefixInBackground(0L, this.firstLogIndex);
                     } else {
                         LOG.warn("Unknown entry in configuration storage key={}, value={}.", BytesUtil.toHex(ks),
@@ -328,6 +328,7 @@ public class RocksDBLogStorage implements LogStorage {
             final byte[] vs = new byte[8];
             Bits.putLong(vs, 0, firstLogIndex);
             checkState();
+            // 注意这里保存的路径跟 数据路径不一致  通过额外维护一份元数据 以空间换时间
             this.db.put(this.confHandle, this.writeOptions, FIRST_LOG_IDX_KEY, vs);
             return true;
         } catch (final RocksDBException e) {
@@ -452,6 +453,7 @@ public class RocksDBLogStorage implements LogStorage {
             if (it.isValid()) {
                 // 获取偏移量
                 final long ret = Bits.getLong(it.key(), 0);
+                // 保存firstLogIndex
                 saveFirstLogIndex(ret);
                 setFirstLogIndex(ret);
                 return ret;
