@@ -156,6 +156,7 @@ public class FSMCallerImpl implements FSMCaller {
      */
     private class ApplyTaskHandler implements EventHandler<ApplyTask> {
         // max committed index in current batch, reset to -1 every batch
+        // 本批提交的最大偏移量
         private long maxCommittedIndex = -1;
 
         /**
@@ -203,7 +204,7 @@ public class FSMCallerImpl implements FSMCaller {
      */
     private volatile TaskType currTask;
     /**
-     * 当前正在处理的下标
+     * 代表在某个 IteratorImpl 中正在处理的回调对应的 entry写入的下标
      */
     private final AtomicLong applyingIndex;
     /**
@@ -491,14 +492,14 @@ public class FSMCallerImpl implements FSMCaller {
      * 处理任务
      *
      * @param task
-     * @param maxCommittedIndex   当前的最大提交偏移量  相当于是 disruptor 的全局偏移量  每次执行了提交任务后 该值会变成-1
+     * @param maxCommittedIndex   以批为单位 某次批量任务执行时的最大偏移量 当执行完后 偏移量会重置成0
+     *                            同一批的意思是前面endofBatch 都是false
      * @param endOfBatch
      * @return
      */
     @SuppressWarnings("ConstantConditions")
     private long runApplyTask(final ApplyTask task, long maxCommittedIndex, final boolean endOfBatch) {
         CountDownLatch shutdown = null;
-        // 处理提交任务  这个提交任务是指 将数据写入到 其他follower 写入半数成功也就是 提交成功 在这之前 LogEntry 已经保存到 LogManager 中了
         if (task.type == TaskType.COMMITTED) {
             // 如果任务提交的偏移量超过了 目标偏移量 就更新  注意这里并没有直接处理 任务 看来commit是在其他的某个时刻触发的
             // 同时 每次执行完提交任务后 maxCommittedIndex 都会变成-1
@@ -589,7 +590,7 @@ public class FSMCallerImpl implements FSMCaller {
             }
         }
         try {
-            // 代表是该批数据的末尾 且 需要提交数据
+            // 代表是该批数据的末尾 且 需要提交数据  进行批量提交
             if (endOfBatch && maxCommittedIndex >= 0) {
                 this.currTask = TaskType.COMMITTED;
                 // 提交数据后将 maxCommittedIndex 重置
@@ -635,8 +636,7 @@ public class FSMCallerImpl implements FSMCaller {
     }
 
     /**
-     * 提交数据 直到指定的偏移量
-     * 可能会是一组数据 被 commit 因为 只有要处理的事件涉及到读操作 才会真正将数据写入
+     * 当用户提交任务 并成功刷盘到半数的节点时触发
      *
      * @param committedIndex
      */
@@ -644,7 +644,7 @@ public class FSMCallerImpl implements FSMCaller {
         if (!this.error.getStatus().isOk()) {
             return;
         }
-        // 获取上次写入的 index  TODO  首先该节点应该是leader 节点 可能会接受到 index 更小的数据吗???
+        // 上次commited 的下标
         final long lastAppliedIndex = this.lastAppliedIndex.get();
         // We can tolerate the disorder of committed_index
         if (lastAppliedIndex >= committedIndex) {
@@ -654,9 +654,8 @@ public class FSMCallerImpl implements FSMCaller {
         try {
             final List<Closure> closures = new ArrayList<>();
             final List<TaskClosure> taskClosures = new ArrayList<>();
-            // 从任务队列中 取出截取到目标偏移量的所有任务    返回原先的偏移量
-            // 看来每个任务的 回调对象都被存放到closureQueue 中  这样 index 就能够对应起来 commitedIndex 每次应该是递增1
-            // 对应到 closureQueue 每次 index 增加1  这里是将 到该偏移量为止的所有回调对象都取出来 并返回首个未被处理的偏移量
+            // 从用户的回调队列中取出对应的回调对象 并触发
+            // 返回的是 本次这批回调中最早的回调对应的entry刷盘的下标
             final long firstClosureIndex = this.closureQueue.popClosureUntil(committedIndex, closures, taskClosures);
 
             // Calls TaskClosure#onCommitted if necessary
@@ -664,7 +663,8 @@ public class FSMCallerImpl implements FSMCaller {
             onTaskCommitted(taskClosures);
 
             Requires.requireTrue(firstClosureIndex >= 0, "Invalid firstClosureIndex");
-            // 将 List<Closure> 包装成迭代器对象  lastAppliedIndex 是当前写入LogStorage 的下标
+            // 将 List<Closure> 包装成迭代器对象  即使数据已经成功刷盘到半数的node 如果leader刷盘失败了 那么会在迭代器对象中
+            // 设置一个 error 这样调用 hasNext时会抛出异常
             final IteratorImpl iterImpl = new IteratorImpl(this.fsm, this.logManager, closures, firstClosureIndex,
                     lastAppliedIndex, committedIndex, this.applyingIndex);
             // 等同 hasNext()
@@ -698,7 +698,7 @@ public class FSMCallerImpl implements FSMCaller {
                 doApplyTasks(iterImpl);
             }
 
-            // 代表 committedIndex 前对应的某个实体不存在
+            // 代表 数据没有刷盘到leader中 很可能只是成功刷盘到了半数以上的follower中
             if (iterImpl.hasError()) {
                 setError(iterImpl.getError());
                 // 触发剩下任务对应的回调（以失败方式）

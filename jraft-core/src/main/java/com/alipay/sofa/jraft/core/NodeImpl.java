@@ -1349,7 +1349,7 @@ public class NodeImpl implements Node, RaftServerService {
     }
 
     /**
-     * 每个 回调对象 对应一批待处理entry 如果node 发起下一次添加数据的请求 那么对应的entries会存放在另一个回调对象中
+     * leader 节点数据刷盘成功
      */
     class LeaderStableClosure extends LogManager.StableClosure {
 
@@ -1357,7 +1357,7 @@ public class NodeImpl implements Node, RaftServerService {
             super(entries);
         }
 
-        // 该回调意味着 将数据写入leader 成功 这样就在投票箱中增加了一票 之后只要半数节点添加成功就能在 任务回调中设置success
+        // 该回调意味着 将数据写入leader 成功 这样就在投票箱中增加了一票 之后只要半数节点添加成功就能在 任务回调(用户的)中设置success
         @Override
         public void run(final Status status) {
             if (status.isOk()) {
@@ -1413,6 +1413,9 @@ public class NodeImpl implements Node, RaftServerService {
                 // 开始向投票箱提交任务  也就是 只有半数(以上) 成功提交任务才返回正常提交
                 // 因为集群内部可能发生变动 这里将变动前后的节点都传入了 看看它是如何应对的
                 // 因为一开始pendingIndex = 0 会导致无法添加任务 并为回调对象设置错误结果
+
+                // 注意 回调被设置到了投票箱中 也就是用户的回调必须要成功刷盘半数以上的节点才算成功
+                // 也就是用户的请求是按照写入投票箱的顺序来执行的
                 if (!this.ballotBox.appendPendingTask(this.conf.getConf(),
                     this.conf.isStable() ? null : this.conf.getOldConf(), task.done)) {
                     Utils.runClosureInThread(task.done, new Status(RaftError.EINTERNAL, "Fail to append task."));
@@ -1424,9 +1427,7 @@ public class NodeImpl implements Node, RaftServerService {
                 task.entry.setType(EnumOutter.EntryType.ENTRY_TYPE_DATA);
                 entries.add(task.entry);
             }
-            // 将数据添加到rocksDB 中纯异步框架的特点就是 回调环环相扣 也就是通过回调的叠加 在异步线程中做的处理越来越多 但是对主线程不影响
-            // 该方法还没有进行commited 只有当写入半数时 才会触发commited
-            // 每台机器都会commited 吗 怎么通知的呢 还有 有可能在commited 时失败吗
+            // 这里传入的回调对象是在投票箱中增加票数的回调 而不是用户的回调 用户回调只有在成功刷盘半数的节点后才触发
             this.logManager.appendEntries(entries, new LeaderStableClosure(entries));
             // update conf.first
             this.conf = this.logManager.checkAndSetConfiguration(this.conf);
@@ -2264,7 +2265,7 @@ public class NodeImpl implements Node, RaftServerService {
      * @param monotonicNowMs
      */
     private void checkDeadNodes(final Configuration conf, final long monotonicNowMs) {
-        // 获取当前集群内所有的节点
+        // 获取当前集群内所有的节点  当调用  addPeer时 某个节点就会添加到conf中 这样不需要等到节点触发预投票就能收到leader 的心跳
         final List<PeerId> peers = conf.listPeers();
         final Configuration deadNodes = new Configuration();
         // 检测成功直接返回  检测失败代表本leader 与半数以上的节点无法通信 那么需要对角色进行降级
@@ -3076,6 +3077,11 @@ public class NodeImpl implements Node, RaftServerService {
         }
     }
 
+    /**
+     * 为该group 增加一个新的节点
+     * @param peer peer to add
+     * @param done callback
+     */
     @Override
     public void addPeer(final PeerId peer, final Closure done) {
         Requires.requireNonNull(peer, "Null peer");

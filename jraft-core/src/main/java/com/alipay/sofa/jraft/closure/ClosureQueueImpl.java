@@ -47,7 +47,7 @@ public class ClosureQueueImpl implements ClosureQueue {
      */
     private final Lock          lock;
     /**
-     * 维护了首个下标
+     * 代表首个回调对象对应的  firstLogIndex
      */
     private long                firstIndex;
     /**
@@ -156,6 +156,7 @@ public class ClosureQueueImpl implements ClosureQueue {
                     queueSize);
                 return -1;
             }
+            // firstIndex 代表第一个回调对应的 entry 刷盘的下标 这里endIndex 与它的差值就代表写入了多少entry 这里就需要被caller取出来并执行
             final long outFirstIndex = this.firstIndex;
             for (long i = outFirstIndex; i <= endIndex; i++) {
                 final Closure closure = this.queue.pollFirst();

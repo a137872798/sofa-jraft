@@ -118,7 +118,6 @@ public class IteratorImpl {
 
     /**
      * Move to next
-     * 该对应一般是用户传入到状态机中使用的
      */
     public void next() {
         this.currEntry = null; //release current entry
@@ -127,10 +126,11 @@ public class IteratorImpl {
             ++this.currentIndex;
             if (this.currentIndex <= this.committedIndex) {
                 try {
-                    // 该迭代器的数据一开始就是存放在 logManager 中的??? 那么是什么时候设置进去的
+                    // 能触发用户回调也就代表已经刷盘到半数的LogManager中 这里取出数据 (如果数据刷盘到leader失败 而其他节点成功是有可能的)
+                    // 这时用户要怎么处理了??? 因为针对整个组来说是刷盘成功了啊
                     this.currEntry = this.logManager.getEntry(this.currentIndex);
+                    // 设置异常信息 当尝试调用hasNext 时 会抛出异常
                     if (this.currEntry == null) {
-                        // 初始化error 属性 这样当调用迭代器的 hasNext 时会返回false
                         getOrCreateError().setType(EnumOutter.ErrorType.ERROR_TYPE_LOG);
                         getOrCreateError().getStatus().setError(-1,
                             "Fail to get entry at index=%d while committed_index=%d", this.currentIndex,
@@ -141,7 +141,7 @@ public class IteratorImpl {
                     getOrCreateError().setType(EnumOutter.ErrorType.ERROR_TYPE_LOG);
                     getOrCreateError().getStatus().setError(RaftError.EINVAL, e.getMessage());
                 }
-                // 更新当前处理的偏移量
+                // 更新当前处理中的偏移量
                 this.applyingIndex.set(this.currentIndex);
             }
         }
