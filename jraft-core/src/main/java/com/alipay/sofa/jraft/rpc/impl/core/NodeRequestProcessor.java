@@ -52,7 +52,7 @@ public abstract class NodeRequestProcessor<T extends Message> extends RpcRequest
     /**
      * 处理请求
      * @param request
-     * @param done 该对象内部包含了 bizContext(包含通讯2端的信息, asyncContext具备将res返回给client的能力)
+     * @param done 该回调是用于 返回res 的
      * @return
      */
     @Override

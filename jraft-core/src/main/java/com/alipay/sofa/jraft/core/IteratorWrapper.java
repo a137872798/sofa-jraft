@@ -40,7 +40,7 @@ public class IteratorWrapper implements Iterator {
     }
 
     /**
-     * 代表只处理 data 类型数据
+     * 代表只处理 data 类型数据  因为该包装器是针对 data类型的
      * @return
      */
     @Override

@@ -126,10 +126,11 @@ public class IteratorImpl {
             ++this.currentIndex;
             if (this.currentIndex <= this.committedIndex) {
                 try {
-                    // 能触发用户回调也就代表已经刷盘到半数的LogManager中 这里取出数据 (如果数据刷盘到leader失败 而其他节点成功是有可能的)
-                    // 这时用户要怎么处理了??? 因为针对整个组来说是刷盘成功了啊
+                    // 能触发用户回调也就代表已经刷盘到半数的节点中  这里要注意 一开始 在刷盘任务前 是写入到一个缓存中的 而getEntry是优先从缓存中获取
+                    // 这里就能避免一种情况  （写入到半数以上的节点成功，但是内部不包含leader自身。这时对于业务来讲本次写入是成功的，不应该因为leader节点刷盘失败
+                    // 而认定此时请求失败 ，所以下面的getEntry同时能够从缓存中获取） 那么下一步要考虑的就是生成快照时如果出现异常怎么处理
                     this.currEntry = this.logManager.getEntry(this.currentIndex);
-                    // 设置异常信息 当尝试调用hasNext 时 会抛出异常
+                    // 既然能够从缓存中获取也就不会触发这段代码 logManager仍然视为可用
                     if (this.currEntry == null) {
                         getOrCreateError().setType(EnumOutter.ErrorType.ERROR_TYPE_LOG);
                         getOrCreateError().getStatus().setError(-1,
@@ -159,6 +160,9 @@ public class IteratorImpl {
         return this.closures.get((int) (this.currentIndex - this.firstClosureIndex));
     }
 
+    /**
+     * 扫描未处理的回调 并以异常方式触发
+     */
     protected void runTheRestClosureWithError() {
         for (long i = Math.max(this.currentIndex, this.firstClosureIndex); i <= this.committedIndex; i++) {
             final Closure done = this.closures.get((int) (i - this.firstClosureIndex));

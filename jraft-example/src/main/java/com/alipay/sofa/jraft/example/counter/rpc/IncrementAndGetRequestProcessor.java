@@ -60,21 +60,23 @@ public class IncrementAndGetRequestProcessor extends AsyncUserProcessor<Incremen
     @Override
     public void handleRequest(final BizContext bizCtx, final AsyncContext asyncCtx, final IncrementAndGetRequest request) {
         // 首先要检测 leader是否已经失效 或者该节点本身就不是leader  因为通过routeTable 获取到的leader 可能已经失效了 而follower 没有察觉 这时当请求已经进入到node 时 需要再判断一次
-        if (!this.counterServer.getFsm().isLeader()) {
-            // 将本次失败的leaderId 返回
-            asyncCtx.sendResponse(this.counterServer.redirect());
-            return;
-        }
+//        if (!this.counterServer.getFsm().isLeader()) {
+//            // 将本次失败的leaderId 返回
+//            asyncCtx.sendResponse(this.counterServer.redirect());
+//            return;
+//        }
 
         // 用户每次发起的请求 应该是无序的 而状态机会根据收到的顺序进行处理
         final ValueResponse response = new ValueResponse();
-        // 创建一个回调对象  回调对象也需要用户自定义
+        // 创建一个回调对象  回调对象也需要用户自定义  注意 在 底层的remoting 框架 client发送请求本身就是有超时机制的 如果在指定时间内没有写入到半数以上节点自动抛出超时异常
         final IncrementAndAddClosure closure = new IncrementAndAddClosure(counterServer, request, response,
                 status -> {
+                    // 注意这里写入是失败的   即使任务在半数节点刷盘成功 但是在 leader 写入失败 还是会返回失败  如果没有写入到半数 又是以什么方式通知失败 超时机制吗
                     if (!status.isOk()) {
                         response.setErrorMsg(status.getErrorMsg());
                         response.setSuccess(false);
                     }
+                    // 当用户写入成功时 返回结果
                     asyncCtx.sendResponse(response);
                 });
 

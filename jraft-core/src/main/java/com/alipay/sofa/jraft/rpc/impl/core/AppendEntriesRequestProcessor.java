@@ -223,7 +223,7 @@ public class AppendEntriesRequestProcessor extends NodeRequestProcessor<AppendEn
                         getAndIncrementNextRequiredSequence(groupId, peerId, connection);
                     }
                 }
-            // 等待响应的数据过多时如何处理
+            // 当堆积的响应过多时 为了不拖慢整个通讯链 选择直接重建conn 而对端会触发超时异常
             } else {
                 LOG.warn("Closed connection to peer {}/{}, because of too many pending responses, queued={}, max={}",
                     ctx.groupId, peerId, respQueue.size(), ctx.maxPendingResponses);
@@ -446,7 +446,7 @@ public class AppendEntriesRequestProcessor extends NodeRequestProcessor<AppendEn
      * 处理请求最后会转发到该方法
      * @param service  本server   实际上是一个node对象
      * @param request
-     * @param done
+     * @param done  内部封装了返回res 到client的能力
      * @return
      */
     @Override
@@ -462,10 +462,9 @@ public class AppendEntriesRequestProcessor extends NodeRequestProcessor<AppendEn
             final String groupId = request.getGroupId();
             final String peerId = request.getPeerId();
 
-            // 如果某次悬置的 res 过多requestContext 会被删除 (同时 connection 也会被关闭)这里又会重新创建 那么 那些被丢弃的 req 会怎么样呢??? 会有res 通知到client吗???
-            // 每个请求应该是有个时限的超过了自动返回超时异常
+            // 如果某次悬置的 res 过多requestContext 会被删除 (同时 connection 也会被关闭)这里又会重新创建 对端会收到超时异常
             final int reqSequence = getAndIncrementSequence(groupId, peerId, done.getBizContext().getConnection());
-            // 使用node 处理添加LogEntry的任务 这里将 回调又包装了一层
+            // 这里又做了一层封装
             final Message response = service.handleAppendEntriesRequest(request, new SequenceRpcRequestClosure(done,
                 reqSequence, groupId, peerId));
             // 如果返回了 res 代表中途发生了异常情况 且不会被回调处理  需要手动发送结果

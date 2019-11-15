@@ -503,7 +503,7 @@ public class FSMCallerImpl implements FSMCaller {
     private long runApplyTask(final ApplyTask task, long maxCommittedIndex, final boolean endOfBatch) {
         CountDownLatch shutdown = null;
         if (task.type == TaskType.COMMITTED) {
-            // 如果任务提交的偏移量超过了 目标偏移量 就更新  注意这里并没有直接处理 任务 看来commit是在其他的某个时刻触发的
+            // 如果任务提交的偏移量超过了 目标偏移量 就更新  注意这里并没有直接处理任务 看来commit是在其他的某个时刻触发的
             // 同时 每次执行完提交任务后 maxCommittedIndex 都会变成-1
             if (task.committedIndex > maxCommittedIndex) {
                 maxCommittedIndex = task.committedIndex;
@@ -669,17 +669,22 @@ public class FSMCallerImpl implements FSMCaller {
             // 设置一个 error 这样调用 hasNext时会抛出异常
             final IteratorImpl iterImpl = new IteratorImpl(this.fsm, this.logManager, closures, firstClosureIndex,
                     lastAppliedIndex, committedIndex, this.applyingIndex);
-            // 等同 hasNext()
+            // 等同 hasNext()  如果 disruptor 没有发生数据堆积  用户的任务是单个单个处理的 那么 每次某单个数据BallotBox 处理成功后 会触发一次doCommitted 这时触发用户commit回调
+            // 的 Iterator内部只有一个entry
+            // 如果在用户提交任务时 disruptor 发生了堆积 那么每次触发caller的onCommited 的就是一组回调
+            // 这里也会分多次触发用户自定义的状态机的 onApply  如果用户回调中 直接调用了 next 那么这里的 isGood 就不会继续触发了
+            // 因为用户获取到的iterator只能处理data 类型 所以不会影响到config 的处理
+            // 如果一组回调又有 data 又有config
             while (iterImpl.isGood()) {
-                // 每次调用 next LogEntry 会使得 lastAppliedIndex 向 commitedIndex 靠拢
+                // 先看正常处理的流程
+
                 final LogEntry logEntry = iterImpl.entry();
-                // LogEntry 分为 data 和configuration
+                // LogEntry 分为 data 和configuration  这里根据数据的不同触发对应的回调
                 if (logEntry.getType() != EnumOutter.EntryType.ENTRY_TYPE_DATA) {
                     if (logEntry.getType() == EnumOutter.EntryType.ENTRY_TYPE_CONFIGURATION) {
-                        // 这样就代表 集群配置发生了变化  才有提交的必要
+                        // 这样就代表 集群配置发生了变化  才有提交的必要  注意是用新的配置触发回调  由用户自定义的业务状态机实现 默认就是打印日志
                         if (logEntry.getOldPeers() != null && !logEntry.getOldPeers().isEmpty()) {
                             // Joint stage is not supposed to be noticeable by end users.
-                            // 提交配置信息  这个提交好像是由 leader 发往同个raft组中其他节点
                             this.fsm.onConfigurationCommitted(new Configuration(iterImpl.entry().getPeers()));
                         }
                     }
@@ -700,23 +705,22 @@ public class FSMCallerImpl implements FSMCaller {
                 doApplyTasks(iterImpl);
             }
 
-            // 代表 数据没有刷盘到leader中 很可能只是成功刷盘到了半数以上的follower中
             if (iterImpl.hasError()) {
+                // 这里只处理 ERROR_TYPE_NODE 的异常
                 setError(iterImpl.getError());
                 // 触发剩下任务对应的回调（以失败方式）
                 iterImpl.runTheRestClosureWithError();
             }
-            // 最后一次调用next 会使得 currentindex 超过 commitindex 所以这里要-1
             final long lastIndex = iterImpl.getIndex() - 1;
             // 获取对应数据的任期
             final long lastTerm = this.logManager.getTerm(lastIndex);
             final LogId lastAppliedId = new LogId(lastIndex, lastTerm);
-            // 更新当前确认已提交的index 和任期
+            // 更新当前已处理的用户回调的下标
             this.lastAppliedIndex.set(committedIndex);
             this.lastAppliedTerm = lastTerm;
-            // 设置最后提交的LogId
+            // 设置用户回调处理的下标
             this.logManager.setAppliedId(lastAppliedId);
-            // 触发回调
+            // 触发回调 (实际上就是触发只读服务)
             notifyLastAppliedIndexUpdated(committedIndex);
         } finally {
             this.nodeMetrics.recordLatency("fsm-commit", Utils.monotonicMs() - startMs);
@@ -741,6 +745,7 @@ public class FSMCallerImpl implements FSMCaller {
      * @param iterImpl
      */
     private void doApplyTasks(final IteratorImpl iterImpl) {
+        // 直接访问iteratorImpl 比较麻烦 这个wrapper 包装了访问迭代器的逻辑
         final IteratorWrapper iter = new IteratorWrapper(iterImpl);
         final long startApplyMs = Utils.monotonicMs();
         // 获取当前 LogEntry 对应下标

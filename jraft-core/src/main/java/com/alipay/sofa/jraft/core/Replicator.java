@@ -201,7 +201,7 @@ public class Replicator implements ThreadId.OnError {
         super();
         this.options = replicatorOptions;
         this.nodeMetrics = this.options.getNode().getNodeMetrics();
-        // 只有当成功将数据发送到 server 且从对端返回了数据 并正常处理后 nextIndex 才会增加 本次交互才算有效的
+        // 这里是leader 的起始偏移量 如果有些follower的偏移量滞后 那么怎么知道从哪里开始复制呢 ???
         this.nextIndex = this.options.getLogManager().getLastLogIndex() + 1;
         // 提供了一些快捷使用定时器的api
         this.timerManager = replicatorOptions.getTimerManager();
@@ -574,16 +574,20 @@ public class Replicator implements ThreadId.OnError {
      */
     long getNextSendIndex() {
         // Fast path
+        // nextIndex 作为应该从哪里开始复制数据的下标
+        // 并且只有在刷盘成功时才能更新 所以只要数据正在发送中就代表这个值是不准的
         if (this.inflights.isEmpty()) {
-            // nextIndex 应该是一个全局递增的标识  从这里看出 nextIndex 记录的是不包含 在inflights 数据的偏移量
+            //
             return this.nextIndex;
         }
-        // Too many in-flight requests.  超过了最多允许等待的请求数
+        // Too many in-flight requests.  大量数据正在发送中 暂时不允许发送新数据
         if (this.inflights.size() > this.raftOptions.getMaxReplicatorInflightMsgs()) {
             return -1L;
         }
         // Last request should be a AppendEntries request and has some entries.
-        // 待发送的数据长读要计算在内
+        // 获取最后一次飞行中的请求 并且它是发送数据的  rpcInFly 只针对 发送数据 和探测请求 心跳不算在内
+        // 如果 rpcInFly 是探测请求这里会返回-1 因为发送探测请求就代表对端的信息不确定  这样不允许写入数据
+        // 不过应该只有初始化的时候会发送探测请求吧 难道还有其他时候吗???
         if (this.rpcInFly != null && this.rpcInFly.isSendingLogEntries()) {
             return this.rpcInFly.startIndex + this.rpcInFly.count;
         }
@@ -810,9 +814,11 @@ public class Replicator implements ThreadId.OnError {
                                   final RpcResponseClosure<AppendEntriesResponse> heartBeatClosure) {
         // 构建一组 追加 Entries 的请求 对应到leader往其他follower 发送数据
         final AppendEntriesRequest.Builder rb = AppendEntriesRequest.newBuilder();
-        // 填充公共字段  TODO 这里要注意 内部有一个 index 不为0 任期为0的情况 这里的考虑是安装快照  出现的场景先不看
+        // 填充公共字段
+        // nextIndex 代表本leader 接受到用户任务后写入的起始偏移量
         if (!fillCommonFields(rb, this.nextIndex - 1, isHeartbeat)) {
             // id is unlock in installSnapshot
+            // 如果当前任期是0 且 本次请求不是心跳请求 且logManager lastLogIndex 不为0 触发该方法
             installSnapshot();
             if (isHeartbeat && heartBeatClosure != null) {
                 Utils.runClosureInThread(heartBeatClosure, new Status(RaftError.EAGAIN,
@@ -824,9 +830,9 @@ public class Replicator implements ThreadId.OnError {
             final long monotonicSendTimeMs = Utils.monotonicMs();
             final AppendEntriesRequest request = rb.build();
 
-            // 如果是心跳请求
-            // 这里的心跳请求 就映射到 leader 要定期向所有follower 发送心跳 避免其他节点开始选举
+            // leader 要定期向所有follower 发送心跳 避免其他节点开始选举
             // 同时也会收到follower 的term 如果发现自己落后了 就要考虑是否要将自己的角色变更
+            // 比如脑裂 产生2个leader 旧的leader 在恢复连接时向其他节点发送心跳 发现返回的任期更高 自动下线  同时如果收到 新的leader 的心跳请求 发现自己的任期落后了 本节点也会进行降级
             if (isHeartbeat) {
                 // Sending a heartbeat request
                 this.heartbeatCounter++;
@@ -850,15 +856,17 @@ public class Replicator implements ThreadId.OnError {
                     this.options.getElectionTimeoutMs() / 2, heartbeatDone);
             // 如果是探测请求
             } else {
-                // Sending a probe request.
+                // Sending a probe request.  发送探测请求
                 this.statInfo.runningState = RunningState.APPENDING_ENTRIES;
+                // 代表leader准备写入的第一个偏移量
                 this.statInfo.firstLogIndex = this.nextIndex;
+                // 这可能是探测请求的特殊值
                 this.statInfo.lastLogIndex = this.nextIndex - 1;
                 this.appendEntriesCounter++;
                 // 代表正在探测中
                 this.state = State.Probe;
                 final int stateVersion = this.version;
-                // 累加请求次数
+                // 累加请求次数 该数值可配合优先队列解决乱序问题
                 final int seq = getAndIncrementReqSeq();
                 final Future<Message> rpcFuture = this.rpcService.appendEntries(this.options.getPeerId().getEndpoint(),
                     request, -1, new RpcResponseClosureAdapter<AppendEntriesResponse>() {
@@ -976,8 +984,9 @@ public class Replicator implements ThreadId.OnError {
         LOG.info("Replicator={}@{} is started", r.id, r.options.getPeerId());
         // 当初始化 复制机 时 追赶相关的回调要置空
         r.catchUpClosure = null;
+        // 标记当前接受到server 端数据的时间戳
         r.lastRpcSendTimestamp = Utils.monotonicMs();
-        // 该定时任务会在 一定延时后触发 通过 onError 调用        r.sendEmptyEntries(true);  算是一种另类的心跳实现了
+        // 该定时任务会在一定延时后触发 通过 onError 调用（r.sendEmptyEntries(true);）  算是一种另类的心跳实现了
         r.startHeartbeatTimer(Utils.nowMs());
         // id.unlock in sendEmptyEntries
         // 本对象刚启动时 需要发送一个 无 conf 无 data 的空数据去检测对端follower 的状态(对端会把它的任期等信息返回回来 之后根据该情况判断是否要做降级)
@@ -1058,7 +1067,7 @@ public class Replicator implements ThreadId.OnError {
     }
 
     /**
-     * 将数据传播到其他节点
+     * 当往leader写入数据时 通过该方法传播到follower 上
      * @param id 对应本复制机的id
      * @param errCode  异常信息 非0代表出现异常 当LogManager已经被关闭时会返回该标识
      * @return
@@ -1084,7 +1093,8 @@ public class Replicator implements ThreadId.OnError {
             // 发送一个探测对象
             r.sendEmptyEntries(false);
         } else if (errCode != RaftError.ESTOP.getNumber()) {
-            // id is unlock in _send_entries 正常情况 开始发送数据
+            // id is unlock in _send_entries
+            // 正常情况 开始发送数据
             r.sendEntries();
         } else {
             // 代表 LogManager 已经关闭 就会停止发送数据
@@ -1410,7 +1420,7 @@ public class Replicator implements ThreadId.OnError {
 
         // 代表响应结果回来时 复制机已经更新过一次了 不再处理旧数据  version 会在resetInFlight时触发
         // 比如发出 1，2，3，4，5 然后2 失败了 3，4，5 就会在inflight中被清除 然后可能还是会收到3，4，5 的res
-        // 这时发现与当前的版本已经不匹配了 就忽略处理了
+        // 这时发现与当前的版本已经不匹配了 就忽略处理了 因为必须确保2 先被处理
         if (stateVersion != r.version) {
             LOG.debug(
                 "Replicator {} ignored old version response {}, current version is {}, request is {}\n, and response is {}\n, status is {}.",
@@ -1430,7 +1440,7 @@ public class Replicator implements ThreadId.OnError {
             // 增加版本号 重置 reqSeq = requireSeq 同时还清空了 holdingQueue 和 reader
             r.resetInflights();
             r.state = State.Probe;
-            // 发送一次探测请求
+            // 重新发送一次探测请求
             r.sendEmptyEntries(false);
             return;
         }
@@ -1488,7 +1498,7 @@ public class Replicator implements ThreadId.OnError {
                     r.resetInflights();
                     r.state = State.Probe;
                     continueSendEntries = false;
-                    // 在一定延时后 发送一个探测请求
+                    // 在一定延时后 发送一个探测请求  可能是担心加重网络负担
                     r.block(Utils.nowMs(), RaftError.EREQUEST.getNumber());
                     return;
                 }
@@ -1496,6 +1506,7 @@ public class Replicator implements ThreadId.OnError {
                     // 根据请求类型走不同处理
                     switch (queuedPipelinedResponse.requestType) {
                         case AppendEntries:
+                            // 在处理过程中如果发现 本节点无效了 就会降级 那么本节点就不能继续写入数据了
                             continueSendEntries = onAppendEntriesReturned(id, inflight, queuedPipelinedResponse.status,
                                 (AppendEntriesRequest) queuedPipelinedResponse.request,
                                 (AppendEntriesResponse) queuedPipelinedResponse.response, rpcSendTime, startTimeMs, r);
@@ -1523,7 +1534,7 @@ public class Replicator implements ThreadId.OnError {
                 sb.append(", after processed, continue to send entries: ").append(continueSendEntries);
                 LOG.debug(sb.toString());
             }
-            // 当某个节点晋升成leader后会跟每个follower连接并发送探测请求, 当收到成功信息时会触发该方法
+            // 当某个节点晋升成leader后会跟每个follower连接并发送探测请求, 当收到成功信息时会触发该方法 （此时leader 已经发现了从哪里开始跟follower数据不一致）
             // 之后往logManager注册wait对象  这样每当往logManager写入数据都会触发该对象的sendEntries将数据复制到对端的follower
             if (continueSendEntries) {
                 // unlock in sendEntries.
@@ -1595,7 +1606,7 @@ public class Replicator implements ThreadId.OnError {
                 append(" prevLogTerm=").append(request.getPrevLogTerm()). //
                 append(" count=").append(request.getEntriesCount());
         }
-        // 代表向follower 写入数据时失败了
+        // status 是底层通信级别的异常 而不是raft内部异常 可以忽略
         if (!status.isOk()) {
             // If the follower crashes, any RPC to the follower fails immediately,
             // so we need to block the follower for a while instead of looping until
@@ -1611,7 +1622,7 @@ public class Replicator implements ThreadId.OnError {
                 LOG.warn("Fail to issue RPC to {}, consecutiveErrorTimes={}, error={}", r.options.getPeerId(),
                     r.consecutiveErrorTimes, status);
             }
-            // 只要有一个 请求失败了 之后的请求就没有必要处理了 因为很有可能本节点已经不再是leader了 就要抛弃这些数据
+            // 此时可能对端出现了 系统级别的问题 暂停一会后重试
             r.resetInflights();
             r.state = State.Probe;
             // unlock in in block  在一定延时后 发起一次探测请求
@@ -1620,8 +1631,9 @@ public class Replicator implements ThreadId.OnError {
         }
         // 代表本次请求成功 那么就可以清空累加的失败次数
         r.consecutiveErrorTimes = 0;
+        // 此时代表写入数据失败 raft级别的
         if (!response.getSuccess()) {
-            // 代表leader 已经发生变化了
+            // 对端的任期更新 那么本leader 已经无效了
             if (response.getTerm() > r.options.getTerm()) {
                 if (isLogDebugEnabled) {
                     sb.append(" fail, greater term ").append(response.getTerm()).append(" expect term ")
@@ -1629,7 +1641,7 @@ public class Replicator implements ThreadId.OnError {
                     LOG.debug(sb.toString());
                 }
                 final NodeImpl node = r.options.getNode();
-                // 代表需要同步最新leader 的数据
+                // 进行追赶 前提是要设置追赶用的回调对象  主流程中是不设置的
                 r.notifyOnCaughtUp(RaftError.EPERM.getNumber(), true);
                 r.destroy();
                 node.increaseTermTo(response.getTerm(), new Status(RaftError.EHIGHERTERMRESPONSE,
@@ -1649,32 +1661,41 @@ public class Replicator implements ThreadId.OnError {
             // 代表其他原因出错
             r.resetInflights();
             // prev_log_index and prev_log_term doesn't match
+
+            // 下面代表 leader 与 follower的数据不同步
+
+            // follower 落后与leader 修改需要发送数据的偏移量
             if (response.getLastLogIndex() + 1 < r.nextIndex) {
                 LOG.debug("LastLogIndex at peer={} is {}", r.options.getPeerId(), response.getLastLogIndex());
                 // The peer contains less logs than leader
-                // 代表follower 期望收到的下个偏移量
+                // 这里修改成跟follower 一样的偏移量 就是为了检测数据任期是否不同
                 r.nextIndex = response.getLastLogIndex() + 1;
+                // 代表在某个任期中有个leader 只将数据写入到该节点 然后又失效了 本节点的偏移量就落后于follower
             } else {
                 // The peer contains logs from old term which should be truncated,
                 // decrease _last_log_at_peer by one to test the right index to keep
+                // 这里是在一步步探测具体follower 从哪个偏移量开始任期不同步的
                 if (r.nextIndex > 1) {
                     LOG.debug("logIndex={} dismatch", r.nextIndex);
                     r.nextIndex--;
+                // 偏移量不是从0开始 所以可以忽略 (在初始化node时 firstLogIndex 以1为起点)
                 } else {
                     LOG.error("Peer={} declares that log at index=0 doesn't match, which is not supposed to happen",
                         r.options.getPeerId());
                 }
             }
             // dummy_id is unlock in _send_heartbeat
-            // 发起一次探测 如果本节点不再是 leader 不会发起探测 同时本复制机 也会被销毁
+            // 继续检测 直到leader 与该节点的所有数据任期完全一致
             r.sendEmptyEntries(false);
             return false;
         }
+        // 进入到这里说明 follower 和 leader 的数据完全同步  同时 nextIndex 就是当前follower 需要被覆盖(追加)数据的起点
         if (isLogDebugEnabled) {
             sb.append(", success");
             LOG.debug(sb.toString());
         }
-        // success  当响应结果的任期比当前节点新时
+        // success
+        // 当本leader 比 follower的任期要新时 不允许向它传递数据 实际上这种情况应该不可能发生  因为follower一旦发现比leader慢就直接更新任期了
         if (response.getTerm() != r.options.getTerm()) {
             r.resetInflights();
             r.state = State.Probe;
@@ -1685,13 +1706,12 @@ public class Replicator implements ThreadId.OnError {
         if (rpcSendTime > r.lastRpcSendTimestamp) {
             r.lastRpcSendTimestamp = rpcSendTime;
         }
-        // 代表本次插入了 多少LogEntry 当触发 appendEntries 时 会限定一个偏移量范围 并从LogManager中找到对应的数据 填充到
-        // emb 中这时 entriesCount 就对应取出来的数量
+
+        // 代表本次请求成功
+
         final int entriesSize = request.getEntriesCount();
-        // 代表非心跳请求 那么现在就是 往某个follower 写入数据 且成功提交了 这时投票箱就可以增加一票 当超过半数的时候本数据
-        // 就是真正的提交成功
+        // 代表向follower写入成功， 这时可以向ballotBox中投入一票
         if (entriesSize > 0) {
-            // 针对该 投票对象 增加票数 只要超过半数就可以触发 commited 了 将数据持久化到 rocksDB
             r.options.getBallotBox().commitAt(r.nextIndex, r.nextIndex + entriesSize - 1, r.options.getPeerId());
             if (LOG.isDebugEnabled()) {
                 LOG.debug("Replicated logs in [{}, {}] to peer {}", r.nextIndex, r.nextIndex + entriesSize - 1,
@@ -1699,16 +1719,17 @@ public class Replicator implements ThreadId.OnError {
             }
         } else {
             // The request is probe request, change the state into Replicate.
-            // 代表本次请求是一个探测请求 修改状态为 复制
+            // 代表本次请求是一个探测请求 那么探测的状态结束了 更改成复制状态
             r.state = State.Replicate;
         }
         // nextIndex 对应leader 发送数据到 该follower 的 偏移量 (只有收到响应结果时该值才会推进)
         r.nextIndex += entriesSize;
+        // 代表本次成功
         r.hasSucceeded = true;
-        // 触发追赶逻辑
+        // 触发追赶逻辑  如果回调未设置不会做操作 可以先忽略
         r.notifyOnCaughtUp(RaftError.SUCCESS.getNumber(), false);
         // dummy_id is unlock in _send_entries
-        // TODO 待理解
+        // TODO 先不看
         if (r.timeoutNowIndex > 0 && r.timeoutNowIndex < r.nextIndex) {
             r.sendTimeoutNow(false, false);
         }
@@ -1724,6 +1745,8 @@ public class Replicator implements ThreadId.OnError {
      */
     private boolean fillCommonFields(final AppendEntriesRequest.Builder rb, long prevLogIndex, final boolean isHeartbeat) {
         final long prevLogTerm = this.options.getLogManager().getTerm(prevLogIndex);
+        // 如果任期是0 而 logManager 的起始偏移量不是0  且是探测请求
+        // 因为探测请求就是成功leader时首次触发的  只可能是0，0 或者 任期不为0
         if (prevLogTerm == 0 && prevLogIndex != 0) {
             if (!isHeartbeat) {
                 Requires.requireTrue(prevLogIndex < this.options.getLogManager().getFirstLogIndex());
@@ -1735,16 +1758,18 @@ public class Replicator implements ThreadId.OnError {
                 // both prev_log_index and prev_log_term be 0 in the heartbeat
                 // request so that follower would do nothing besides updating its
                 // leader timestamp.
+                // TODO 这里还需要关注下
                 prevLogIndex = 0;
             }
         }
+        // 在任期非0的情况无论是否心跳 都会携带leader LogManager 的lastLogIndex
         rb.setTerm(this.options.getTerm());
         rb.setGroupId(this.options.getGroupId());
         rb.setServerId(this.options.getServerId().toString());
         rb.setPeerId(this.options.getPeerId().toString());
-        rb.setPrevLogIndex(prevLogIndex);
+        rb.setPrevLogIndex(prevLogIndex);  // 针对写入数据的请求 这里设置的是准备写入的偏移量-1  也就是在写入的过程中同时也会检测follower数据是否异常
         rb.setPrevLogTerm(prevLogTerm);
-        rb.setCommittedIndex(this.options.getBallotBox().getLastCommittedIndex());
+        rb.setCommittedIndex(this.options.getBallotBox().getLastCommittedIndex()); // 设置了投票箱判定提交成功的偏移量
         return true;
     }
 
@@ -1771,17 +1796,19 @@ public class Replicator implements ThreadId.OnError {
 
     /**
      * Send as many requests as possible.
-     * 一旦成功连接到某个follower后,将尽可能多的数据都发送出去
+     * 一旦成功连接到某个follower后,将尽可能多的数据都发送出去  (比如follower的数据滞后 或者某个偏移量的数据无效需要进行覆盖)
+     * 如果某个任务提交到follower时 失败了会怎样??? nextIndex 需要发生变化吗 还是进行重试直到数据发送成功
+     * 如果会重试直到成功 那么 ballotBox 的实际含义就变成了 在client请求超时时间内 成功写入指定的follower
      */
     void sendEntries() {
         boolean doUnlock = true;
         try {
             long prevSendIndex = -1;
             while (true) {
-                // 在循环中不断调用该方法 拉取可以发送的下标
+                // 获取下一个应该写入到 follower的偏移量
                 final long nextSendingIndex = getNextSendIndex();
                 if (nextSendingIndex > prevSendIndex) {
-                    // 主要就是这里的逻辑 将复制机注册到logManager上 这样当数据写入logManager后就可以复制到其他节点
+                    // 从指定偏移量开始发送数据 到follower
                     if (sendEntries(nextSendingIndex)) {
                         prevSendIndex = nextSendingIndex;
                     } else {

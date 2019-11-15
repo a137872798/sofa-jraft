@@ -262,6 +262,7 @@ public abstract class AbstractBoltClientService implements ClientService {
                         onCanceled(request, done);
                         return;
                     }
+                    // 根据结果设置status 回调中需要该值
                     Status status = Status.OK();
                     if (result instanceof ErrorResponse) {
                         final ErrorResponse eResp = (ErrorResponse) result;

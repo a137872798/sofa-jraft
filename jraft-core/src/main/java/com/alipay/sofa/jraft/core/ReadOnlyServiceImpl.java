@@ -376,7 +376,7 @@ public class ReadOnlyServiceImpl implements ReadOnlyService, LastAppliedLogIndex
 
     /**
      * Called when lastAppliedIndex updates.
-     * 传入 caller 最新提交的 index
+     * 当处理用户回调下标更新时触发
      * @param appliedIndex applied index
      */
     @Override

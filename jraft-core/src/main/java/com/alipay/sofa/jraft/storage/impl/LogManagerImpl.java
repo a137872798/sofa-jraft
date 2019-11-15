@@ -422,7 +422,9 @@ public class LogManagerImpl implements LogManager {
     @Override
     public void appendEntries(final List<LogEntry> entries, final StableClosure done) {
         Requires.requireNonNull(done, "done");
-        // 如果当前  LogManager 处于不可用的状态 使用异常status 来触发回调
+        // 当某次 logManager 刷盘失败的时候 该值会变成true 也就是之后都无法再写入数据了 直接以异常方式通知回调
+        // 如果leader本身的 logManager不能用 这里会直接返回 甚至无法通知到 follower (不会走到follower 这一步) 也就是整个raft会瘫痪
+        // 如果用户发起的请求回调长时间没被触发自动触发client端的 超时异常 这时无关raft本身是否写入成功 对于业务来讲可以视作本次失败
         if (this.hasError) {
             entries.clear();
             Utils.runClosureInThread(done, new Status(RaftError.EIO, "Corrupted LogStorage"));
@@ -1008,8 +1010,7 @@ public class LogManagerImpl implements LogManager {
             if (index > this.lastLogIndex || index < this.firstLogIndex) {
                 return null;
             }
-            // 首先尝试从内存加载  数据首先会写入内存 如果超过一定量就会批量写入到LogStore中 而复制机 传播数据也是
-            // 通过该方法获取数据
+            // 首先尝试从内存加载  数据首先会写入内存
             final LogEntry entry = getEntryFromMemory(index);
             if (entry != null) {
                 return entry;

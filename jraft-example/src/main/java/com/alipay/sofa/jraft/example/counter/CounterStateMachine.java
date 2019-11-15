@@ -70,6 +70,10 @@ public class CounterStateMachine extends StateMachineAdapter {
         return this.value.get();
     }
 
+    /**
+     * 返回时代表用户成功写入了数据
+     * @param iter iterator of states  一般是单个回调 当发生积压时 批量处理的那组回调会一次传回来
+     */
     @Override
     public void onApply(final Iterator iter) {
         while (iter.hasNext()) {
@@ -79,6 +83,7 @@ public class CounterStateMachine extends StateMachineAdapter {
             if (iter.done() != null) {
                 // This task is applied by this node, get value from closure to avoid additional parsing.
                 closure = (IncrementAndAddClosure) iter.done();
+                // 获取到之前请求传入的值
                 delta = closure.getRequest().getDelta();
             } else {
                 // Have to parse FetchAddRequest from this user log.

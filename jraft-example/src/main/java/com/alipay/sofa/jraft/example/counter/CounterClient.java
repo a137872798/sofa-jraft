@@ -41,16 +41,20 @@ public class CounterClient {
      * @throws Exception
      */
     public static void main(final String[] args) throws Exception {
-        if (args.length != 2) {
-            System.out.println("Useage : java com.alipay.sofa.jraft.example.counter.CounterClient {groupId} {conf}");
-            System.out
-                .println("Example: java com.alipay.sofa.jraft.example.counter.CounterClient counter 127.0.0.1:8081,127.0.0.1:8082,127.0.0.1:8083");
-            System.exit(1);
-        }
+//        if (args.length != 2) {
+//            System.out.println("Useage : java com.alipay.sofa.jraft.example.counter.CounterClient {groupId} {conf}");
+//            System.out
+//                .println("Example: java com.alipay.sofa.jraft.example.counter.CounterClient counter 127.0.0.1:8081,127.0.0.1:8082,127.0.0.1:8083");
+//            System.exit(1);
+//        }
+
+        final String groupId = "counter";
+        final String confStr = "127.0.0.1:8080";
+
         // 需要指定选择的 raft组id
-        final String groupId = args[0];
+//        final String groupId = args[0];
         // 在client中
-        final String confStr = args[1];
+//        final String confStr = args[1];
 
         final Configuration conf = new Configuration();
         if (!conf.parse(confStr)) {
@@ -83,7 +87,8 @@ public class CounterClient {
         // 通过阻塞模拟业务处理
         latch.await();
         System.out.println(n + " ops, cost : " + (System.currentTimeMillis() - start) + " ms.");
-        System.exit(0);
+        while (true){}
+//        System.exit(0);
     }
 
     /**

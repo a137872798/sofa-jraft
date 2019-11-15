@@ -1202,21 +1202,20 @@ public class NodeImpl implements Node, RaftServerService {
      */
     private void checkStepDown(final long requestTerm, final PeerId serverId) {
         final Status status = new Status();
-        // 接收到来自更新的 leader 的数据  当之前的leader 被更换掉后 收到的新请求 任期自然是新的
+        // 对端的节点更新 那么将本节点强制变成follower 关闭其他无关的对象 然后清除leaderId
         if (requestTerm > this.currTerm) {
             status.setError(RaftError.ENEWLEADER, "Raft node receives message from new leader with higher term.");
             stepDown(requestTerm, false, status);
-        // 本节点是候选人时
+        // 收到了同属一个任期的leader的请求 且当前不是follower 就要变成follower
         } else if (this.state != State.STATE_FOLLOWER) {
             status.setError(RaftError.ENEWLEADER, "Candidate receives message from new leader with the same term.");
             stepDown(requestTerm, false, status);
-        // 针对任期一致 且本节点还是 follower 但是长时间没有收到leader 的心跳  也就是针对新节点或者是 某个leader上位 却没有连接到本节点
+        // 针对任期一致 且本节点还是 follower 但是长时间没有收到leader 的心跳 也就是处于预投票阶段的节点
         } else if (this.leaderId.isEmpty()) {
             status.setError(RaftError.ENEWLEADER, "Follower receives message from new leader with the same term.");
             stepDown(requestTerm, false, status);
         }
-        // stepDown 最后会清除 leaderId
-        // save current leader 更新当前的leaderId
+        // 本follower 追随新的leader
         if (this.leaderId == null || this.leaderId.isEmpty()) {
             resetLeaderId(serverId, status);
         }
@@ -1244,7 +1243,7 @@ public class NodeImpl implements Node, RaftServerService {
             }
             LOG.debug("Node {} add replicator, term={}, peer={}.", getNodeId(), this.currTerm, peer);
             // 应该是在 stepDown 中将 复制机组重置了吧  这里向所有follower 发送探测信息(主要是告诉他们产生了新的leader)
-            // 其他节点发现任期落后就会调用 stepdown 更新任期 并关闭复制机
+            // 其他节点发现任期落后就会调用 stepdown 更新任期 并关闭复制机 同时能够成功连接到的follower 会作为监听器设置到logManager上，等待用户写入数据
             if (!this.replicatorGroup.addReplicator(peer)) {
                 LOG.error("Fail to add replicator, peer={}.", peer);
             }
@@ -1384,6 +1383,8 @@ public class NodeImpl implements Node, RaftServerService {
                 // firstLogIndex 对应在logManager中写入的起始下标 lastLogIndex 对应该批entry 的 长度
                 NodeImpl.this.ballotBox.commitAt(this.firstLogIndex, this.firstLogIndex + this.nEntries - 1,
                     NodeImpl.this.serverId);
+                // 失败只是打印日志 如果在指定时间内没有写入半数节点
+                // 用户端就会通过底层remoting 返回超时异常 (此时用户也认为没有写入成功) 也就是不用考虑失败是如何处理的
             } else {
                 LOG.error("Node {} append [{}, {}] failed.", getNodeId(), this.firstLogIndex, this.firstLogIndex
                                                                                               + this.nEntries - 1);
@@ -2010,8 +2011,6 @@ public class NodeImpl implements Node, RaftServerService {
     }
 
     /**
-     * server 接收从leader 传来的logEntry请求 到最后 还是委托给了node 来实现
-     * 如果leader 与某个节点的复制机创建失败了 之后受到 失败节点的预投票请求 会重新创建连接 也会发出该请求
      * @param request   data of the entries to append
      * @param done      callback  该回调内部嵌套了多层回调 包含 返回res给 client 的回调 和 client端处理res 的回调
      * @return
@@ -2033,7 +2032,6 @@ public class NodeImpl implements Node, RaftServerService {
 
             final PeerId serverId = new PeerId();
 
-            // serverId 是 leader 的id 而 peerId 就是本node的id (本node 是follower)
             if (!serverId.parse(request.getServerId())) {
                 LOG.warn("Node {} received AppendEntriesRequest from {} serverId bad format.", getNodeId(),
                     request.getServerId());
@@ -2041,28 +2039,25 @@ public class NodeImpl implements Node, RaftServerService {
                     request.getServerId());
             }
 
-            // Check stale term  数据已经过期了  这里排除了 收到旧数据的情况
+            // Check stale term  对端leader 已经过期了 考虑脑裂之后旧leader向新任期节点发请求的情况
             if (request.getTerm() < this.currTerm) {
                 LOG.warn("Node {} ignore stale AppendEntriesRequest from {}, term={}, currTerm={}.", getNodeId(),
                     request.getServerId(), request.getTerm(), this.currTerm);
                 return AppendEntriesResponse.newBuilder() //
                     .setSuccess(false) //
-                    .setTerm(this.currTerm) //
+                    .setTerm(this.currTerm) // 返回最新的任期 需要注意 在replicator中会如何处理这种情况
                     .build();
             }
 
-            // Check term and state to step down  这里在检测 是否要更新本节点的角色
-            // 如果当前节点的任期比较旧 会将leaderId 更改成当前节点 同时任期也会更新 那么旧的leader 就无法写入了
-            // 那么 数据可能出现重复(旧的leader写入一部分数据) 此时怎么删除旧的数据???
+            // Check term and state to step down
             checkStepDown(request.getTerm(), serverId);
-            // 在checkStepDown中 如果当前节点没有leader 会被设置成serverId   如果当前节点的任期比请求参数的任期小 也会设置成 serverId
-            // 代表当前存在2个leader   只有当前任期 超过请求节点任期时才会进入这里
+
+            // 这里感觉不会发生 先忽略
             if (!serverId.equals(this.leaderId)) {
                 LOG.error("Another peer {} declares that it is the leader at term {} which was occupied by leader {}.",
                     serverId, this.currTerm, this.leaderId);
                 // Increase the term by 1 and make both leaders step down to minimize the
                 // loss of split brain
-                // 这里更新了任期 当前leader 会无效 该节点之后会重新发起选举
                 stepDown(request.getTerm() + 1, false, new Status(RaftError.ELEADERCONFLICT,
                     "More than one leader in the same term."));
                 return AppendEntriesResponse.newBuilder() //
@@ -2074,20 +2069,23 @@ public class NodeImpl implements Node, RaftServerService {
             // 这里更新了最后收到心跳的时候 而每个follower 都会有一个选举的定时任务 通过检测在指定时间内没有收到leader 的心跳 尝试将自己升级成candidate
             updateLastLeaderTimestamp(Utils.monotonicMs());
 
-            // entriesCount 是conf 的数量  data 才是LogEntry 的数量
-            // 如果正在安装快照 不允许提交配置  如果本次集群复制失败了 那么怎么处理 代表提交失败了吗
-            // 这里同时要求 entriesCount>0 应该是大于0才是正常的请求
+            // 如果本次是写入任务的请求 且正在安装快照 暂时不允许写入新数据
             if (entriesCount > 0 && this.snapshotExecutor != null && this.snapshotExecutor.isInstallingSnapshot()) {
                 LOG.warn("Node {} received AppendEntriesRequest while installing snapshot.", getNodeId());
                 return RpcResponseFactory.newResponse(RaftError.EBUSY, "Node %s:%s is installing snapshot.",
                     this.groupId, this.serverId);
             }
 
-            // 当前leader 上次刷盘的偏移量  可能有另一个leader 也尝试提交数据 同时没有在半数成功刷盘 那么就会出现这种情况
+            // 当前leader 上次刷盘的偏移量
             final long prevLogIndex = request.getPrevLogIndex();
             final long prevLogTerm = request.getPrevLogTerm();
+            // 如果leader 写入的偏移量 比该 follower大 这里是没办法找到匹配的数据的 这时返回的任期为0 就代表leader需要从本节点最后的偏移量开始将数据发送到follower上
+            // 而如果找到了并且偏移量不一致 以leader的数据为主 对当前follower的数据进行覆盖
             final long localPrevLogTerm = this.logManager.getTerm(prevLogIndex);
-            // 代表 这部分数据是由 旧的leader 写入的 那么这段数据应该要被覆盖  此时返回的是未刷盘的偏移量 如何处理这种情况???
+
+            // 有一个前提 能够成功新leader的节点 lastLogIndex肯定是要比半数新的
+            // 即使本节点对应偏移量的任期要新一些 也是不作数的
+            // 如果是旧leader 在上面的逻辑中就通过任期判断直接过滤了  要注意这个方法中的异常 leader是如何做应对的
             if (localPrevLogTerm != prevLogTerm) {
                 final long lastLogIndex = this.logManager.getLastLogIndex();
 
@@ -2103,13 +2101,12 @@ public class NodeImpl implements Node, RaftServerService {
                     .build();
             }
 
-            // 如果配置数量是0 可能代表本次请求实际上是一次心跳 也就是 follower 的投票箱是被动开启的 当集群中确定了第一个leader 后
-            // leader 往其他节点发送心跳包 设置了其他follower的lastCommittedIndex (投票箱只有在 设置了该偏移量时才能正常使用)
+            // 代表是一次heartbeat/prob请求
             if (entriesCount == 0) {
                 // heartbeat
                 final AppendEntriesResponse.Builder respBuilder = AppendEntriesResponse.newBuilder() //
                     .setSuccess(true) //  这里设置success 为 true了
-                    .setTerm(this.currTerm) //
+                    .setTerm(this.currTerm) //  这里任期已经给leader 同步了
                     .setLastLogIndex(this.logManager.getLastLogIndex());
                 doUnlock = false;
                 this.writeLock.unlock();
@@ -2217,7 +2214,7 @@ public class NodeImpl implements Node, RaftServerService {
     }
 
     // called when leader receive greater term in AppendEntriesResponse
-    // 复制机会往其他follower 发送心跳 如果发现某个节点的任期更高 就会调用该方法
+    // 复制机会往其他follower 发送心跳 如果发现某个节点的任期更高 那么本节点就会变成follower
     void increaseTermTo(final long newTerm, final Status status) {
         this.writeLock.lock();
         try {

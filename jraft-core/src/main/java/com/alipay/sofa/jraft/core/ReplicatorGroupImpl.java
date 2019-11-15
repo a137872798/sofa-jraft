@@ -114,8 +114,7 @@ public class ReplicatorGroupImpl implements ReplicatorGroup {
     }
 
     /**
-     * 想要正常使用复制机对象 首先需要获取该组下所有的节点 并遍历调用 addReplicator 详见NodeImpl
-     * 这里使用了无锁实现
+     * 想要正常使用复制机对象 首先需要获取该组下所有的节点 并遍历调用 addReplicator
      * @param peer target peer
      * @return
      */

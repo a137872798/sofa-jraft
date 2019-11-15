@@ -47,8 +47,7 @@ public interface StateMachine {
      * tasks through |iter| have been successfully applied. And if you didn't
      * apply all the the given tasks, we would ronSnapshotSaveegard this as a critical error
      * and report a error whose type is ERROR_TYPE_STATE_MACHINE.
-     * 用户提交的 task 往往是通过 累加 并堆积成一个迭代器后提交到 状态机的 这里代表批量处理任务
-     * 当该方法返回的时候 代表所有任务都已经成功处理 如果出现了一个异常 则会触发 onError 方法
+     * 用户提交某个任务 并成功刷盘半数节点后触发
      * @param iter iterator of states
      */
     void onApply(final Iterator iter);

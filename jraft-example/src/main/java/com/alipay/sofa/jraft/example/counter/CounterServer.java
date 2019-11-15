@@ -36,8 +36,9 @@ import com.alipay.sofa.jraft.rpc.RaftRpcServerFactory;
  * Counter server that keeps a counter value in a raft group.
  * 该对象对应一个 raftGroup
  * 该对象应该是要启动多个的 每个对应到 一个node 然后他们的group 要一致才有意义
- * @author boyan (boyan@alibaba-inc.com)
  *
+ * @author boyan (boyan@alibaba-inc.com)
+ * <p>
  * 2018-Apr-09 4:51:02 PM
  */
 public class CounterServer {
@@ -45,12 +46,13 @@ public class CounterServer {
     /**
      * 内部存在一个 group 服务 要使用某个node 前必须确保 该对象被初始化
      */
-    private RaftGroupService    raftGroupService;
-    private Node                node;
+    private RaftGroupService raftGroupService;
+    private Node node;
     private CounterStateMachine fsm;
 
     /**
      * 在入参中已经定义了本节点的 地址 已经对应的group 中所有的节点地址信息
+     *
      * @param dataPath
      * @param groupId
      * @param serverId
@@ -119,22 +121,28 @@ public class CounterServer {
 
     /**
      * GoGoGo
+     *
      * @param args
      * @throws IOException
      */
     public static void main(final String[] args) throws IOException {
-        if (args.length != 4) {
-            System.out
-                .println("Useage : java com.alipay.sofa.jraft.example.counter.CounterServer {dataPath} {groupId} {serverId} {initConf}");
-            System.out
-                .println("Example: java com.alipay.sofa.jraft.example.counter.CounterServer /tmp/server1 counter 127.0.0.1:8081 127.0.0.1:8081,127.0.0.1:8082,127.0.0.1:8083");
-            System.exit(1);
-        }
+//        if (args.length != 4) {
+//            System.out
+//                    .println("Useage : java com.alipay.sofa.jraft.example.counter.CounterServer {dataPath} {groupId} {serverId} {initConf}");
+//            System.out
+//                    .println("Example: java com.alipay.sofa.jraft.example.counter.CounterServer /tmp/server1 counter 127.0.0.1:8081 127.0.0.1:8081,127.0.0.1:8082,127.0.0.1:8083");
+//            System.exit(1);
+//        }
+        final String dataPath = "/tmp/server1";
+        final String groupId = "counter";
+        final String serverIdStr = "127.0.0.1:8080";
+        final String initConfStr = "127.0.0.1:8080";
+
         // 首先通过 命令行参数来设置 组 id 和 服务id  还有初始配置
-        final String dataPath = args[0];
-        final String groupId = args[1];
-        final String serverIdStr = args[2];
-        final String initConfStr = args[3];
+//        final String dataPath = args[0];
+//        final String groupId = args[1];
+//        final String serverIdStr = args[2];
+//        final String initConfStr = args[3];
 
         final NodeOptions nodeOptions = new NodeOptions();
         // 为了测试,调整 snapshot 间隔等参数
@@ -159,7 +167,8 @@ public class CounterServer {
 
         // 启动
         final CounterServer counterServer = new CounterServer(dataPath, groupId, serverId, nodeOptions);
+
         System.out.println("Started counter server at port:"
-                           + counterServer.getNode().getNodeId().getPeerId().getPort());
+                + counterServer.getNode().getNodeId().getPeerId().getPort());
     }
 }
