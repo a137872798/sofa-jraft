@@ -1369,6 +1369,7 @@ public class NodeImpl implements Node, RaftServerService {
 
     /**
      * node提交任务的回调  当成功触发时  往投票箱中增加一票 一但超过半数就可以触发用户的回调
+     * leader 节点数据刷盘成功
      */
     class LeaderStableClosure extends LogManager.StableClosure {
 
@@ -1376,6 +1377,7 @@ public class NodeImpl implements Node, RaftServerService {
             super(entries);
         }
 
+        // 该回调意味着 将数据写入leader 成功 这样就在投票箱中增加了一票 之后只要半数节点添加成功就能在 任务回调(用户的)中设置success
         @Override
         public void run(final Status status) {
             if (status.isOk()) {
@@ -1430,6 +1432,12 @@ public class NodeImpl implements Node, RaftServerService {
                     continue;
                 }
                 // 投票箱对象会在 某个node 变成leader时 根据 LogManager.lastLogIndex+1 来初始化
+                // 开始向投票箱提交任务  也就是 只有半数(以上) 成功提交任务才返回正常提交
+                // 因为集群内部可能发生变动 这里将变动前后的节点都传入了 看看它是如何应对的
+                // 因为一开始pendingIndex = 0 会导致无法添加任务 并为回调对象设置错误结果
+
+                // 注意 回调被设置到了投票箱中 也就是用户的回调必须要成功刷盘半数以上的节点才算成功
+                // 也就是用户的请求是按照写入投票箱的顺序来执行的
                 if (!this.ballotBox.appendPendingTask(this.conf.getConf(),
                     this.conf.isStable() ? null : this.conf.getOldConf(), task.done)) {
                     Utils.runClosureInThread(task.done, new Status(RaftError.EINTERNAL, "Fail to append task."));
@@ -1443,6 +1451,7 @@ public class NodeImpl implements Node, RaftServerService {
             }
 
             // 将一组任务写入到 LogManager 中 只有在任务队列的情况下才可能是批量任务 一般情况实际上还是单个任务
+            // 这里传入的回调对象是在投票箱中增加票数的回调 而不是用户的回调 用户回调只有在成功刷盘半数的节点后才触发
             this.logManager.appendEntries(entries, new LeaderStableClosure(entries));
             // update conf.first
             // 处理完后尝试更新配置
@@ -2295,7 +2304,7 @@ public class NodeImpl implements Node, RaftServerService {
      * @param monotonicNowMs
      */
     private void checkDeadNodes(final Configuration conf, final long monotonicNowMs) {
-        // 获取当前集群内所有的节点
+        // 获取当前集群内所有的节点  当调用  addPeer时 某个节点就会添加到conf中 这样不需要等到节点触发预投票就能收到leader 的心跳
         final List<PeerId> peers = conf.listPeers();
         final Configuration deadNodes = new Configuration();
         // 检测成功直接返回  检测失败代表本leader 与半数以上的节点无法通信 那么需要对角色进行降级
@@ -3117,6 +3126,11 @@ public class NodeImpl implements Node, RaftServerService {
         }
     }
 
+    /**
+     * 为该group 增加一个新的节点
+     * @param peer peer to add
+     * @param done callback
+     */
     @Override
     public void addPeer(final PeerId peer, final Closure done) {
         Requires.requireNonNull(peer, "Null peer");

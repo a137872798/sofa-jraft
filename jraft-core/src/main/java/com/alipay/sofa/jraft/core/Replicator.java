@@ -1523,6 +1523,8 @@ public class Replicator implements ThreadId.OnError {
                 sb.append(", after processed, continue to send entries: ").append(continueSendEntries);
                 LOG.debug(sb.toString());
             }
+            // 当某个节点晋升成leader后会跟每个follower连接并发送探测请求, 当收到成功信息时会触发该方法
+            // 之后往logManager注册wait对象  这样每当往logManager写入数据都会触发该对象的sendEntries将数据复制到对端的follower
             if (continueSendEntries) {
                 // unlock in sendEntries.
                 r.sendEntries();
@@ -1768,7 +1770,8 @@ public class Replicator implements ThreadId.OnError {
     }
 
     /**
-     * Send as many requests as possible.  将当前囤积的数据都发送出去
+     * Send as many requests as possible.
+     * 一旦成功连接到某个follower后,将尽可能多的数据都发送出去
      */
     void sendEntries() {
         boolean doUnlock = true;
@@ -1778,7 +1781,7 @@ public class Replicator implements ThreadId.OnError {
                 // 在循环中不断调用该方法 拉取可以发送的下标
                 final long nextSendingIndex = getNextSendIndex();
                 if (nextSendingIndex > prevSendIndex) {
-                    // 真正发送数据的方法
+                    // 主要就是这里的逻辑 将复制机注册到logManager上 这样当数据写入logManager后就可以复制到其他节点
                     if (sendEntries(nextSendingIndex)) {
                         prevSendIndex = nextSendingIndex;
                     } else {

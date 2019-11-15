@@ -416,8 +416,8 @@ public class LogManagerImpl implements LogManager {
 
     /**
      * 操控 logManager  将一组LogEntry 通过该对象存储到 LogStorage  此时还没有触发commit
-     * @param entries log entries
-     * @param done    callback
+     * @param entries log entries  实际上不是在消费者拥塞的情况 只会一次传入一个entry
+     * @param done    callback  该回调对应在leader的投票箱中增加一票
      */
     @Override
     public void appendEntries(final List<LogEntry> entries, final StableClosure done) {
@@ -444,6 +444,7 @@ public class LogManagerImpl implements LogManager {
                     entry.setChecksum(entry.checksum());
                 }
                 // 如果写入的是 conf
+                // 用户调用的方法都是写入data
                 if (entry.getType() == EntryType.ENTRY_TYPE_CONFIGURATION) {
                     Configuration oldConf = new Configuration();
                     if (entry.getOldPeers() != null) {
@@ -456,12 +457,9 @@ public class LogManagerImpl implements LogManager {
                 }
             }
             if (!entries.isEmpty()) {
-                // 注意 leader 对象在写入本机时因为不通过 网络所以不会发生乱序情况 在ballotBox中能保证首次写入一定成功 而为了写入超过
-                // 半数的节点 则要借助网络 此时就有可能发生乱序
+                // 本组数据对应的 firstLogIndex  跟用户传入的回调不同
                 done.setFirstLogIndex(entries.get(0).getId().getIndex());
-                // 数据不是直接写入到 logStore 中的 而是先写到内存中 在合适的时机进行刷盘
-                // 也就是 当超过半数节点写入成功后 才从内存中写入到 logStore中
-                // TODO 如果宕机了数据不就消失了吗 那么写入内存本身应该没有任何意义啊???
+                // 相当于缓存
                 this.logsInMemory.addAll(entries);
             }
             // 将检查冲突完后的数据设置到 done 中
@@ -469,7 +467,6 @@ public class LogManagerImpl implements LogManager {
 
             int retryTimes = 0;
             // 这里是发布 OTHER 事件 然后数据会被写入到 appentBatch中 此时是异步操作 也就是 写入到其他节点 和持久化本节点的数据不是顺序执行的
-            // TODO 首先 到底哪样算写入成功 这个分界线应该是 回调触发 那么一旦调用该方法后实际上已经可以写入其他节点了
             // 实际上这个写入半数 到底要不要包含leader 呢 如果写入leader 就失败了 那么 leader 的数据又怎么保证是准确的呢
             // 在raft协议中好像没有明确指出这种情况 都是默认写入leader自身成功了 虽然理论上写入自身一定会成功但是 这里借助了第三方框架 如果写入失败
             // 会怎么样
@@ -496,8 +493,12 @@ public class LogManagerImpl implements LogManager {
             doUnlock = false;
             // 触发回调对象  实际上 节点复制机制就是通过该对象进行传播的
             // 梳理一下 某组logEntry 写入到同jvm 的logManager中后 触发Waiter 写入到其他节点
+            // waiter是在某个连接变成leader 后 replicatorGroup真正生效时 创建的
+            // replicatorGroup 会为所有follower创建复制机 同时为leader的logmanager设置wait
+            // 这样follower上就不会产生发送复制数据了
             if (!wakeupAllWaiter(this.writeLock)) {
                 // 如果没有设置 newLog 的 回调对象 才选择触发该监听器
+                // 也就是只有 follower 才会触发listener
                 notifyLastLogIndexListeners();
             }
         } finally {
@@ -670,12 +671,13 @@ public class LogManagerImpl implements LogManager {
          * @return
          */
         LogId flush() {
+            // 注意这里的 size 是 storage的size (也就是回调对象的数量)
+            // 而一个回调可能对应多个entry 这里数据层次是不对等的
             if (this.size > 0) {
                 // toAppend 代表一组待写入的数据  更新最后刷盘的 id
+                // 这里一次性将所有囤积的entry全部写入到 storage中了
                 this.lastId = appendToStorage(this.toAppend);
                 for (int i = 0; i < this.size; i++) {
-                    // storage 中每个元素都对应到toAppend 这里在处理完成时 根据状态触发回调
-                    // 也就是 向node 提交一个任务后 只有真正写入到 storage 才会触发回调 那么 一开始保存在内存中确实是作为二级缓存了
                     this.storage.get(i).getEntries().clear();
                     if (LogManagerImpl.this.hasError) {
                         this.storage.get(i).run(new Status(RaftError.EIO, "Corrupted LogStorage"));
@@ -702,6 +704,7 @@ public class LogManagerImpl implements LogManager {
             }
             // 将数据写入到 storage 中
             this.storage.add(done);
+            // size 是以每次写入的一组数据为单位的
             this.size++;
             // 将数据转移到 toAppend中
             this.toAppend.addAll(done.getEntries());
@@ -752,9 +755,7 @@ public class LogManagerImpl implements LogManager {
             // 获取回调对象 (该回调是针对本次添加的 entries 的 每个entry 还有自己的回调对象)
             final StableClosure done = event.done;
 
-            // 如果回调对象中存在 要写入的数据 将实体写入到 ab 中
-            // 当调用 appendEntries 会发出一个 OTHER 事件 会触发ab.append  此时回调对象还没有被触发 也就是ballot 还没有减少需要的票数
-            // 真正触发flush 并写入 logStorage 时 才会触发回调
+            // 当用户将任务apply 到 node时 会转发到该方法
             if (done.getEntries() != null && !done.getEntries().isEmpty()) {
                 this.ab.append(done);
             } else {
@@ -817,8 +818,6 @@ public class LogManagerImpl implements LogManager {
             }
             // endOfBatch 只有当 囤积大量事件未消费时 才有意义 如果 生产/消费速度持平 那么 始终是true
             // 也就是理解为 正常情况下 每次写入的数据 都会立即刷盘  这样确保了数据的实时性
-            // 只有当 (Disruptor的概念) 生产者因为什么原因 后面的数据 已经提交了 而前面的还没提交 导致的事件堆积在一次性交由消费者
-            // 处理时  这时 每次都刷盘的意义不是很大 因为消费这些数据的事件间隔会很短
             if (endOfBatch) {
                 this.lastId = this.ab.flush();
                 setDiskId(this.lastId);
