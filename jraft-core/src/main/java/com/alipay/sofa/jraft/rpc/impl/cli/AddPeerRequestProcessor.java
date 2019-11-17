@@ -65,7 +65,7 @@ public class AddPeerRequestProcessor extends BaseCliRequestProcessor<AddPeerRequ
      */
     @Override
     protected Message processRequest0(CliRequestContext ctx, AddPeerRequest request, RpcRequestClosure done) {
-        // 获取该节点的同级节点  这里是深拷贝
+        // 记录之前旧的节点信息
         List<PeerId> oldPeers = ctx.node.listPeers();
         // 获取要新增的节点
         String addingPeerIdStr = request.getPeerId();
@@ -75,7 +75,7 @@ public class AddPeerRequestProcessor extends BaseCliRequestProcessor<AddPeerRequ
                 .getRemoteAddress(), addingPeerIdStr);
             // 为node 节点增加同级节点
             ctx.node.addPeer(addingPeer,
-                    // 回调对象  失败的话 直接调用本次处理请求的回调对象
+                    // 回调对象  失败的话 对应返回一个 ErrorResponse
                     status -> {
                 if (!status.isOk()) {
                     done.run(status);

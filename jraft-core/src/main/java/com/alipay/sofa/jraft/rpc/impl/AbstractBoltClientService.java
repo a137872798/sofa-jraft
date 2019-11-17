@@ -264,6 +264,7 @@ public abstract class AbstractBoltClientService implements ClientService {
                     }
                     // 根据结果设置status 回调中需要该值
                     Status status = Status.OK();
+                    // 如果返回结果本身是一个异常结果
                     if (result instanceof ErrorResponse) {
                         final ErrorResponse eResp = (ErrorResponse) result;
                         status = new Status();

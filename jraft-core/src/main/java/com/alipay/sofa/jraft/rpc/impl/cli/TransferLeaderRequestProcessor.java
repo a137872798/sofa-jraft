@@ -49,6 +49,13 @@ public class TransferLeaderRequestProcessor extends BaseCliRequestProcessor<Tran
         return request.getGroupId();
     }
 
+    /**
+     * 处理更换leader 的请求
+     * @param ctx
+     * @param request
+     * @param done
+     * @return
+     */
     @Override
     protected Message processRequest0(CliRequestContext ctx, TransferLeaderRequest request, RpcRequestClosure done) {
         PeerId peer = new PeerId();

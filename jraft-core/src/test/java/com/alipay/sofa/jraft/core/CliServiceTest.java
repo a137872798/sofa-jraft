@@ -50,6 +50,9 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
+/**
+ * 命令行服务测试类
+ */
 public class CliServiceTest {
 
     private String        dataPath;
@@ -75,6 +78,7 @@ public class CliServiceTest {
         cluster.waitLeader();
 
         cliService = new CliServiceImpl();
+        // 记录当前集群信息
         this.conf = new Configuration(peers);
         assertTrue(cliService.init(new CliOptions()));
     }
@@ -92,11 +96,17 @@ public class CliServiceTest {
         RouteTable.getInstance().reset();
     }
 
+    /**
+     * 测试 切换当前group leader
+     * @throws Exception
+     */
     @Test
     public void testTransferLeader() throws Exception {
+        // 获取当前leader 信息
         final PeerId leader = cluster.getLeader().getNodeId().getPeerId().copy();
         assertNotNull(leader);
 
+        // 获取当前group 所有节点
         final Set<PeerId> peers = conf.getPeerSet();
         PeerId targetPeer = null;
         for (final PeerId peer : peers) {
@@ -106,6 +116,7 @@ public class CliServiceTest {
             }
         }
         assertNotNull(targetPeer);
+        // 切换成目标节点
         assertTrue(this.cliService.transferLeader(groupId, conf, targetPeer).isOk());
         cluster.waitLeader();
         assertEquals(targetPeer, cluster.getLeader().getNodeId().getPeerId());

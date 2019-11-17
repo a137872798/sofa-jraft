@@ -70,10 +70,15 @@ public class CliServiceImpl implements CliService {
 
     private CliOptions          cliOptions;
     /**
-     * 监听命令行的客户端  该对象负责与 leader 通信
+     * 发起命令行请求的客户端  该对象负责与 leader 通信
      */
     private CliClientService    cliClientService;
 
+    /**
+     * 初始化命令行服务对象
+     * @param opts
+     * @return
+     */
     @Override
     public synchronized boolean init(final CliOptions opts) {
         Requires.requireNonNull(opts, "Null cli options");
@@ -102,7 +107,7 @@ public class CliServiceImpl implements CliService {
     /**
      * 为 group 增加新的节点
      * @param groupId the raft group id
-     * @param conf    current configuration    当前配置是从哪里获取的 ???
+     * @param conf    current configuration
      * @param peer    peer to add
      * @return
      */
@@ -344,10 +349,12 @@ public class CliServiceImpl implements CliService {
             return new Status(-1, "Fail to init channel to leader %s", leaderId);
         }
 
+        // 连接到leader 成功后将该请求发送到leader 上
         final TransferLeaderRequest.Builder rb = TransferLeaderRequest.newBuilder() //
             .setGroupId(groupId) //
             .setLeaderId(leaderId.toString());
         if (!peer.isEmpty()) {
+            // 代表被切换的候选节点
             rb.setPeerId(peer.toString());
         }
 

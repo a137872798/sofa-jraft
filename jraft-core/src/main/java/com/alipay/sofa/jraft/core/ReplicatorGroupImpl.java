@@ -268,6 +268,12 @@ public class ReplicatorGroupImpl implements ReplicatorGroup {
         return this.replicatorMap.containsKey(peer);
     }
 
+    /**
+     * 更换指定节点为leader
+     * @param peer     target peer
+     * @param logIndex log index
+     * @return
+     */
     @Override
     public boolean transferLeadershipTo(final PeerId peer, final long logIndex) {
         final ThreadId rid = this.replicatorMap.get(peer);

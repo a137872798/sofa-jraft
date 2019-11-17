@@ -236,7 +236,7 @@ public class BallotBox implements Lifecycle<BallotBoxOptions>, Describer {
             }
             // 该值代表已经提交到了哪里  (也就是在半数node刷盘成功)
             this.pendingIndex = newPendingIndex;
-            // 这里设置下标是做什么???
+            // 代表当前最先等待处理的回调对象的偏移量
             this.closureQueue.resetFirstIndex(newPendingIndex);
             return true;
         } finally {
@@ -282,8 +282,6 @@ public class BallotBox implements Lifecycle<BallotBoxOptions>, Describer {
     /**
      * Called by follower, otherwise the behavior is undefined.
      *  Set committed index received from leader
-     * 该方法是在初始化投票箱对象 只有pendingIndex 被设置后 才能正常提交任务 以及触发 commitAt
-     * 该方法的调用时机先不管  总之是在向状态机提交任务之前
      * @param lastCommittedIndex last committed index
      * @return returns true if set success
      */
@@ -305,7 +303,6 @@ public class BallotBox implements Lifecycle<BallotBoxOptions>, Describer {
                 this.lastCommittedIndex = lastCommittedIndex;
                 this.stampedLock.unlockWrite(stamp);
                 doUnlock = false;
-                // 将耗时操作 挪到外面执行  这里为什么会触发 caller 的 COMMITED???
                 this.waiter.onCommitted(lastCommittedIndex);
             }
         } finally {

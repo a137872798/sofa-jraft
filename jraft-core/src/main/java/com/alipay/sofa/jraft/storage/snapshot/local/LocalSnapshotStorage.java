@@ -120,7 +120,7 @@ public class LocalSnapshotStorage implements SnapshotStorage {
      */
     @Override
     public boolean init(final Void v) {
-        // 创建存储快照的文件夹
+        // 找到对应目录
         final File dir = new File(this.path);
 
         try {
@@ -130,7 +130,7 @@ public class LocalSnapshotStorage implements SnapshotStorage {
             return false;
         }
 
-        // delete temp snapshot
+        // delete temp snapshot    当 filterBeforeCopyRemote 为false 要删除临时文件
         if (!this.filterBeforeCopyRemote) {
             final String tempSnapshotPath = this.path + File.separator + TEMP_PATH;
             final File tempFile = new File(tempSnapshotPath);
@@ -380,6 +380,7 @@ public class LocalSnapshotStorage implements SnapshotStorage {
         } finally {
             this.lock.unlock();
         }
+        // 代表不存在快照文件
         if (lsIndex == 0) {
             LOG.warn("No data for snapshot reader {}.", this.path);
             return null;

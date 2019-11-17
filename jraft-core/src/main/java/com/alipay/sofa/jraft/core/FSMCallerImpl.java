@@ -538,7 +538,7 @@ public class FSMCallerImpl implements FSMCaller {
                             doSnapshotSave((SaveSnapshotClosure) task.done);
                         }
                         break;
-                    // 当成功从leader 处拉取完快照后触发
+                    // 某节点从本地快照文件中加载快照数据
                     case SNAPSHOT_LOAD:
                         this.currTask = TaskType.SNAPSHOT_LOAD;
                         if (passByStatus(task.done)) {
@@ -672,7 +672,7 @@ public class FSMCallerImpl implements FSMCaller {
             // 等同 hasNext()  如果 disruptor 没有发生数据堆积  用户的任务是单个单个处理的 那么 每次某单个数据BallotBox 处理成功后 会触发一次doCommitted 这时触发用户commit回调
             // 的 Iterator内部只有一个entry
             // 如果在用户提交任务时 disruptor 发生了堆积 那么每次触发caller的onCommited 的就是一组回调
-            // 这里也会分多次触发用户自定义的状态机的 onApply  如果用户回调中 直接调用了 next 那么这里的 isGood 就不会继续触发了
+            // 这里也会分多次触发用户自定义的状态机的 onApply  如果用户回调中 直接调用了 next 那么这里的 isGood 就不会继续触发了(这里也体现了batch)
             // 因为用户获取到的iterator只能处理data 类型 所以不会影响到config 的处理
             // 如果一组回调又有 data 又有config
             while (iterImpl.isGood()) {
@@ -771,6 +771,7 @@ public class FSMCallerImpl implements FSMCaller {
      */
     private void doSnapshotSave(final SaveSnapshotClosure done) {
         Requires.requireNonNull(done, "SaveSnapshotClosure is null");
+        // 代表上次处理用户回调的 下标 (也就是成功通过投票箱的任务)
         final long lastAppliedIndex = this.lastAppliedIndex.get();
         // 记录本次生成快照的任期与  偏移量
         final RaftOutter.SnapshotMeta.Builder metaBuilder = RaftOutter.SnapshotMeta.newBuilder() //
@@ -847,13 +848,13 @@ public class FSMCallerImpl implements FSMCaller {
     }
 
     /**
-     * 当从leader 处下载完快照后触发
+     * 从快照文件中加载快照数据
      *
      * @param done
      */
     private void doSnapshotLoad(final LoadSnapshotClosure done) {
         Requires.requireNonNull(done, "LoadSnapshotClosure is null");
-        // 返回done 内部的reader 对象
+        // 返回done 内部的reader 对象 该对象可以获取到快照文件的元数据 (也就是存储路径之类的)
         final SnapshotReader reader = done.start();
         if (reader == null) {
             done.run(new Status(RaftError.EINVAL, "open SnapshotReader failed"));
@@ -870,7 +871,7 @@ public class FSMCallerImpl implements FSMCaller {
             }
             return;
         }
-        // 获取当前写入的下标  如果是重启的情况 2个 applied 都是0
+        // 当前快照偏移量 初始化状态为 0
         final LogId lastAppliedId = new LogId(this.lastAppliedIndex.get(), this.lastAppliedTerm);
         // 当前生成快照对应的位置 针对首次启动的情况就是读取上次保留的最后一个快照
         final LogId snapshotId = new LogId(meta.getLastIncludedIndex(), meta.getLastIncludedTerm());

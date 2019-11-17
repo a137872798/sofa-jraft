@@ -111,7 +111,7 @@ public class LogManagerImpl implements LogManager {
      */
     private LogId                                            diskId                 = new LogId(0, 0);
     /**
-     * 代表快照的偏移量
+     * 代表投票箱已经提交成功的 偏移量
      */
     private LogId                                            appliedId              = new LogId(0, 0);
     // TODO  use a lock-free concurrent list instead?
@@ -433,7 +433,7 @@ public class LogManagerImpl implements LogManager {
         boolean doUnlock = true;
         this.writeLock.lock();
         try {
-            // 发现要写入的数据异常  针对leader来说 只是为entries 设置了index
+            // 发现要写入的数据异常
             if (!entries.isEmpty() && !checkAndResolveConflict(entries, done)) {
                 entries.clear();
                 Utils.runClosureInThread(done, new Status(RaftError.EINTERNAL, "Fail to checkAndResolveConflict."));
@@ -876,7 +876,8 @@ public class LogManagerImpl implements LogManager {
         LOG.debug("set snapshot: {}", meta);
         this.writeLock.lock();
         try {
-            // 代表不需要写入  上锁后进行检查是常用套路 类似于双重锁检查
+            // 初始化阶段 lastSnapshotId 为0 如果存在快照文件 那么在成功加载完快照后 会将最新的快照偏移量设置到 logManager中
+            // 每次生成快照下标 就是处理用户回调的偏移量
             if (meta.getLastIncludedIndex() <= this.lastSnapshotId.getIndex()) {
                 return;
             }
@@ -909,7 +910,8 @@ public class LogManagerImpl implements LogManager {
             this.lastSnapshotId.setIndex(meta.getLastIncludedIndex());
             this.lastSnapshotId.setTerm(meta.getLastIncludedTerm());
 
-            // 同步 applied 与 lastSnapshot
+            // applied 代表用户已经处理的  一般情况下 appliedId 肯定比 lastSnapshotId 大 如果是初始化并加载之前的快照数据
+            // 那么 lastSnapshotId 会比 appliedId 大
             if (this.lastSnapshotId.compareTo(this.appliedId) > 0) {
                 this.appliedId = this.lastSnapshotId.copy();
             }
@@ -919,14 +921,17 @@ public class LogManagerImpl implements LogManager {
                 // last_included_index is larger than last_index
                 // FIXME: what if last_included_index is less than first_index?
                 // 这里会先将数据从 内存中移除 同时添加一个任务到 Disruptor 中 处理该任务时 会从RocksDB 中移除数据
+                // 如果生成快照 并删除了旧数据  此时follower开始拉取数据发现没办法直接从logManager获取到数据时该怎么处理???
                 truncatePrefix(meta.getLastIncludedIndex() + 1);
+            // 代表快照数据对应的term与当前任期相同
             } else if (term == meta.getLastIncludedTerm()) {
                 // Truncating log to the index of the last snapshot.
                 // We don't truncate log before the last snapshot immediately since
                 // some log around last_snapshot_index is probably needed by some
                 // followers
                 // TODO if there are still be need?
-                // 这里在写入快照后 没有立即截取到最新的部分  可能有些人正在拉取这部分的数据  这里还不太明白 不过对具体流程理解没有影响
+                // 有些follower 可能还在拉取这部分数据  实际上极端情况下 还是有可能数据已经被删了 比如说已经超过2轮生成快照时间
+                // 那么落后的follower 还是无法直接从 logManager  中获取到数据
                 if (savedLastSnapshotIndex > 0) {
                     truncatePrefix(savedLastSnapshotIndex + 1);
                 }
@@ -1132,7 +1137,6 @@ public class LogManagerImpl implements LogManager {
         if (index == 0) {
             return 0;
         }
-        //
         if (index > this.lastLogIndex) {
             return 0;
         }
@@ -1329,8 +1333,8 @@ public class LogManagerImpl implements LogManager {
     }
 
     /**
-     * 检查 和解决冲突    这里传入一个list 就代表日志不是一条条写入的 而是收集后批量写入
-     * @param entries  一组待写入的 Log对象 在jraft 中client的任何请求都会被封装成LogEntry对象并保存在节点中
+     * 检查 和解决冲突
+     * @param entries
      * @param done
      * @return
      */
@@ -1338,8 +1342,6 @@ public class LogManagerImpl implements LogManager {
     private boolean checkAndResolveConflict(final List<LogEntry> entries, final StableClosure done) {
         // 等同于 entries.get(0)
         final LogEntry firstLogEntry = ArrayDeque.peekFirst(entries);
-        // 如果 index ==0 代表没有指定 LogEntry 的偏移量 默认情况下 index 就是0 而term 会选择node 的任期
-        // 也许leader 的index 不会设置???
         if (firstLogEntry.getId().getIndex() == 0) {
             // Node is currently the leader and |entries| are from the user who
             // don't know the correct indexes the logs should assign to. So we have
@@ -1353,27 +1355,25 @@ public class LogManagerImpl implements LogManager {
             // Node is currently a follower and |entries| are from the leader. We
             // should check and resolve the conflicts between the local logs and
             // |entries|
-            // 代表偏移量超过了预期值 无法写入 那么如果连续往node 写入数据 就会出现 超过偏移量
-            // TODO 这里要确定 follower 是怎么写入数据的 follower 难道就不会收到乱序的数据 还能正常写入吗
-            // TODO follower 写入先放着
+            // 代表偏移量超过了预期值 无法写入
             if (firstLogEntry.getId().getIndex() > this.lastLogIndex + 1) {
                 Utils.runClosureInThread(done, new Status(RaftError.EINVAL,
                     "There's gap between first_index=%d and last_log_index=%d", firstLogEntry.getId().getIndex(),
                     this.lastLogIndex));
                 return false;
             }
-            // 获取快照偏移量
+            // 该值代表已经处理到的用户回调的 下标
             final long appliedIndex = this.appliedId.getIndex();
             // 获取最后一个元素
             final LogEntry lastLogEntry = ArrayDeque.peekLast(entries);
-            // 如果写入的数据 还在快照的前面 就不需要写入了
+            // 如果写入的数据 还在已经处理过的数据前
             if (lastLogEntry.getId().getIndex() <= appliedIndex) {
                 LOG.warn(
                     "Received entries of which the lastLog={} is not greater than appliedIndex={}, return immediately with nothing changed.",
                     lastLogEntry.getId().getIndex(), appliedIndex);
                 return false;
             }
-            // 代表可以正常写入  这里直接更新了偏移量但是数据还没写入 推测是将它作为一个 event 存放到队列中
+            // 代表可以正常写入
             if (firstLogEntry.getId().getIndex() == this.lastLogIndex + 1) {
                 // fast path
                 this.lastLogIndex = lastLogEntry.getId().getIndex();

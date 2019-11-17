@@ -618,7 +618,7 @@ public class Replicator implements ThreadId.OnError {
     }
 
     /**
-     * 安装快照
+     * 如果follower 需要从leader 加载数据 而数据已经生成在快照里了(从logManager中删除了) 那么就要重新从快照中加载
      */
     void installSnapshot() {
         // 如果当前正在安装快照就 忽略新的安装请求
@@ -674,7 +674,8 @@ public class Replicator implements ThreadId.OnError {
                 node.onError(error);
                 return;
             }
-            // 创建一个安装快照的请求
+            // 创建一个安装快照的请求  也就是说 如果某个follower落后leader太多 那么就会生成一个直接从快照文件中
+            // 传输数据到follower 的请求 被叫做install 请求
             final InstallSnapshotRequest.Builder rb = InstallSnapshotRequest.newBuilder();
             rb.setTerm(this.options.getTerm());
             rb.setGroupId(this.options.getGroupId());
@@ -682,7 +683,7 @@ public class Replicator implements ThreadId.OnError {
             // 指定对端的 id
             rb.setPeerId(this.options.getPeerId().toString());
             rb.setMeta(meta);
-            // 设置成上面生成的url
+            // url 中包含readId 信息
             rb.setUri(uri);
 
             // 标记当前状态为 安装快照
@@ -738,7 +739,7 @@ public class Replicator implements ThreadId.OnError {
                                              final InstallSnapshotRequest request,
                                              final InstallSnapshotResponse response) {
         boolean success = true;
-        // 将reader 引用置空 看来一个reader 对象只能使用一次
+        // 将reader 引用置空
         r.releaseReader();
         // noinspection ConstantConditions
         do {
@@ -765,7 +766,7 @@ public class Replicator implements ThreadId.OnError {
                 break;
             }
             // success  更新nextIndex
-            // 代表本次请求成功 nextIndex 对应发送某个请求并接受到响应结果的下标
+            // 代表本次请求成功 nextIndex 代表follower 与leader 同步数据的起点
             r.nextIndex = request.getMeta().getLastIncludedIndex() + 1;
             sb.append(" success=true");
             LOG.info(sb.toString());
@@ -778,14 +779,18 @@ public class Replicator implements ThreadId.OnError {
             // 因为状态机的发送必须保证顺序性
             r.resetInflights();
             r.state = State.Probe;
-            // 通过定时器发送一次探测请求
+            // 通过定时器发送一次探测请求 因为对端可能正在保存/加载快照
             r.block(Utils.nowMs(), status.getCode());
             return false;
         }
         r.hasSucceeded = true;
-        // 当成功接受到快照时 触发一个追赶回调
+        // 当成功接受到快照时 触发一个追赶回调  针对某个新加入组中的节点 每次成功拉取数据后 都判断一下是否已经追赶成功
         r.notifyOnCaughtUp(RaftError.SUCCESS.getNumber(), false);
-        // 这里还不确定是干嘛的
+        // 处理完某个任务后发现 该节点需要被替换(触发了 transferLeader)
+        // 同时一定要提交给本节点的 数据先同步到其他节点后(nextIndex 必须大于timeout后)
+        // 一般业务端的正常操作是transferLeader 后 等待leader发生变化 才继续提交任务 所以 此时的index 可以理解为
+        // 在替换leader前的最后一个用户任务了 那么等到偏移量完全同步后 必然能成为leader(排除特殊情况) 否则偏移量没同步
+        // 很可能过不了半数节点
         if (r.timeoutNowIndex > 0 && r.timeoutNowIndex < r.nextIndex) {
             r.sendTimeoutNow(false, false);
         }
@@ -815,7 +820,7 @@ public class Replicator implements ThreadId.OnError {
         // 构建一组 追加 Entries 的请求 对应到leader往其他follower 发送数据
         final AppendEntriesRequest.Builder rb = AppendEntriesRequest.newBuilder();
         // 填充公共字段
-        // nextIndex 代表本leader 接受到用户任务后写入的起始偏移量
+        // nextIndex 代表本leader与follower同步数据的起始偏移量
         if (!fillCommonFields(rb, this.nextIndex - 1, isHeartbeat)) {
             // id is unlock in installSnapshot
             // 如果当前任期是0 且 本次请求不是心跳请求 且logManager lastLogIndex 不为0 触发该方法
@@ -890,7 +895,7 @@ public class Replicator implements ThreadId.OnError {
     }
 
     /**
-     * 将其他属性填充到 entry 中
+     * 将其他属性填充到元数据中
      * @param nextSendingIndex
      * @param offset  offset在 0 ～ maxEntry 之间
      * @param emb  如果 LogEntry 是 conf 类型 将 2组peerIdList 设置到 EntryMeta
@@ -899,15 +904,16 @@ public class Replicator implements ThreadId.OnError {
      */
     boolean prepareEntry(final long nextSendingIndex, final int offset, final RaftOutter.EntryMeta.Builder emb,
                          final RecyclableByteBufferList dateBuffer) {
-        // 每当往 databuffer 中插入数据 capacity 都会增加 所以当超过 max 时 就代表填充满了
+        // 代表当前buffer存储的容量超过了 maxBody
         if (dateBuffer.getCapacity() >= this.raftOptions.getMaxBodySize()) {
             return false;
         }
         // 代表下个要选择的 偏移量
         final long logIndex = nextSendingIndex + offset;
-        // 从存储数据的 logManager 中获取数据  如果用户是一批一批的复制数据 那么应该在前面的数据成功发送到半数后才进行下次的发送吧
-        // 这里应该要通过什么标识来确保nextSendingIndex 不要将2次任务数据混起来
+        // 因为当前节点是leader 所以发送数据都以该节点为基准 全部发送， 同时发送中的entry会存在于inflight中
+        // 配个rpcFlight 使得生成的nextSendingIndex不会跟之前发送过的数据重复
         final LogEntry entry = this.options.getLogManager().getEntry(logIndex);
+        // 代表没有数据可复制了 上面这段逻辑就体现了batch的概念
         if (entry == null) {
             return false;
         }
@@ -934,6 +940,7 @@ public class Replicator implements ThreadId.OnError {
                 "Empty peers but is ENTRY_TYPE_CONFIGURATION type at logIndex=%d", logIndex);
         }
         final int remaining = entry.getData() != null ? entry.getData().remaining() : 0;
+        // 元数据中存放了 当前entry的任期 以及数据长度
         emb.setDataLen(remaining);
         // 如果是data 类型 会写入到 databuffer 中
         if (entry.getData() != null) {
@@ -999,7 +1006,7 @@ public class Replicator implements ThreadId.OnError {
     }
 
     /**
-     * 设置追赶用的回调   必须确保当前 catchUpClosure 为null
+     * 为该follower 设置一个追赶用的回调对象
      * @param id
      * @param maxMargin
      * @param dueTime
@@ -1184,8 +1191,7 @@ public class Replicator implements ThreadId.OnError {
                 // 触发销毁方法
                 r.destroy();
             }
-            // 代表心跳超时  通过这种方式来发送心跳???  每当调用心跳方法后 只要 id 还有效 也就是不为null 那么下次就会继续触发onError
-            // 然后触发 sendHeartbeat  继续发送心跳
+            // 通过 生成异常的方式来 触发心跳
         } else if (errorCode == RaftError.ETIMEDOUT.getNumber()) {
             id.unlock();
             Utils.runInThread(() -> sendHeartbeat(id));
@@ -1197,7 +1203,7 @@ public class Replicator implements ThreadId.OnError {
     }
 
     /**
-     * 每隔指定的时间 触发一次 onCaughtUp
+     * 在指定延时后触发一次 追赶已超时
      * @param id
      */
     private static void onCatchUpTimedOut(final ThreadId id) {
@@ -1222,17 +1228,18 @@ public class Replicator implements ThreadId.OnError {
         if (this.catchUpClosure == null) {
             return;
         }
-        // 代表 该leader 不再是leader 了 可能产生了新的 leader
+        // 代表不是设置的定时检测触发
         if (code != RaftError.ETIMEDOUT.getNumber()) {
+            // 追赶成功
             if (this.nextIndex - 1 + this.catchUpClosure.getMaxMargin() < this.options.getLogManager()
                 .getLastLogIndex()) {
                 return;
             }
-            // 如果该回调已经设置了 异常就不再触发了
+            // 如果该回调已经设置了结果
             if (this.catchUpClosure.isErrorWasSet()) {
                 return;
             }
-            // 这里是基于异常情况触发的 所以设置 errorWasSet = true
+            // 实际上代表已经设置过结果 即使是SUCCESS 这个 标识也要设置
             this.catchUpClosure.setErrorWasSet(true);
             // 如果不是成功 就将异常设置到 回调中
             if (code != RaftError.SUCCESS.getNumber()) {
@@ -1255,7 +1262,7 @@ public class Replicator implements ThreadId.OnError {
         }
         final CatchUpClosure savedClosure = this.catchUpClosure;
         this.catchUpClosure = null;
-        // 在其他线程中触发回调 同时置空 本 catchUpClosure
+        // 如果在指定时间内没有追赶成功 触发回调
         Utils.runClosureInThread(savedClosure, savedClosure.getStatus());
     }
 
@@ -1364,7 +1371,8 @@ public class Replicator implements ThreadId.OnError {
                     "Leader receives higher term heartbeat_response from peer:%s", r.options.getPeerId()));
                 return;
             }
-            // 本次请求失败
+            // 本次请求失败 代表相同偏移量数据发生冲突  这种情况会发生么??? 同一时间即使有2个leader 往follower写入数据它们的任期也是不一样的
+            // 旧的写入一定会被拒绝 而新的写入 会修改follower的任期
             if (!response.getSuccess() && response.hasLastLogIndex()) {
                 if (isLogDebugEnabled) {
                     sb.append(" fail, response term ").append(response.getTerm()).append(" lastLogIndex ")
@@ -1375,7 +1383,7 @@ public class Replicator implements ThreadId.OnError {
                 doUnlock = false;
                 // 发送一次探测请求
                 r.sendEmptyEntries(false);
-                // 启动一次心跳任务
+                // 启动下一次心跳任务
                 r.startHeartbeatTimer(startTimeMs);
                 return;
             }
@@ -1606,7 +1614,7 @@ public class Replicator implements ThreadId.OnError {
                 append(" prevLogTerm=").append(request.getPrevLogTerm()). //
                 append(" count=").append(request.getEntriesCount());
         }
-        // status 是底层通信级别的异常 而不是raft内部异常 可以忽略
+        // 比如 当follower处在安装快照的情况 会进入这个分支 此时不允许写入数据 并且短时间内也不应该允许继续触发写入任务
         if (!status.isOk()) {
             // If the follower crashes, any RPC to the follower fails immediately,
             // so we need to block the follower for a while instead of looping until
@@ -1625,7 +1633,7 @@ public class Replicator implements ThreadId.OnError {
             // 此时可能对端出现了 系统级别的问题 暂停一会后重试
             r.resetInflights();
             r.state = State.Probe;
-            // unlock in in block  在一定延时后 发起一次探测请求
+            // unlock in in block  在一定延时后 继续发送数据
             r.block(startTimeMs, status.getCode());
             return false;
         }
@@ -1644,6 +1652,7 @@ public class Replicator implements ThreadId.OnError {
                 // 进行追赶 前提是要设置追赶用的回调对象  主流程中是不设置的
                 r.notifyOnCaughtUp(RaftError.EPERM.getNumber(), true);
                 r.destroy();
+                // 该方法内部会调用 stepdown
                 node.increaseTermTo(response.getTerm(), new Status(RaftError.EHIGHERTERMRESPONSE,
                     "Leader receives higher term heartbeat_response from peer:%s", r.options.getPeerId()));
                 // 这里返回false 代表不需要继续处理优先队列中的 res 了 因为本节点已经不再是leader 了
@@ -1729,7 +1738,6 @@ public class Replicator implements ThreadId.OnError {
         // 触发追赶逻辑  如果回调未设置不会做操作 可以先忽略
         r.notifyOnCaughtUp(RaftError.SUCCESS.getNumber(), false);
         // dummy_id is unlock in _send_entries
-        // TODO 先不看
         if (r.timeoutNowIndex > 0 && r.timeoutNowIndex < r.nextIndex) {
             r.sendTimeoutNow(false, false);
         }
@@ -1745,8 +1753,7 @@ public class Replicator implements ThreadId.OnError {
      */
     private boolean fillCommonFields(final AppendEntriesRequest.Builder rb, long prevLogIndex, final boolean isHeartbeat) {
         final long prevLogTerm = this.options.getLogManager().getTerm(prevLogIndex);
-        // 如果任期是0 而 logManager 的起始偏移量不是0  且是探测请求
-        // 因为探测请求就是成功leader时首次触发的  只可能是0，0 或者 任期不为0
+        // 首个leader 任期应该是1啊 这里先不管
         if (prevLogTerm == 0 && prevLogIndex != 0) {
             if (!isHeartbeat) {
                 Requires.requireTrue(prevLogIndex < this.options.getLogManager().getFirstLogIndex());
@@ -1758,7 +1765,6 @@ public class Replicator implements ThreadId.OnError {
                 // both prev_log_index and prev_log_term be 0 in the heartbeat
                 // request so that follower would do nothing besides updating its
                 // leader timestamp.
-                // TODO 这里还需要关注下
                 prevLogIndex = 0;
             }
         }
@@ -1805,7 +1811,7 @@ public class Replicator implements ThreadId.OnError {
         try {
             long prevSendIndex = -1;
             while (true) {
-                // 获取下一个应该写入到 follower的偏移量
+                // 获取下一个应该写入到 follower的偏移量  如果有节点处在落后的情况  这里就是从落后的地方开始
                 final long nextSendingIndex = getNextSendIndex();
                 if (nextSendingIndex > prevSendIndex) {
                     // 从指定偏移量开始发送数据 到follower
@@ -1846,32 +1852,33 @@ public class Replicator implements ThreadId.OnError {
         // 该对象用于存放要传输的数据  在 bytebuffer 的基础上增加了 自动扩容能力
         ByteBufferCollector dataBuf = null;
         final int maxEntriesSize = this.raftOptions.getMaxEntriesSize();
-        // 实际上是借助于 recycle 的一个bytebuffer List 该对象会存放 所有data 实体
+        // 这里借助recycle来避免反复创建对象的开销
         final RecyclableByteBufferList byteBufList = RecyclableByteBufferList.newInstance();
         try {
             for (int i = 0; i < maxEntriesSize; i++) {
-                // 发送的数据 被包装成这种类型
+                // 创建元数据对象
                 final RaftOutter.EntryMeta.Builder emb = RaftOutter.EntryMeta.newBuilder();
                 // 填充 meta 对象 无法再添加时跳出该方法
                 if (!prepareEntry(nextSendingIndex, i, emb, byteBufList)) {
                     break;
                 }
-                // em 可以包含conf 信息 也可以包含 data
+                // rb中包含了一组元数据信息
                 rb.addEntries(emb.build());
             }
-            // 如果没有从logManager 中找到对应的数据  一般来说肯定会有数据 有可能是重启了 数据还没有持久化
+            // 代表本次没有需要传输的数据 代表leader与该follower数据同步的情况
             if (rb.getEntriesCount() == 0) {
-                // 判断是否重启了 是的话就安装快照
+                // 如果是这种情况 代表在logManager中已经清除掉了这部分数据 那么就要从快照中寻找数据了
+                // 同时返回false 避免在短时间内 继续触发写入 (因为数据都还没有加载到 logManger中即使想发也没数据)
                 if (nextSendingIndex < this.options.getLogManager().getFirstLogIndex()) {
                     installSnapshot();
                     return false;
                 }
                 // _id is unlock in _wait_more
-                // 往 LogManager 中再插入一个waitMeta 对象  当数据被写入后 继续触发该方法
+                // 往logManager中增加等待对象 这样当leader写入数据时自动触发复制机制
                 waitMoreEntries(nextSendingIndex);
                 return false;
             }
-            // 装载了 data
+            // 代表本次请求中携带数据实体
             if (byteBufList.getCapacity() > 0) {
                 // 申请一个 byteBufferCollector 对象
                 dataBuf = ByteBufferCollector.allocateByRecyclers(byteBufList.getCapacity());
@@ -1881,7 +1888,7 @@ public class Replicator implements ThreadId.OnError {
                 final ByteBuffer buf = dataBuf.getBuffer();
                 // 反转成读模式
                 buf.flip();
-                // 将数据序列化后 设置到rb 中
+                // 将数据序列化后 设置到rb 中  这样rb就包含每个entry对应的任期 以及 数据体长度 以及 包含了所有entry数据的data字段
                 rb.setData(ZeroByteStringHelper.wrap(buf));
             }
         } finally {
@@ -1906,9 +1913,10 @@ public class Replicator implements ThreadId.OnError {
         final int v = this.version;
         final long monotonicSendTimeMs = Utils.monotonicMs();
         final int seq = getAndIncrementReqSeq();
-        // opt中的peerId 对应某个follower 上 实际上有多个Replicator  他们交由ReplicatorGroup 来统一管理
+        // opt中的peerId 对应某个follower 实际上有多个Replicator  他们交由ReplicatorGroup 来统一管理
         final Future<Message> rpcFuture = this.rpcService.appendEntries(this.options.getPeerId().getEndpoint(),
-            request, -1, new RpcResponseClosureAdapter<AppendEntriesResponse>() {
+            request, -1, // 设置-1会使用默认的超时时间而不是真的没有超时限制
+                new RpcResponseClosureAdapter<AppendEntriesResponse>() {
 
                 @Override
                 public void run(final Status status) {
@@ -1958,9 +1966,9 @@ public class Replicator implements ThreadId.OnError {
     }
 
     /**
-     * 发送一个通知某节点 竞选候选人的请求
+     * 发送一个通知某节点 竞选候选人的请求  当要更换leader时触发
      * @param unlockId
-     * @param stopAfterFinish
+     * @param stopAfterFinish  当本次动作完成后是否要停止本节点  针对更换leader请求是不需要的
      * @param timeoutMs
      */
     private void sendTimeoutNow(final boolean unlockId, final boolean stopAfterFinish, final int timeoutMs) {
@@ -1987,6 +1995,13 @@ public class Replicator implements ThreadId.OnError {
 
     }
 
+    /**
+     * 发送一个超时请求
+     * @param rb
+     * @param stopAfterFinish  代表本次结束后是否要终止本节点
+     * @param timeoutMs
+     * @return
+     */
     private Future<Message> timeoutNow(final TimeoutNowRequest.Builder rb, final boolean stopAfterFinish,
                                        final int timeoutMs) {
         final TimeoutNowRequest request = rb.build();
@@ -2004,7 +2019,7 @@ public class Replicator implements ThreadId.OnError {
     }
 
     /**
-     * 针对 leader 主动通知某个节点成为候选人 后处理res 的回调
+     * 更换leader相关的结果处理
      * @param id
      * @param status
      * @param request
@@ -2035,7 +2050,7 @@ public class Replicator implements ThreadId.OnError {
             notifyReplicatorStatusListener(r, ReplicatorEvent.ERROR, status);
             // 本次收到异常结果 还是要关闭本复制机
             if (stopAfterFinish) {
-                // 每次关闭前调用的该方法是干嘛的???
+                // 触发某个新加入的节点的追赶回调
                 r.notifyOnCaughtUp(RaftError.ESTOP.getNumber(), true);
                 r.destroy();
             } else {
@@ -2047,7 +2062,7 @@ public class Replicator implements ThreadId.OnError {
             sb.append(response.getSuccess() ? " success" : " fail");
             LOG.debug(sb.toString());
         }
-        // 代表本节点已经落后
+        // 代表本节点已经落后 实际上正常情况下 对端的任期就会增加 同时本节点要降级
         if (response.getTerm() > r.options.getTerm()) {
             final NodeImpl node = r.options.getNode();
             r.notifyOnCaughtUp(RaftError.EPERM.getNumber(), true);
@@ -2089,6 +2104,12 @@ public class Replicator implements ThreadId.OnError {
         return r.lastRpcSendTimestamp;
     }
 
+    /**
+     * 指定某个节点变成leader
+     * @param id
+     * @param logIndex
+     * @return
+     */
     public static boolean transferLeadership(final ThreadId id, final long logIndex) {
         final Replicator r = (Replicator) id.lock();
         if (r == null) {
@@ -2098,7 +2119,13 @@ public class Replicator implements ThreadId.OnError {
         return r.transferLeadership(logIndex);
     }
 
+    /**
+     * 指定当前复制机对象的follower变成leader 同时传入 leader当前的logManager下标(最新值，可能是尚未提交成功的)
+     * @param logIndex
+     * @return
+     */
     private boolean transferLeadership(final long logIndex) {
+        // 如果leader 与follower 完全一致 立即更换leader
         if (this.hasSucceeded && this.nextIndex > logIndex) {
             // _id is unlock in _send_timeout_now
             this.sendTimeoutNow(true, false);
@@ -2106,6 +2133,7 @@ public class Replicator implements ThreadId.OnError {
         }
         // Register log_index so that _on_rpc_return trigger
         // _send_timeout_now if _next_index reaches log_index
+        // 如果数据还没有完成同步 那么先设置标识 之后等请求处理完了自动会做同步
         this.timeoutNowIndex = logIndex;
         this.id.unlock();
         return true;

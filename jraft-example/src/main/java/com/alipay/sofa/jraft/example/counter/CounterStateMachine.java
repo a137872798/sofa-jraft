@@ -71,7 +71,7 @@ public class CounterStateMachine extends StateMachineAdapter {
     }
 
     /**
-     * 返回时代表用户成功写入了数据
+     * 返回时代表用户成功写入了数据    这时才会触发用户请求写入数据时的回调
      * @param iter iterator of states  一般是单个回调 当发生积压时 批量处理的那组回调会一次传回来
      */
     @Override
@@ -97,6 +97,7 @@ public class CounterStateMachine extends StateMachineAdapter {
                 }
             }
             final long prev = this.value.get();
+            // 虽然用户可能感知不到某个回调已经被处理了 但是 当前状态机中的值却是最新的
             final long updated = value.addAndGet(delta);
             if (closure != null) {
                 closure.getResponse().setValue(updated);
@@ -119,6 +120,7 @@ public class CounterStateMachine extends StateMachineAdapter {
         Utils.runInThread(() -> {
             final CounterSnapshotFile snapshot = new CounterSnapshotFile(writer.getPath() + File.separator + "data");
             if (snapshot.save(currVal)) {
+                if (writer.addFile("data")) {
                 if (writer.addFile("data")) {
                     done.run(Status.OK());
                 } else {

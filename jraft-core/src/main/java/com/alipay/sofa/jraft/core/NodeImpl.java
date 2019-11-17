@@ -373,6 +373,7 @@ public class NodeImpl implements Node, RaftServerService {
 
         /**
          * Start change configuration.
+         * 当配置发生变动时触发
          */
         void start(final Configuration oldConf, final Configuration newConf, final Closure done) {
             if (isBusy()) {
@@ -388,36 +389,49 @@ public class NodeImpl implements Node, RaftServerService {
                 throw new IllegalArgumentException("Already have done closure");
             }
             this.done = done;
+            // 将当前状态更改为 追赶状态
             this.stage = Stage.STAGE_CATCHING_UP;
             this.oldPeers = oldConf.listPeers();
             this.newPeers = newConf.listPeers();
             final Configuration adding = new Configuration();
             final Configuration removing = new Configuration();
+            // 将新增的 和移除的 加入到对应的列表中
             newConf.diff(oldConf, adding, removing);
             this.nchanges = adding.size() + removing.size();
             if (adding.isEmpty()) {
                 nextStage();
                 return;
             }
+            // 获取新增节点
             this.addingPeers = adding.listPeers();
             LOG.info("Adding peers: {}.", this.addingPeers);
             for (final PeerId newPeer : this.addingPeers) {
+                // 通过复制机进行连接 这样通过探测后会自动同步数据
                 if (!this.node.replicatorGroup.addReplicator(newPeer)) {
                     LOG.error("Node {} start the replicator failed, peer={}.", this.node.getNodeId(), newPeer);
+                    // 只要有一个新节点连接失败 会关闭所有新节点
                     onCaughtUp(this.version, newPeer, false);
                     return;
                 }
                 final OnCaughtUp caughtUp = new OnCaughtUp(this.node, this.node.currTerm, newPeer, this.version);
                 final long dueTime = Utils.nowMs() + this.node.options.getElectionTimeoutMs();
+                // getCatchupMargin  代表如果偏移量在多少差值内算是已经追赶上leader了
                 if (!this.node.replicatorGroup.waitCaughtUp(newPeer, this.node.options.getCatchupMargin(), dueTime,
                     caughtUp)) {
                     LOG.error("Node {} waitCaughtUp, peer={}.", this.node.getNodeId(), newPeer);
+                    // 追赶失败时 关闭所有新节点
                     onCaughtUp(this.version, newPeer, false);
                     return;
                 }
             }
         }
 
+        /**
+         * 设置追赶结果
+         * @param version
+         * @param peer
+         * @param success
+         */
         void onCaughtUp(final long version, final PeerId peer, final boolean success) {
             if (version != this.version) {
                 return;
@@ -425,12 +439,14 @@ public class NodeImpl implements Node, RaftServerService {
             Requires.requireTrue(this.stage == Stage.STAGE_CATCHING_UP, "Stage is not in STAGE_CATCHING_UP");
             if (success) {
                 this.addingPeers.remove(peer);
+                // 当全部增加节点 追赶完成后 触发第二步
                 if (this.addingPeers.isEmpty()) {
                     nextStage();
                     return;
                 }
                 return;
             }
+            // 当添加一个节点 并且 连接 该节点失败时触发该方法
             LOG.warn("Node {} fail to catch up peer {} when trying to change peers from {} to {}.",
                 this.node.getNodeId(), peer, this.oldPeers, this.newPeers);
             reset(new Status(RaftError.ECATCHUP, "Peer %s failed to catch up.", peer));
@@ -445,7 +461,7 @@ public class NodeImpl implements Node, RaftServerService {
          * @param st
          */
         void reset(final Status st) {
-            // 这里按照当前集群状态来 关闭状态机
+            // 成功状态下 关闭旧的节点 失败状态下 保留旧节点 关闭新节点
             if (st != null && st.isOk()) {
                 this.node.stopReplicator(this.newPeers, this.oldPeers);
             } else {
@@ -480,12 +496,17 @@ public class NodeImpl implements Node, RaftServerService {
             this.node.unsafeApplyConfiguration(conf, oldConf == null || oldConf.isEmpty() ? null : oldConf, true);
         }
 
+        /**
+         * 当本次配置变更时 没有新增节点触发该方法/添加的节点追赶成功时
+         */
         void nextStage() {
             Requires.requireTrue(isBusy(), "Not in busy stage");
             switch (this.stage) {
+                // 如果正在追赶状态
                 case STAGE_CATCHING_UP:
                     if (this.nchanges > 1) {
                         this.stage = Stage.STAGE_JOINT;
+                        // 此时才开始更换 配置 之前并没有更换
                         this.node.unsafeApplyConfiguration(new Configuration(this.newPeers), new Configuration(
                             this.oldPeers), false);
                         return;
@@ -572,7 +593,7 @@ public class NodeImpl implements Node, RaftServerService {
         opts.setFilterBeforeCopyRemote(this.options.isFilterBeforeCopyRemote());
         // get snapshot throttle
         opts.setSnapshotThrottle(this.options.getSnapshotThrottle());
-        // 核心就是删除了多余的快照文件 只保留最后一个  为什么不都删除呢  ???
+        // 核心就是删除了多余的快照文件 只保留最后一个
         return this.snapshotExecutor.init(opts);
     }
 
@@ -907,7 +928,8 @@ public class NodeImpl implements Node, RaftServerService {
             }
         };
         /**
-         * 定期生成快照  TODO 这个先放一下
+         * 定期生成快照  follower 与 leader 都会生成自己的快照
+         * 实际就是触发 snapshotExecutor.onSnapshot
          */
         this.snapshotTimer = new RepeatedTimer("JRaft-SnapshotTimer", this.options.getSnapshotIntervalSecs() * 1000) {
 
@@ -967,7 +989,6 @@ public class NodeImpl implements Node, RaftServerService {
         }
 
         // 初始化快照存储对象  如果存在快照文件会初始化reader 对象 并触发一个 firstLoadSnapshot 任务 将快照中的数据设置到本地  具体实现由用户定义
-        // TODO 快照相关的都先放一下
         if (!initSnapshotStorage()) {
             LOG.error("Node {} initSnapshotStorage failed.", getNodeId());
             return false;
@@ -1044,9 +1065,10 @@ public class NodeImpl implements Node, RaftServerService {
 
         if (this.snapshotExecutor != null && this.options.getSnapshotIntervalSecs() > 0) {
             LOG.debug("Node {} start snapshot timer, term={}.", getNodeId(), this.currTerm);
-            // 开始启动快照任务 无论是 leader 还是 follower 都可以启动快照任务  是否需要安装快照是根据 当前的 偏移量决定的比如 长时间没有写入数据 偏移量没有发生变化也就不需要保存快照了
-            // 而用户生成的快照文件地址是由 用户自己定义的 只是 在 writer 对象中保存了一个 元数据映射  然后读取快照时 用户能访问到reader 对象 也就知道要读取的文件地址了
-            // TODO 快照相关迟点看
+            // 开始启动快照任务 无论是 leader 还是 follower 都可以启动快照任务
+            // 是否需要安装快照是根据 当前的 偏移量决定的比如 长时间没有写入数据 偏移量没有发生变化也就不需要保存快照了
+            // 而用户生成的快照文件地址是由 用户自己定义的 只是 在 writer 对象中保存了一个 元数据映射
+            // 然后读取快照时 用户能访问到reader 对象 也就知道要读取的文件地址了
             this.snapshotTimer.start();
         }
 
@@ -2002,7 +2024,9 @@ public class NodeImpl implements Node, RaftServerService {
             this.responseBuilder.setSuccess(true).setTerm(this.term);
 
             // Ballot box is thread safe and tolerates disorder.
-            // 更新最后提交的偏移量
+            // 更新最后提交的偏移量 注意该偏移量不是本次写入的值  因为本次写入的并不代表在全局范围内提交成功
+            // 所以只能以leader当前已经提交的偏移量为起点 或者某个滞后的偏移量(已经写入到leader必然在全局范围内提交成功)
+            // 那么最新的投票箱偏移量就是在 leader的心跳中触发
             this.node.ballotBox.setLastCommittedIndex(this.committedIndex);
 
             // 通过回调对象将结果返回到client
@@ -2069,7 +2093,7 @@ public class NodeImpl implements Node, RaftServerService {
             // 这里更新了最后收到心跳的时候 而每个follower 都会有一个选举的定时任务 通过检测在指定时间内没有收到leader 的心跳 尝试将自己升级成candidate
             updateLastLeaderTimestamp(Utils.monotonicMs());
 
-            // 如果本次是写入任务的请求 且正在安装快照 暂时不允许写入新数据
+            // 如果本次是写入任务的请求 且正在安装快照 暂时不允许写入新数据  当leader接收到该响应后会在一定延时后才允许发送数据
             if (entriesCount > 0 && this.snapshotExecutor != null && this.snapshotExecutor.isInstallingSnapshot()) {
                 LOG.warn("Node {} received AppendEntriesRequest while installing snapshot.", getNodeId());
                 return RpcResponseFactory.newResponse(RaftError.EBUSY, "Node %s:%s is installing snapshot.",
@@ -2106,11 +2130,15 @@ public class NodeImpl implements Node, RaftServerService {
                 // heartbeat
                 final AppendEntriesResponse.Builder respBuilder = AppendEntriesResponse.newBuilder() //
                     .setSuccess(true) //  这里设置success 为 true了
-                    .setTerm(this.currTerm) //  这里任期已经给leader 同步了
+                    .setTerm(this.currTerm) //  这里任期已经与leader 同步了
                     .setLastLogIndex(this.logManager.getLastLogIndex());
                 doUnlock = false;
                 this.writeLock.unlock();
                 // see the comments at FollowerStableClosure#run()
+                // 以下代码确保了 follower的 读功能正常运行
+                // request.getCommittedIndex() 代表在整个group中投票箱提交成功的偏移量
+                // 而 prevLogIndex 代表leader 当前与follower同步数据的起始偏移量
+                // TODO 如果某个follower 升级后 投票箱commitedIndex 落后会怎么样???
                 this.ballotBox.setLastCommittedIndex(Math.min(request.getCommittedIndex(), prevLogIndex));
                 return respBuilder.build();
             }
@@ -2135,7 +2163,7 @@ public class NodeImpl implements Node, RaftServerService {
                     if (entry.hasChecksum()) {
                         logEntry.setChecksum(entry.getChecksum()); // since 1.2.6
                     }
-                    // 对应bytebuffer.remaining
+                    // 因为元数据中存放了  每个data的长度 这样可以从 allData中拆解出需要的部分
                     final long dataLen = entry.getDataLen();
                     if (dataLen > 0) {
                         final byte[] bs = new byte[(int) dataLen];
@@ -2197,8 +2225,7 @@ public class NodeImpl implements Node, RaftServerService {
             final FollowerStableClosure closure = new FollowerStableClosure(request, AppendEntriesResponse.newBuilder()
                     // 如果上面发现leader 发生了变化 currTerm 会更新成最新的任期
                 .setTerm(this.currTerm), this, done, this.currTerm);
-            // 只有刷盘成功后才会触发回调  也就是 leader 提交数据 意味着在半数节点刷盘成功
-            // 该方法在leader 中触发回调会修改投票箱的数据 并触发replicator 的复制机制
+            // 刷盘成功后触发 leader投票箱的投票动作
             this.logManager.appendEntries(entries, closure);
             // update configuration after _log_manager updated its memory status
             // 更新配置信息
@@ -2229,7 +2256,7 @@ public class NodeImpl implements Node, RaftServerService {
 
     /**
      * Peer catch up callback
-     * 追赶任期的 回调对象
+     * 追赶回调对象
      * @author boyan (boyan@alibaba-inc.com)
      *
      * 2018-Apr-11 2:10:02 PM
@@ -2265,6 +2292,7 @@ public class NodeImpl implements Node, RaftServerService {
         this.writeLock.lock();
         try {
             // check current_term and state to avoid ABA problem
+            // 如果本节点已经不再是leader 了 就不需要处理
             if (term != this.currTerm && this.state != State.STATE_LEADER) {
                 // term has changed and nothing should be done, otherwise there will be
                 // an ABA problem.
@@ -2272,10 +2300,12 @@ public class NodeImpl implements Node, RaftServerService {
             }
             if (st.isOk()) {
                 // Caught up successfully
+                // 设置追赶结果
                 this.confCtx.onCaughtUp(version, peer, true);
                 return;
             }
             // Retry if this peer is still alive
+            // 这里是提前退出了??? 继续等待
             if (st.getCode() == RaftError.ETIMEDOUT.getNumber()
                 && Utils.monotonicMs() - this.replicatorGroup.getLastRpcSendTimestamp(peer) <= this.options
                     .getElectionTimeoutMs()) {
@@ -2434,6 +2464,12 @@ public class NodeImpl implements Node, RaftServerService {
         }
     }
 
+    /**
+     * 更新当前配置信息 如果有新增节点 必须等待追赶成功 否则取消本次变更 如果是减少不需要等待追赶
+     * @param newConf
+     * @param oldConf
+     * @param leaderStart
+     */
     private void unsafeApplyConfiguration(final Configuration newConf, final Configuration oldConf,
                                           final boolean leaderStart) {
         Requires.requireTrue(this.confCtx.isBusy(), "ConfigurationContext is not busy");
@@ -2443,6 +2479,7 @@ public class NodeImpl implements Node, RaftServerService {
         if (oldConf != null) {
             entry.setOldPeers(oldConf.listPeers());
         }
+        // 生成更改配置的回调
         final ConfigurationChangeDone configurationChangeDone = new ConfigurationChangeDone(this.currTerm, leaderStart);
         // Use the new_conf to deal the quorum of this very log
         if (!this.ballotBox.appendPendingTask(newConf, oldConf, configurationChangeDone)) {
@@ -2451,11 +2488,19 @@ public class NodeImpl implements Node, RaftServerService {
         }
         final List<LogEntry> entries = new ArrayList<>();
         entries.add(entry);
+        // 添加配置成功后更新本conf
         this.logManager.appendEntries(entries, new LeaderStableClosure(entries));
         this.conf = this.logManager.checkAndSetConfiguration(this.conf);
     }
 
+    /**
+     * 注册节点变化
+     * @param oldConf
+     * @param newConf
+     * @param done
+     */
     private void unsafeRegisterConfChange(final Configuration oldConf, final Configuration newConf, final Closure done) {
+        // 必须往leader 节点添加
         if (this.state != State.STATE_LEADER) {
             LOG.warn("Node {} refused configuration changing as the state={}.", getNodeId(), this.state);
             if (done != null) {
@@ -2470,6 +2515,7 @@ public class NodeImpl implements Node, RaftServerService {
             return;
         }
         // check concurrent conf change
+        // isBusy 拒绝变更
         if (this.confCtx.isBusy()) {
             LOG.warn("Node {} refused configuration concurrent changing.", getNodeId());
             if (done != null) {
@@ -2482,6 +2528,7 @@ public class NodeImpl implements Node, RaftServerService {
             Utils.runClosureInThread(done);
             return;
         }
+        // 开始处理配置变动
         this.confCtx.start(oldConf, newConf, done);
     }
 
@@ -3137,6 +3184,7 @@ public class NodeImpl implements Node, RaftServerService {
 
             final Configuration newConf = new Configuration(this.conf.getConf());
             newConf.addPeer(peer);
+            // 将节点变化注册上去
             unsafeRegisterConfChange(this.conf.getConf(), newConf, done);
         } finally {
             this.writeLock.unlock();
@@ -3252,6 +3300,11 @@ public class NodeImpl implements Node, RaftServerService {
         }
     }
 
+    /**
+     * 更换当前leader 节点
+     * @param peer the target peer of new leader
+     * @return
+     */
     @Override
     public Status transferLeadershipTo(final PeerId peer) {
         Requires.requireNonNull(peer, "Null peer");
@@ -3263,6 +3316,7 @@ public class NodeImpl implements Node, RaftServerService {
                 return new Status(this.state == State.STATE_TRANSFERRING ? RaftError.EBUSY : RaftError.EPERM,
                         "Not a leader");
             }
+            // 当前配置正在变更  不能替换leader
             if (this.confCtx.isBusy()) {
                 // It's very messy to deal with the case when the |peer| received
                 // TimeoutNowRequest and increase the term while somehow another leader
@@ -3291,10 +3345,12 @@ public class NodeImpl implements Node, RaftServerService {
                     return new Status(-1, "Candidate not found for any peer");
                 }
             }
+            // 代表要替换成自己 就不需要任何操作
             if (peerId.equals(this.serverId)) {
                 LOG.info("Node {} transferred leadership to self.", this.serverId);
                 return Status.OK();
             }
+            // 要替换的节点必须在当前配置内
             if (!this.conf.contains(peerId)) {
                 LOG.info("Node {} refused to transfer leadership to peer {} as it is not in {}.", getNodeId(), peer,
                     this.conf);
@@ -3302,6 +3358,7 @@ public class NodeImpl implements Node, RaftServerService {
             }
 
             final long lastLogIndex = this.logManager.getLastLogIndex();
+            // 通过复制机组 去更换leader
             if (!this.replicatorGroup.transferLeadershipTo(peerId, lastLogIndex)) {
                 LOG.warn("No such peer {}.", peer);
                 return new Status(RaftError.EINVAL, "No such peer %s", peer);
@@ -3328,7 +3385,7 @@ public class NodeImpl implements Node, RaftServerService {
     }
 
     /**
-     * 从节点处理 立即超时请求
+     * 当需要替换leader 时会触发该方法 而接收请求的节点就是目标节点
      * @param request   data of the timeout now request
      * @param done      callback
      * @return
@@ -3338,6 +3395,7 @@ public class NodeImpl implements Node, RaftServerService {
         boolean doUnlock = true;
         this.writeLock.lock();
         try {
+            // 如果2个节点任期不相等是无法正常替换的 (当前follower相当于是失效状态)
             if (request.getTerm() != this.currTerm) {
                 final long savedCurrTerm = this.currTerm;
                 // 如果请求的任期更新 很有可能该节点是滞后了
@@ -3346,6 +3404,7 @@ public class NodeImpl implements Node, RaftServerService {
                     stepDown(request.getTerm(), false, new Status(RaftError.EHIGHERTERMREQUEST,
                         "Raft node receives higher term request"));
                 }
+                // 无论2个节点哪个任期大 本次都已经失败了 更换leader的前提是2个节点任期要相同
                 LOG.info("Node {} received TimeoutNowRequest from {} while currTerm={} didn't match requestTerm={}.",
                     getNodeId(), request.getPeerId(), savedCurrTerm, request.getTerm());
                 return TimeoutNowResponse.newBuilder() //
@@ -3373,6 +3432,7 @@ public class NodeImpl implements Node, RaftServerService {
             done.sendResponse(resp);
             doUnlock = false;
             // 直接选举自己 跳过预投票阶段 预投票阶段是基于心跳超时的 需要检测其他节点能否正常收到心跳 而直接进入投票阶段 就不需要判断心跳了 只是检测数据是否比半数新 成功的话直接变成leader
+            // 但是其他节点选举该节点的前提是该节点的数据比至少一半节点要新
             electSelf();
             LOG.info("Node {} received TimeoutNowRequest from {}, term={}.", getNodeId(), request.getServerId(),
                 savedTerm);
@@ -3385,7 +3445,8 @@ public class NodeImpl implements Node, RaftServerService {
     }
 
     /**
-     * 处理安装快照的请求
+     * 处理安装快照的请求 (当某个 follower落后leader太多 尝试从logManager中拉取数据发现数据已经保存在快照中了，那么就
+     * 被要求直接从leader处读取快照信息)
      * @param request   data of the install snapshot request
      * @param done      callback
      * @return

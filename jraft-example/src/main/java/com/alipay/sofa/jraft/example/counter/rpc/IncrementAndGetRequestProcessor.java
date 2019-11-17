@@ -76,7 +76,7 @@ public class IncrementAndGetRequestProcessor extends AsyncUserProcessor<Incremen
                         response.setErrorMsg(status.getErrorMsg());
                         response.setSuccess(false);
                     }
-                    // 当用户写入成功时 返回结果
+                    // 当用户写入成功时 返回结果  如果是超时触发的 对用户来说已经是不可见了  因为已经从响应池中移除了对应的接收对象
                     asyncCtx.sendResponse(response);
                 });
 

@@ -351,6 +351,8 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
         if (reader == null) {
             return true;
         }
+
+
         // 代表是重启 快照文件已经保存在本地了
 
         // 有快照文件却没有元数据抛出异常
@@ -360,7 +362,7 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
             Utils.closeQuietly(reader);
             return false;
         }
-        // 设置成正在加载快照
+        // loadingSnapshot 代表从本地文件中读取快照信息
         this.loadingSnapshot = true;
         // 增加当前正在执行的任务数量
         this.runningJobs.incrementAndGet();
@@ -422,18 +424,19 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
                 return;
             }
 
-            // 如果当前正在下载快照
+            // 如果当前正在下载快照 (从leader)   那么不能在这时安装快照
             if (this.downloadingSnapshot.get() != null) {
                 Utils.runClosureInThread(done, new Status(RaftError.EBUSY, "Is loading another snapshot."));
                 return;
             }
-            // 如果当前正在保存快照 保存快照就对应 leader  downloadingSnapshot 就对应follower
+            // 不能重复保存快照
             if (this.savingSnapshot) {
                 Utils.runClosureInThread(done, new Status(RaftError.EBUSY, "Is saving another snapshot."));
                 return;
             }
 
-            // 每次在加载快照完成后 或者某个数据 刷盘到 LogManager 后 lastAppliedIndex都会变化  如果二者相等就代表没有新的数据写入
+            // appliedIndex 代表处理到的用户回调下标  如果等同于上次快照的偏移量 那么就是该时间间隔内 没有任何新的任务成功提交
+            // 就没有必要生成快照
             if (this.fsmCaller.getLastAppliedIndex() == this.lastSnapshotIndex) {
                 // There might be false positive as the getLastAppliedIndex() is being
                 // updated. But it's fine since we will do next snapshot saving in a
@@ -454,7 +457,7 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
                 reportError(RaftError.EIO.getNumber(), "Fail to create snapshot writer.");
                 return;
             }
-            // 代表当前开始保存快照信息  这段是不是可以放到前面???
+            // 代表当前开始保存快照信息
             this.savingSnapshot = true;
             // 创建一个保存快照的回调对象 同时该对象内部嵌套着本次传入的新回调对象  默认情况下本次实际的回调对象为null
             final SaveSnapshotDone saveSnapshotDone = new SaveSnapshotDone(writer, done, null);
@@ -489,6 +492,7 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
             // because upstream Snapshot maybe newer than local Snapshot.
             if (st.isOk()) {
                 // 如果要安装的数据比当前数据还旧  设置异常结果
+                // getLastIncludedIndex 就是触发用户的回调下标 (也就是对于用户已知提交成功的任务)
                 if (meta.getLastIncludedIndex() <= this.lastSnapshotIndex) {
                     ret = RaftError.ESTALE.getNumber();
                     if (this.node != null) {
@@ -502,8 +506,9 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
             this.lock.unlock();
         }
 
+        // 代表没有出现异常
         if (ret == 0) {
-            // 存储元数据到writer中 (实际上是保存到 metaTable中)
+            // 存储元数据到writer中 (实际上是保存到 metaTable中)  这样才能确保在加载快照的时候能从元数据中获取想要文件的信息
             if (!writer.saveMeta(meta)) {
                 LOG.warn("Fail to save snapshot {}", writer.getPath());
                 ret = RaftError.EIO.getNumber();
@@ -550,7 +555,7 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
     }
 
     /**
-     * 当状态机(也就是按照用户的需求)处理完 下载快照文件的后置逻辑后 触发
+     * 当状态机(也就是按照用户的需求)处理完 加载快照文件的请求
      * @param st  代表本次结果
      */
     private void onSnapshotLoadDone(final Status st) {
@@ -560,7 +565,7 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
         try {
             // 必须要在 正在加载快照的状态下才能继续
             Requires.requireTrue(this.loadingSnapshot, "Not loading snapshot");
-            // 如果是正常情况 该属性还没有被清除
+            // 是否正在从leader 下载快照 如果是从本地快照文件加载 是不会设置这个的(对应初始化加载快照文件的流程)
             m = this.downloadingSnapshot.get();
             if (st.isOk()) {
                 // 可以更新最新的快照偏移量了  (当整套流程走完 包括用户的状态机加载快照逻辑执行完)
@@ -597,7 +602,7 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
                 this.lock.unlock();
             }
         }
-        // 直到这里才触发一开始 创建下载快照任务的回调
+        // 直到这里才触发一开始 创建下载快照任务的回调  当然如果是初始化时加载本地快照数据 m为null
         if (m != null) {
             // Respond RPC
             if (!st.isOk()) {
@@ -717,7 +722,8 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
                 ds.done.sendResponse(RpcResponseFactory.newResponse(RaftError.EHOSTDOWN, "Node is stopped."));
                 return false;
             }
-            // follower 可以save快照吗 不是只有leader 才可以save快照吗
+            // 如果当前正在保存快照 需要等待  replicator 会开启一个定时任务在过一段时间后重新发起探测任务
+            // 之后重新触发 sendEntries
             if (this.savingSnapshot) {
                 LOG.warn("Register DownloadingSnapshot failed: is saving snapshot");
                 ds.done.sendResponse(RpcResponseFactory.newResponse(RaftError.EBUSY, "Node is saving snapshot."));
@@ -787,7 +793,6 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
                 return false;
             } else {
                 // |is| is newer
-                // 如果旧的任务已经开始下载了 这里也无法完成注册
                 if (this.loadingSnapshot) {
                     LOG.warn("Register DownloadingSnapshot failed: is loading an older snapshot, lastIncludeIndex={}",
                         m.request.getMeta().getLastIncludedIndex());
@@ -795,7 +800,6 @@ public class SnapshotExecutorImpl implements SnapshotExecutor {
                         "A former snapshot is under loading"));
                     return false;
                 }
-                // 这里也要关闭 ???  这里不是添加了一个更新的任务吗
                 Requires.requireNonNull(this.curCopier, "curCopier");
                 this.curCopier.cancel();
                 LOG.warn(
