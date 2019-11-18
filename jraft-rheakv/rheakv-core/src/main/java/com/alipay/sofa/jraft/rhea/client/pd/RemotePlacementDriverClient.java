@@ -35,7 +35,6 @@ import com.alipay.sofa.jraft.rhea.util.Strings;
 import com.alipay.sofa.jraft.util.Endpoint;
 
 /**
- * 访问远端的 PD???
  * @author jiachun.fjc
  */
 public class RemotePlacementDriverClient extends AbstractPlacementDriverClient {
@@ -60,6 +59,11 @@ public class RemotePlacementDriverClient extends AbstractPlacementDriverClient {
         super(clusterId, clusterName);
     }
 
+    /**
+     * 针对 PD 服务进行初始化
+     * @param opts
+     * @return
+     */
     @Override
     public synchronized boolean init(final PlacementDriverOptions opts) {
         if (this.started) {
@@ -131,7 +135,6 @@ public class RemotePlacementDriverClient extends AbstractPlacementDriverClient {
      */
     @Override
     public Store getStoreMetadata(final StoreEngineOptions opts) {
-        // 这里返回的是 store 的地址吗 store 算是 jraft 中的一个节点还是其他概念???
         final Endpoint selfEndpoint = opts.getServerAddress();
         // remote conf is the preferred
         final Store remoteStore = this.metadataRpcClient.getStoreInfo(this.clusterId, selfEndpoint);

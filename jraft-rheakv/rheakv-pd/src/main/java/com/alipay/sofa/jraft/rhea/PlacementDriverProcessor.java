@@ -50,7 +50,7 @@ import com.alipay.sofa.jraft.util.Requires;
  *      only the region-leader can report the 'Region' information, and
  *      the flower cant not.
  * </pre>
- * 用户自定义的处理器  作为通信端接受请求 并分发处理
+ * PD请求相关的处理器
  * @author jiachun.fjc
  */
 public class PlacementDriverProcessor<T extends BaseRequest> extends AsyncUserProcessor<T> {
@@ -77,6 +77,7 @@ public class PlacementDriverProcessor<T extends BaseRequest> extends AsyncUserPr
             case BaseRequest.REGION_HEARTBEAT:
                 this.placementDriverService.handleRegionHeartbeatRequest((RegionHeartbeatRequest) request, closure);
                 break;
+                // 触发获取集群信息的请求
             case BaseRequest.GET_CLUSTER_INFO:
                 this.placementDriverService.handleGetClusterInfoRequest((GetClusterInfoRequest) request, closure);
                 break;

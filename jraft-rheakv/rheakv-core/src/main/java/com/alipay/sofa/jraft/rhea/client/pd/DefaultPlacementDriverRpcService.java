@@ -92,6 +92,7 @@ public class DefaultPlacementDriverRpcService implements PlacementDriverRpcServi
     @Override
     public <V> CompletableFuture<V> callPdServerWithRpc(final BaseRequest request, final FailoverClosure<V> closure,
                                                         final Errors lastCause) {
+        // 如果是某节点失效的异常 需要重新刷新路由表
         final boolean forceRefresh = ErrorsHelper.isInvalidPeer(lastCause);
         // 获取leader 的地址
         final Endpoint endpoint = this.pdClient.getPdLeader(forceRefresh, this.rpcTimeoutMillis);

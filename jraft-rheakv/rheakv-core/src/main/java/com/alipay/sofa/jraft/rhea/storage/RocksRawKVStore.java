@@ -880,7 +880,6 @@ public class RocksRawKVStore extends BatchRawKVStore<RocksDBOptions> {
             // synchronized clock across the processes, still the local time in
             // every process flows approximately at the same rate, with an error
             // which is small compared to the auto-release time of the lock.
-            // 代表尝试获取锁的时间戳 该值是由谁来设置 又是在哪一环节
             final long now = acquirer.getLockingTimestamp();
             // 持有锁的时间
             final long timeoutMillis = acquirer.getLeaseMillis();

@@ -28,7 +28,7 @@ import com.alipay.sofa.jraft.rhea.options.configured.PlacementDriverOptionsConfi
 import com.alipay.sofa.jraft.rhea.options.configured.RheaKVStoreOptionsConfigured;
 
 /**
- *
+ * rheakv 客户端对象
  * @author jiachun.fjc
  */
 public class Client {

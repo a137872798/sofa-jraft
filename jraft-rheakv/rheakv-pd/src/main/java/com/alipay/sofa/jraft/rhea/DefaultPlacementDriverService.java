@@ -222,12 +222,14 @@ public class DefaultPlacementDriverService implements PlacementDriverService, Le
         final long clusterId = request.getClusterId();
         final GetClusterInfoResponse response = new GetClusterInfoResponse();
         response.setClusterId(clusterId);
+        // 必须确保当前节点为leader节点
         if (!this.isLeader) {
             response.setError(Errors.NOT_LEADER);
             closure.sendResponse(response);
             return;
         }
         try {
+            // PDService 作为 PD 的服务端 保存了整个集群信息，这里通过集群id查询集群
             final Cluster cluster = this.metadataStore.getClusterInfo(clusterId);
             response.setCluster(cluster);
         } catch (final Throwable t) {

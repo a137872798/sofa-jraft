@@ -75,14 +75,17 @@ import com.alipay.sofa.jraft.rhea.util.concurrent.DistributedLock;
 
 /**
  * Rhea KV region RPC request processing service.
- * 用于处理针对 Region 的 RPC 请求 实际上都转发给store 进行处理
  *
+ * 用于处理region 级别的请求
  * @author jiachun.fjc
  */
 public class DefaultRegionKVService implements RegionKVService {
 
     private static final Logger LOG = LoggerFactory.getLogger(DefaultRegionKVService.class);
 
+    /**
+     * 每个服务内部维护一个 regionEngine 实际的存储请求委托给该对象
+     */
     private final RegionEngine  regionEngine;
     private final RawKVStore    rawKVStore;
 
@@ -375,6 +378,11 @@ public class DefaultRegionKVService implements RegionKVService {
         }
     }
 
+    /**
+     * 处理get请求
+     * @param request
+     * @param closure
+     */
     @Override
     public void handleGetRequest(final GetRequest request,
                                  final RequestProcessClosure<BaseRequest, BaseResponse<?>> closure) {

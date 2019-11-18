@@ -97,7 +97,7 @@ public class StoreEngine implements Lifecycle<StoreEngineOptions> {
      */
     private final ConcurrentMap<Long, RegionEngine>    regionEngineTable    = Maps.newConcurrentMapLong();
     /**
-     * PD客户端
+     * 内置了PD客户端  可以直接与PD 交互(PD 内部维护了region信息)
      */
     private final PlacementDriverClient                pdClient;
     private final long                                 clusterId;
@@ -157,6 +157,7 @@ public class StoreEngine implements Lifecycle<StoreEngineOptions> {
             return true;
         }
         this.storeOpts = Requires.requireNonNull(opts, "opts");
+        // store服务地址
         Endpoint serverAddress = Requires.requireNonNull(opts.getServerAddress(), "opts.serverAddress");
         final int port = serverAddress.getPort();
         final String ip = serverAddress.getIp();
@@ -169,16 +170,16 @@ public class StoreEngine implements Lifecycle<StoreEngineOptions> {
         // init region options  初始化 以region  为单位的存储对象
         List<RegionEngineOptions> rOptsList = opts.getRegionEngineOptionsList();
         if (rOptsList == null || rOptsList.isEmpty()) {
-            // -1 region  代表没有regionEngine相关配置 就创建一个默认值
+            // -1 region  代表没有regionEngine相关配置 就创建一个默认值  看来store如果没有指定 region 会初始化一个 默认的
             final RegionEngineOptions rOpts = new RegionEngineOptions();
             rOpts.setRegionId(Constants.DEFAULT_REGION_ID);
             rOptsList = Lists.newArrayList();
             rOptsList.add(rOpts);
             opts.setRegionEngineOptionsList(rOptsList);
         }
-        // 获取集群名
+        // 获取集群名  每个集群对应一个 raft组
         final String clusterName = this.pdClient.getClusterName();
-        // 生成regionEngine   看来regionEngine 是属于某个 storeEngine 的 一个storeEngine 下有多个regionEngine
+        // 生成regionEngine  如果没有设置的情况下 最少会有一个默认的
         for (final RegionEngineOptions rOpts : rOptsList) {
             rOpts.setRaftGroupId(JRaftHelper.getJRaftGroupId(clusterName, rOpts.getRegionId()));
             rOpts.setServerAddress(serverAddress);
@@ -195,7 +196,7 @@ public class StoreEngine implements Lifecycle<StoreEngineOptions> {
                 rOpts.setMetricsReportPeriod(metricsReportPeriod);
             }
         }
-        // init store 通过 pdClient 内部的 metadataRpcClient 以及opts 的 serverEndpoint 去 拉取store信息 同时会更新regionRouteTable
+        // init store 初始化store，region信息
         final Store store = this.pdClient.getStoreMetadata(opts);
         if (store == null || store.getRegions() == null || store.getRegions().isEmpty()) {
             LOG.error("Empty store metadata: {}.", store);
@@ -227,23 +228,24 @@ public class StoreEngine implements Lifecycle<StoreEngineOptions> {
         }
         // init metrics
         startMetricReporters(metricsReportPeriod);
-        // init rpc server  创建RpcServer 用于接受远端的请求
+        // init rpc server  创建RpcServer 用于接受远端的请求  该对象相当于是 RhealKVStore 的核心
         this.rpcServer = new RpcServer(port, true, true);
         // 注册请求处理器  raftRpcExecutor 代表处理 raft 请求 cli 代表处理命令行请求
         RaftRpcServerFactory.addRaftRequestProcessors(this.rpcServer, this.raftRpcExecutor, this.cliRpcExecutor);
-        // 本对象具备处理多种req 的能力
+        // 设置关于kv相关请求的处理器
         StoreEngineHelper.addKvStoreRequestProcessor(this.rpcServer, this);
         // 启动netty 服务器
         if (!this.rpcServer.start()) {
             LOG.error("Fail to init [RpcServer].");
             return false;
         }
-        // init db store  初始化KVStore 失败
+        // init db store  初始化持久层
         if (!initRawKVStore(opts)) {
             return false;
         }
         // init all region engine
-        // 初始化该storeEngine 下所有的 regionEngine
+        // 初始化该storeEngine 下所有的 regionEngine  每个regionEngine 中包含对应的状态机和节点 也就是 storeEngine 负责控制分发请求到regionEngine 上
+        // 实际的处理逻辑在regionEngine 中
         if (!initAllRegionEngine(opts, store)) {
             LOG.error("Fail to init all [RegionEngine].");
             return false;
@@ -760,6 +762,7 @@ public class StoreEngine implements Lifecycle<StoreEngineOptions> {
                 final RegionKVService regionKVService = new DefaultRegionKVService(engine);
                 // 将服务注册到storeEngine 上
                 registerRegionKVService(regionKVService);
+                // 维护 regionId 与 引擎对象的映射
                 this.regionEngineTable.put(region.getId(), engine);
             } else {
                 LOG.error("Fail to init [RegionEngine: {}].", region);
@@ -770,7 +773,7 @@ public class StoreEngine implements Lifecycle<StoreEngineOptions> {
     }
 
     /**
-     * 将regionId 与对应的 服务 设置到映射容器中
+     * 维护 regionId 与对应服务的映射容器
      * @param regionKVService
      */
     private void registerRegionKVService(final RegionKVService regionKVService) {

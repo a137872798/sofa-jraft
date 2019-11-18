@@ -65,7 +65,6 @@ public interface CliClientService extends ClientService {
 
     /**
      * Do a snapshot.
-     * 快照不都是 服务器 发往客户端吗 为什么这里有个方法???
      * @param endpoint  server address
      * @param request   request data
      * @param done      callback

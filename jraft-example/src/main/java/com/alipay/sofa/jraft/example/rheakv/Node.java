@@ -34,6 +34,7 @@ public class Node {
     }
 
     public void start() {
+        // 这里节点被加工成一个 KVStore 对象
         this.rheaKVStore = new DefaultRheaKVStore();
         this.rheaKVStore.init(this.options);
     }

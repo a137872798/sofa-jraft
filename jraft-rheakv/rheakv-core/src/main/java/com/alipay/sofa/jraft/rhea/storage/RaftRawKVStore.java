@@ -343,7 +343,7 @@ public class RaftRawKVStore implements RawKVStore {
         task.setData(ByteBuffer.wrap(Serializers.getDefault().writeObject(op)));
         // 将 op(内部包含 kv  和 回调对象 设置到 task中)
         task.setDone(new KVClosureAdapter(closure, op));
-        // 将任务提交到节点中    状态机是什么样的角色 store 又是什么样的角色  如果要实现特定功能要连整个store 一起实现那么该框架并不见得有多方便
+        // 将任务提交到节点中
         this.node.apply(task);
     }
 

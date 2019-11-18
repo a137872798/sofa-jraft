@@ -42,22 +42,22 @@ import com.alipay.sofa.jraft.util.Utils;
  * Counter state machine.
  *
  * @author boyan (boyan@alibaba-inc.com)
- *
+ * <p>
  * 2018-Apr-09 4:52:31 PM
  */
 public class CounterStateMachine extends StateMachineAdapter {
 
-    private static final Logger LOG        = LoggerFactory.getLogger(CounterStateMachine.class);
+    private static final Logger LOG = LoggerFactory.getLogger(CounterStateMachine.class);
 
     /**
      * Counter value
      */
-    private final AtomicLong    value      = new AtomicLong(0);
+    private final AtomicLong value = new AtomicLong(0);
     /**
      * Leader term
      * 通过检测 leader 的上线和下线 判断该节点是否是leader 节点
      */
-    private final AtomicLong    leaderTerm = new AtomicLong(-1);
+    private final AtomicLong leaderTerm = new AtomicLong(-1);
 
     public boolean isLeader() {
         return this.leaderTerm.get() > 0;
@@ -72,6 +72,7 @@ public class CounterStateMachine extends StateMachineAdapter {
 
     /**
      * 返回时代表用户成功写入了数据    这时才会触发用户请求写入数据时的回调
+     *
      * @param iter iterator of states  一般是单个回调 当发生积压时 批量处理的那组回调会一次传回来
      */
     @Override
@@ -90,7 +91,7 @@ public class CounterStateMachine extends StateMachineAdapter {
                 final ByteBuffer data = iter.getData();
                 try {
                     final IncrementAndGetRequest request = SerializerManager.getSerializer(SerializerManager.Hessian2)
-                        .deserialize(data.array(), IncrementAndGetRequest.class.getName());
+                            .deserialize(data.array(), IncrementAndGetRequest.class.getName());
                     delta = request.getDelta();
                 } catch (final CodecException e) {
                     LOG.error("Fail to decode IncrementAndGetRequest", e);
@@ -111,6 +112,7 @@ public class CounterStateMachine extends StateMachineAdapter {
 
     /**
      * 注意保存快照是 如何利用 writer 对象的
+     *
      * @param writer
      * @param done
      */
@@ -121,13 +123,14 @@ public class CounterStateMachine extends StateMachineAdapter {
             final CounterSnapshotFile snapshot = new CounterSnapshotFile(writer.getPath() + File.separator + "data");
             if (snapshot.save(currVal)) {
                 if (writer.addFile("data")) {
-                if (writer.addFile("data")) {
-                    done.run(Status.OK());
+                    if (writer.addFile("data")) {
+                        done.run(Status.OK());
+                    } else {
+                        done.run(new Status(RaftError.EIO, "Fail to add file to writer"));
+                    }
                 } else {
-                    done.run(new Status(RaftError.EIO, "Fail to add file to writer"));
+                    done.run(new Status(RaftError.EIO, "Fail to save counter snapshot %s", snapshot.getPath()));
                 }
-            } else {
-                done.run(new Status(RaftError.EIO, "Fail to save counter snapshot %s", snapshot.getPath()));
             }
         });
     }
@@ -139,6 +142,7 @@ public class CounterStateMachine extends StateMachineAdapter {
 
     /**
      * 最简易的 有关快照下载完的后置操作 就是从reader 中读取数据并设置到当前对象中
+     *
      * @param reader
      * @return
      */

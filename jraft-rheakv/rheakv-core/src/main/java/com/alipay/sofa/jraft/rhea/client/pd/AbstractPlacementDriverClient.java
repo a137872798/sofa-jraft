@@ -100,6 +100,7 @@ public abstract class AbstractPlacementDriverClient implements PlacementDriverCl
     public synchronized boolean init(final PlacementDriverOptions opts) {
         // 初始化 cli 客户端
         initCli(opts.getCliOptions());
+        // 与PD交互时使用的服务对象 内部包含一个client
         this.pdRpcService = new DefaultPlacementDriverRpcService(this);
         RpcOptions rpcOpts = opts.getPdRpcOptions();
         if (rpcOpts == null) {
@@ -276,6 +277,13 @@ public abstract class AbstractPlacementDriverClient implements PlacementDriverCl
         return false;
     }
 
+    /**
+     * 获取某个 region 上的leader
+     * @param regionId
+     * @param forceRefresh
+     * @param timeoutMillis
+     * @return
+     */
     @Override
     public Endpoint getLeader(final long regionId, final boolean forceRefresh, final long timeoutMillis) {
         final String raftGroupId = JRaftHelper.getJRaftGroupId(this.clusterName, regionId);
@@ -461,7 +469,7 @@ public abstract class AbstractPlacementDriverClient implements PlacementDriverCl
         conf.parse(initialServerList);
         region.setPeers(JRaftHelper.toPeerList(conf.listPeers()));
         // update raft route table
-        // 创建一个 groupId 与 conf 的映射到 routeTable中
+        // 将regionId 与clusterName 组成一个 groupId 与 conf 的映射到 routeTable中
         RouteTable.getInstance().updateConfiguration(JRaftHelper.getJRaftGroupId(clusterName, regionId), conf);
         this.regionRouteTable.addOrUpdateRegion(region);
     }

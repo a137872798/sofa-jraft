@@ -74,7 +74,7 @@ public class MetadataRpcClient {
         // 定义了 针对某个Error 的重试逻辑
         final RetryRunner retryRunner = retryCause -> internalGetClusterInfo(clusterId, future,
                 retriesLeft - 1, retryCause);
-        // 创建一个故障转移回调  在不断递归中如果retriesLeft <= 0 会怎么样
+        // 创建一个故障转移回调
         final FailoverClosure<Cluster> closure = new FailoverClosureImpl<>(future, retriesLeft, retryRunner);
         final GetClusterInfoRequest request = new GetClusterInfoRequest();
         request.setClusterId(clusterId);

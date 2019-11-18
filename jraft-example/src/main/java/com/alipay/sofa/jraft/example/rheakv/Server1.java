@@ -27,7 +27,7 @@ import com.alipay.sofa.jraft.rhea.storage.StorageType;
 import com.alipay.sofa.jraft.util.Endpoint;
 
 /**
- *
+ * rheakv demo
  * @author jiachun.fjc
  */
 public class Server1 {
@@ -49,6 +49,7 @@ public class Server1 {
                 .withPlacementDriverOptions(pdOpts) //
                 .config();
         System.out.println(opts);
+        // 通过指定配置进行初始化
         final Node node = new Node(opts);
         node.start();
         Runtime.getRuntime().addShutdownHook(new Thread(node::stop));

@@ -26,7 +26,7 @@ import com.alipay.sofa.jraft.rhea.options.RpcOptions;
 
 /**
  * Placement driver's rpc client for sending requests and receiving responses.
- * 安置驱动
+ * 与PD交互的服务 这里只指定了一个方法 通过实现BaseRequest 以及在PD 服务器设置对应的请求处理器 
  * @author jiachun.fjc
  */
 public interface PlacementDriverRpcService extends Lifecycle<RpcOptions> {

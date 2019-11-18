@@ -180,7 +180,7 @@ import com.lmax.disruptor.dsl.Disruptor;
  *      This is very simple, re-acquire the latest leader of the raft-group to which the current key belongs,
  *      and then call again.
  * </pre>
- * 基于 KV 存储的默认实现   看来store 对应所有region 的整体 要查询的数据可能会落在多个region中 会将查询转换成对多个region的查询
+ * 子模块 内部包含一个 kv关系型存储库 RheaKVStore
  * @author jiachun.fjc
  */
 public class DefaultRheaKVStore implements RheaKVStore {
@@ -224,6 +224,11 @@ public class DefaultRheaKVStore implements RheaKVStore {
 
     private volatile boolean      started;
 
+    /**
+     * 初始化KV 存储对象， 该对象基于raft协议实现了 分布式锁
+     * @param opts
+     * @return
+     */
     @Override
     public synchronized boolean init(final RheaKVStoreOptions opts) {
         if (this.started) {
@@ -232,12 +237,14 @@ public class DefaultRheaKVStore implements RheaKVStore {
         }
         this.opts = opts;
         // init placement driver  初始化 PD 驱动
+        // PD 驱动相当于一个管理中心 所有store的相关信息都可以在上面查询
         final PlacementDriverOptions pdOpts = opts.getPlacementDriverOptions();
         final String clusterName = opts.getClusterName();
         Requires.requireNonNull(pdOpts, "opts.placementDriverOptions");
         Requires.requireNonNull(clusterName, "opts.clusterName");
         if (Strings.isBlank(pdOpts.getInitialServerList())) {
             // if blank, extends parent's value
+            // 如果没有初始化服务列表 使用父类的列表
             pdOpts.setInitialServerList(opts.getInitialServerList());
         }
         // 生成 本地 or remote PD驱动客户端
@@ -246,7 +253,7 @@ public class DefaultRheaKVStore implements RheaKVStore {
         } else {
             this.pdClient = new RemotePlacementDriverClient(opts.getClusterId(), clusterName);
         }
-        // 将集群中所有 region 和store 信息拉取下来保存在本地
+        // 设置PD 中的 region 和 store信息
         if (!this.pdClient.init(pdOpts)) {
             LOG.error("Fail to init [PlacementDriverClient].");
             return false;
@@ -255,16 +262,18 @@ public class DefaultRheaKVStore implements RheaKVStore {
         final StoreEngineOptions stOpts = opts.getStoreEngineOptions();
         if (stOpts != null) {
             stOpts.setInitialServerList(opts.getInitialServerList());
-            // 初始化存储引擎
+            // 初始化存储引擎 同时会初始化下面所有的 regionEngine 和regionService 还有维护 regionId 与对应服务的映射关系etc
             this.storeEngine = new StoreEngine(this.pdClient);
             if (!this.storeEngine.init(stOpts)) {
                 LOG.error("Fail to init [StoreEngine].");
                 return false;
             }
         }
+        // 获取storeEngine 的 地址信息
         final Endpoint selfEndpoint = this.storeEngine == null ? null : this.storeEngine.getSelfEndpoint();
         final RpcOptions rpcOpts = opts.getRpcOptions();
         Requires.requireNonNull(rpcOpts, "opts.rpcOptions");
+        // 创建一个 rpc服务对象 内部封装了 pdClient 用户能直接访问的就是 rpc服务对象
         this.rheaKVRpcService = new DefaultRheaKVRpcService(this.pdClient, selfEndpoint) {
 
             @Override
@@ -418,9 +427,9 @@ public class DefaultRheaKVStore implements RheaKVStore {
     /**
      * 尝试获取某个 key 对应的数据 将结果设置到 future 中并返回
      * @param key
-     * @param readOnlySafe
+     * @param readOnlySafe 默认为true
      * @param future
-     * @param tryBatching
+     * @param tryBatching  默认为true
      * @return
      */
     private CompletableFuture<byte[]> get(final byte[] key, final boolean readOnlySafe,
@@ -450,6 +459,7 @@ public class DefaultRheaKVStore implements RheaKVStore {
      */
     private void internalGet(final byte[] key, final boolean readOnlySafe, final CompletableFuture<byte[]> future,
                              final int retriesLeft, final Errors lastCause, final boolean requireLeader) {
+        // pdClient 内部有2个map 一个维护了 regionId 与 region的关系 还有一个维护了 key 与 regionId的关系
         final Region region = this.pdClient.findRegionByKey(key, ErrorsHelper.isInvalidEpoch(lastCause));
         // require 必须确保regionEngine 对应的node 是 leader  在内部的table 有维护region 与regionEngine 的关系
         final RegionEngine regionEngine = getRegionEngine(region.getId(), requireLeader);
@@ -458,14 +468,15 @@ public class DefaultRheaKVStore implements RheaKVStore {
                 retryCause, true);
         // 将结果填充到future 中
         final FailoverClosure<byte[]> closure = new FailoverClosureImpl<>(future, retriesLeft, retryRunner);
+        // 当成功查询到 地区引擎时
         if (regionEngine != null) {
             // 这里是在比较 region 和 regionEngine 的 regionEpoch 是否相同
             if (ensureOnValidEpoch(region, regionEngine, closure)) {
-                // 拉取数据 并触发回调 这里会将 结果设置到future中如果失败 就会重新调用internalGet
+                // 从存储层拉取数据 并触发回调 这里会将 结果设置到future中如果失败 就会重新调用internalGet
                 getRawKVStore(regionEngine).get(key, readOnlySafe, closure);
             }
+        // 没有查询到就需要通过远程调用 获取某个服务器上的信息
         } else {
-            // 如果没有找到 regionEngine  使用rpc 服务进行异步调用
             final GetRequest request = new GetRequest();
             request.setKey(key);
             request.setReadOnlySafe(readOnlySafe);
@@ -1057,6 +1068,7 @@ public class DefaultRheaKVStore implements RheaKVStore {
         final FailoverClosure<Boolean> closure = new FailoverClosureImpl<>(future, retriesLeft, retryRunner);
         if (regionEngine != null) {
             if (ensureOnValidEpoch(region, regionEngine, closure)) {
+                // 当往node成功写入数据后 会触发回调，执行真正的写入操作
                 getRawKVStore(regionEngine).compareAndPut(key, expect, update, closure);
             }
         } else {
@@ -1166,6 +1178,12 @@ public class DefaultRheaKVStore implements RheaKVStore {
         }
     }
 
+    /**
+     * 存储某个数据
+     * @param key   the specified key to be inserted.
+     * @param value the value associated with the specified key.
+     * @return
+     */
     @Override
     public CompletableFuture<byte[]> putIfAbsent(final byte[] key, final byte[] value) {
         Requires.requireNonNull(key, "key");
@@ -1192,6 +1210,7 @@ public class DefaultRheaKVStore implements RheaKVStore {
 
     private void internalPutIfAbsent(final byte[] key, final byte[] value, final CompletableFuture<byte[]> future,
                                      final int retriesLeft, final Errors lastCause) {
+        // 找到 该key 对应的region
         final Region region = this.pdClient.findRegionByKey(key, ErrorsHelper.isInvalidEpoch(lastCause));
         final RegionEngine regionEngine = getRegionEngine(region.getId(), true);
         final RetryRunner retryRunner = retryCause -> internalPutIfAbsent(key, value, future, retriesLeft - 1,
@@ -1560,18 +1579,31 @@ public class DefaultRheaKVStore implements RheaKVStore {
         }
     }
 
+    /**
+     * storeEngine 的级别比 regionEngine 大 同时每个region对应一个 regionEngine
+     * @param regionId
+     * @return
+     */
     private RegionEngine getRegionEngine(final long regionId) {
         if (this.storeEngine == null) {
             return null;
         }
+        // 通过地区id 查询到 引擎对象
         return this.storeEngine.getRegionEngine(regionId);
     }
 
+    /**
+     * 通过区域id 查询区域引擎
+     * @param regionId
+     * @param requireLeader
+     * @return
+     */
     private RegionEngine getRegionEngine(final long regionId, final boolean requireLeader) {
         final RegionEngine engine = getRegionEngine(regionId);
         if (engine == null) {
             return null;
         }
+        // 如果设置了 requireLeader 那么 引擎必须 isLeader = true
         if (requireLeader && !engine.isLeader()) {
             return null;
         }
@@ -1689,6 +1721,7 @@ public class DefaultRheaKVStore implements RheaKVStore {
             }
 
             if (size == 1) {
+                // 统计相关的先不看
                 reset();
                 try {
                     // 执行单个任务并将结果设置到 future 中

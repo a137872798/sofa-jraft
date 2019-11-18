@@ -21,7 +21,7 @@ package com.alipay.sofa.jraft.rhea.errors;
  */
 public final class ErrorsHelper {
 
-    // require refresh leader or peer
+    // require refresh leader or peer   代表访问了无效的节点
     public static boolean isInvalidPeer(final Errors error) {
         return error == Errors.CALL_SELF_ENDPOINT_ERROR //
                || error == Errors.NOT_LEADER //

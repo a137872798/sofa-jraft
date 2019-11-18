@@ -2515,7 +2515,7 @@ public class NodeImpl implements Node, RaftServerService {
             return;
         }
         // check concurrent conf change
-        // isBusy 拒绝变更
+        // 代表当前配置正在改动
         if (this.confCtx.isBusy()) {
             LOG.warn("Node {} refused configuration concurrent changing.", getNodeId());
             if (done != null) {

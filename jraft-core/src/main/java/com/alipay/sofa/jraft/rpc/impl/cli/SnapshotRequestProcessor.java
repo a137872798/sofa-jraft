@@ -46,7 +46,7 @@ public class SnapshotRequestProcessor extends BaseCliRequestProcessor<SnapshotRe
     }
 
     /**
-     * 创建本节点的 快照  谁是请求发起方 谁是处理方
+     * 强制创建本节点的快照
      * @param ctx
      * @param request
      * @param done

@@ -103,7 +103,7 @@ public class RegionEngine implements Lifecycle<RegionEngineOptions> {
             return true;
         }
         this.regionOpts = Requires.requireNonNull(opts, "opts");
-        // 初始化 状态机
+        // 每个regionEngine 对应一个node
         this.fsm = new KVStoreStateMachine(this.region, this.storeEngine);
 
         // node options
@@ -144,16 +144,18 @@ public class RegionEngine implements Lifecycle<RegionEngineOptions> {
         final Endpoint serverAddress = opts.getServerAddress();
         // 生成本服务器peerId
         final PeerId serverId = new PeerId(serverAddress, 0);
+        // 共用一个 rpcServer
         final RpcServer rpcServer = this.storeEngine.getRpcServer();
         this.raftGroupService = new RaftGroupService(opts.getRaftGroupId(), serverId, nodeOpts, rpcServer, true);
         // 启动组服务 返回一个节点
         this.node = this.raftGroupService.start(false);
         RouteTable.getInstance().updateConfiguration(this.raftGroupService.getGroupId(), nodeOpts.getInitialConf());
         if (this.node != null) {
-            // 获取 storeEngine 的store  这个对象 和regionEngine 的 store 有什么区别
+            // 获取存储层对象
             final RawKVStore rawKVStore = this.storeEngine.getRawKVStore();
             // 获取调用 readIndex 的线程池
             final Executor readIndexExecutor = this.storeEngine.getReadIndexExecutor();
+            // 创建 raftRawKVStore 给对象对原本的 存储层做了一些加工
             this.raftRawKVStore = new RaftRawKVStore(this.node, rawKVStore, readIndexExecutor);
             this.metricsRawKVStore = new MetricsRawKVStore(this.region.getId(), this.raftRawKVStore);
             // metrics config

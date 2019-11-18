@@ -143,6 +143,7 @@ public class RegionRouteTable {
         final StampedLock stampedLock = this.stampedLock;
         final long stamp = stampedLock.writeLock();
         try {
+            // 在初始化 PD时 会维护 regionId 与 region的信息  以及 startKey 与regionId的信息
             this.regionTable.put(regionId, region.copy());
             // 这里使用了红黑树来保存regionId
             this.rangeTable.put(startKey, regionId);
@@ -230,7 +231,7 @@ public class RegionRouteTable {
     }
 
     /**
-     * 根据startKey 找到region id 之后去 regionTable 找到region
+     * 根据key 找到region id 之后去 regionTable 找到region
      * @param key
      * @return
      */
